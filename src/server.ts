@@ -43,7 +43,7 @@ app.post("/api/stop", (req, res) => {
 });
 
 // Catch-all to serve React's index.html
-app.get("/:path*", (req, res) => {
+app.use((req, res) => {
     res.sendFile(path.join(clientPath, "index.html"));
 });
 
