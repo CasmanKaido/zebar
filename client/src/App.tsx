@@ -14,9 +14,9 @@ import {
     Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-
-// Connect to backend
-const socket = io('http://localhost:3001');
+// Use environment variable or current host for the backend URL
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+const socket = io(BACKEND_URL);
 
 interface Log {
     message: string;
@@ -102,7 +102,7 @@ function App() {
             minMcap
         };
 
-        await fetch(`http://localhost:3001${endpoint}`, {
+        await fetch(`${BACKEND_URL}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)

@@ -2,7 +2,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { Server as HttpServer } from "http";
 
 export class SocketManager {
-    private static io: SocketIOServer;
+    public static io: SocketIOServer;
 
     static init(httpServer: HttpServer) {
         this.io = new SocketIOServer(httpServer, {
@@ -14,7 +14,7 @@ export class SocketManager {
 
         this.io.on("connection", (socket) => {
             console.log("Frontend connected");
-            socket.emit("status", { running: false }); // Initial status
+            // Status will be handled by the specific manager in server.ts
         });
     }
 

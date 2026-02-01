@@ -22,6 +22,11 @@ SocketManager.init(httpServer);
 // Bot Controller
 const botManager = new BotManager();
 
+// Sync Status on connection
+SocketManager.io.on("connection", (socket) => {
+    socket.emit("status", { running: botManager.isRunning });
+});
+
 // API Endpoints
 app.get("/api/status", (req, res) => {
     res.json({ running: botManager.isRunning });
