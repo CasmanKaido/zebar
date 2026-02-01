@@ -1,0 +1,26 @@
+
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import bs58 from "bs58";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+export const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
+export const WSS_URL = process.env.WSS_URL || "wss://api.mainnet-beta.solana.com";
+
+// Pump.fun Program ID
+export const PUMP_FUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+
+export const connection = new Connection(RPC_URL, {
+    wsEndpoint: WSS_URL,
+    commitment: "confirmed",
+});
+
+// Load wallet from private key in .env or a default dummy
+// WARNING: NEVER COMMIT REAL PRIVATE KEYS
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
+export const wallet = PRIVATE_KEY
+    ? Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY))
+    : Keypair.generate(); // fallback to random wallet for safety if env missing
+
+console.log("Wallet Public Key:", wallet.publicKey.toBase58());
