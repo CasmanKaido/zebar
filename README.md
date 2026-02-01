@@ -1,41 +1,59 @@
 # ZEBAR: Automated Liquidity & Volume Bot
 
-**ZEBAR** is a high-performance Solana bot designed to automate the lifecycle of new token launches. It monitors Pump.fun for new creations, performs an immediate "Ape" buy, and then creates a Meteora DLMM liquidity pool paired with your token (e.g., **$LPPP**).
- It then manages the position to exit 80% upon hitting an 8x target.
+**ZEBAR** is a high-performance Solana trading and liquidity bot designed to maximize the utility of **$LPPP**. It uses advanced market scanning to identify tokens meeting a specific "Golden Ratio" of volume, liquidity, and market cap, immediately provides dual-sided liquidity on Meteora DLMM, and manages positions for automated profit-taking.
 
-## Setup
+## 🚀 Core Strategy
+ZEBAR pivots away from high-risk sniping and focuses on "Validated Momentum" tokens.
 
-1.  **Install Dependencies**
-    ```bash
-    npm install
-    ```
+1. **Market Scanning**: Polls Solana DEX pairs (Raydium/Meteora) via DexScreener API.
+2. **Golden Ratio Filters**:
+   - **1h Volume**: > $100,000 (Rolling demand)
+   - **Liquidity**: > $60,000 (Stability)
+   - **Market Cap**: > $60,000 (Validated growth)
+3. **Execution**: Performs an instant market buy via **Jupiter v6 API**.
+4. **Liquidity Provisioning**: Automatically creates a **Meteora DLMM** pool (Newly Bought Token + $LPPP).
+5. **Position Management**: Monitors the position for target ROI (e.g., 8x) and executes automated exits.
 
-2.  **Configuration**
-    *   Rename `.env.example` to `.env` (if applicable) or create `.env`:
-        ```env
-        RPC_URL=https://api.mainnet-beta.solana.com
-        PRIVATE_KEY=[YOUR_PRIVATE_KEY_ARRAY_OR_BASE58]
-        ```
-    *   Update `src/index.ts`:
-        *   Replace `RHIVA_MINT` with your actual token's Mint Address.
-        *   Adjust `apeToken` amount (currently 0.1 SOL).
+## 🖥️ Command Center
+ZEBAR features a premium, cyberpunk-themed dashboard built with **React**, **Tailwind CSS v4**, and **Framer Motion**.
 
-3.  **Run**
-    ```bash
-    npm start
-    ```
-    (Or `npx ts-node src/index.ts`)
+- **Real-time Terminal**: Live log stream of scanner activity and transaction status.
+- **Dynamic Configuration**: Tune scan parameters (buy size, thresholds) on the fly without restarts.
+- **Active Pool Tracking**: Grid view of all auto-deployed pools with ROI monitoring.
+- **Live Chart**: Integrated DexScreener iframe for tracking **$LPPP** price action.
 
-## Architecture
+## 🛠️ Setup & Installation
 
-*   `src/monitor.ts`: Listens to Solana logs for Pump.fun "Create" events.
-*   `src/strategy.ts`:
-    *   `apeToken`: Handles the buy transaction on Pump.fun.
-    *   `createRaydiumPool`: Interactions with Raydium SDK to create the LP.
-    *   `monitorAndExit`: Tracks price and removes liquidity.
-*   `src/index.ts`: Main entry point.
+### Prerequisites
+- Node.js (v18+)
+- A Solana Wallet (Private Key)
+- RPC & WSS URLs (Mainnet)
 
-## Important Notes
+### Configuration
+Create a `.env` file in the root directory:
+```env
+RPC_URL=your_solana_rpc_url
+WSS_URL=your_solana_wss_url
+PRIVATE_KEY=your_base58_private_key
+```
 
-*   **Cost**: Creating a Raydium Pool (Market ID) costs ~3 SOL per pool. Ensure your wallet is funded.
-*   **Safety**: The current code contains **MOCK** implementations for the actual Buy and Pool Creation to prevent accidental spending during testing. You must implement the specific SDK calls for production.
+### Running the Bot
+1. **Install Dependencies**:
+   ```bash
+   npm install
+   cd client && npm install
+   ```
+2. **Start Backend & Scanner**:
+   ```bash
+   npm start
+   ```
+3. **Start Dashboard (React)**:
+   ```bash
+   npm run client
+   ```
+
+## ⚠️ Security WARNING
+**PRIVATE_KEY**: Your private key is stored locally in `.env`. **NEVER** share your `.env` file or commit it to GitHub. ZEBAR is configured to ignore `.env` by default via `.gitignore`.
+
+## 📜 License
+ISC License. For Educational and Promotional purposes only. Use at your own risk.
