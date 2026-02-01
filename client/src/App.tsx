@@ -14,8 +14,8 @@ import {
     Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-// Use environment variable or current host for the backend URL
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+// Use environment variable or default to empty string for unified same-host deployment
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 const socket = io(BACKEND_URL);
 
 interface Log {

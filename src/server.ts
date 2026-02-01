@@ -11,8 +11,8 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static frontend in production
-
-// app.use(express.static(path.join(__dirname, "../client/dist")));
+const clientPath = path.join(__dirname, "../client/dist");
+app.use(express.static(clientPath));
 
 const httpServer = createServer(app);
 
@@ -37,14 +37,18 @@ app.post("/api/start", (req, res) => {
     res.json({ success: true, running: true });
 });
 
-
 app.post("/api/stop", (req, res) => {
     botManager.stop();
     res.json({ success: true, running: false });
 });
 
-const PORT = 3001;
+// Catch-all to serve React's index.html
+app.get("*", (req, res) => {
+    res.sendFile(path.join(clientPath, "index.html"));
+});
+
+const PORT = process.env.PORT || 3001;
 
 httpServer.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+    console.log(`ZEBAR Unified Server running on port ${PORT}`);
 });

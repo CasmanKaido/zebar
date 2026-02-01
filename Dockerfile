@@ -3,17 +3,31 @@ FROM node:18-slim AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files for root (Backend)
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
+# Install backend dependencies
 RUN npm install
 
-# Copy source code
+# Copy backend source
 COPY src/ ./src/
 
-# Build TypeScript
+# Build Backend
+RUN npm run build
+
+# Copy package files for client (Frontend)
+WORKDIR /app/client
+COPY client/package*.json ./
+COPY client/tsconfig*.json ./
+
+# Install frontend dependencies
+RUN npm install
+
+# Copy frontend source and configs
+COPY client/ ./
+
+# Build Frontend
 RUN npm run build
 
 # Production Stage
@@ -21,15 +35,16 @@ FROM node:18-slim
 
 WORKDIR /app
 
-# Copy built files and production dependencies
+# Copy built backend and its production dependencies
 COPY --from=builder /app/dist ./dist
-COPY package*.json ./
-
-# Install only production dependencies
+COPY --from=builder /app/package*.json ./
 RUN npm install --omit=dev
 
-# Expose port (Backend defaults to 3001)
+# Copy built frontend
+COPY --from=builder /app/client/dist ./client/dist
+
+# Expose port (Backend defaults to 3001, Railway uses environment PORT)
 EXPOSE 3001
 
-# Start the bot
+# Start the unified server
 CMD ["node", "dist/server.js"]
