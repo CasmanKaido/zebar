@@ -84,16 +84,28 @@ export class MarketScanner {
                     SOL_MINT,
                     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
                     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+                    "USDH1SM1ojwRrt3WoCkmq7i9DE2yMK77CXY7MvJ8TCe",   // USDH
+                    "2b1fDQRsjtB2NYyQCneVr3TXuqcSFCvA13fnc7uxc8vi", // PYUSD
+                    "7kbnYjS6zY7ndS9S2MvSdgS9z9S2MvSdgS9z9S2MvSdg", // UXD
+                    "mSoLzYawRXYr3WvR86An1Ah6B1isS2nEv4tXQ7pA9Ym",   // mSOL
+                    "7dHbS7zSToynF6L8abS2yz7iYit2tiX1XW1tH8YqXgH",   // stSOL
+                    "J1tosoecvw9U96jrN17H8NfE59p5RST213R9RNoeWCH",   // jitoSOL
                 ];
 
                 // Determine which token is our "Target" (the one that isn't SOL or a Stable)
                 let targetToken = pair.baseToken;
+                let priceUSD = Number(pair.priceUsd || 0);
+
                 if (IGNORED_MINTS.includes(targetToken.address)) {
                     targetToken = pair.quoteToken;
                 }
 
                 // If both are ignored (e.g. SOL/USDC), then skip this pair entirely
                 if (IGNORED_MINTS.includes(targetToken.address)) continue;
+
+                // Skip tokens that look like stables (price very close to $1.00)
+                // This helps avoid things like USDH or other pegged tokens the list missed.
+                if (priceUSD > 0.98 && priceUSD < 1.02) continue;
 
                 const volume24h = pair.volume?.h24 || 0;
                 const liquidity = pair.liquidity?.usd || 0;
@@ -135,6 +147,10 @@ export class MarketScanner {
                     await this.callback(result);
                 }
             }
+
+            const summaryMsg = `[SCAN COMPLETE] Evaluated ${pairs.length} tokens. Next scan in 30s.`;
+            console.log(summaryMsg);
+            SocketManager.emitLog(summaryMsg, "info");
         } catch (err: any) {
             const errMsg = `[SWEEPER API ERROR] ${err.message}`;
             console.error(errMsg);
