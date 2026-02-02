@@ -49,58 +49,76 @@ export class MarketScanner {
     }
 
     private async performScan() {
-        SocketManager.emitLog("[SCANNER] Hunting for new Solana opportunities...", "info");
-        const SOL_MINT = "So11111111111111111111111111111111111111112";
-        const response = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${SOL_MINT}`);
-        const pairs = response.data.pairs;
+        const statusMsg = "[SCANNER] Hunting for new Solana opportunities...";
+        console.log(statusMsg);
+        SocketManager.emitLog(statusMsg, "info");
 
-        if (!pairs) {
-            SocketManager.emitLog("[SCANNER] No active pairs found in this cycle.", "warning");
-            return;
-        }
+        try {
+            // Using the latest pairs endpoint for the SOL native token to find all related pairs
+            const SOL_MINT = "So11111111111111111111111111111111111111112";
+            const response = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SOL_MINT}`, {
+                timeout: 10000
+            });
 
-        SocketManager.emitLog(`[SCANNER] Evaluating ${pairs.length} potential targets...`, "info");
+            const pairs = response.data.pairs;
 
-        let debugCount = 0;
-        for (const pair of pairs) {
-            if (pair.chainId !== "solana") continue;
-            if (this.seenPairs.has(pair.pairAddress)) continue;
-
-            // CRITICAL: Skip if the target token is actually just Native SOL
-            if (pair.baseToken.address === SOL_MINT) continue;
-
-            const volume1h = pair.volume?.m5 || pair.volume?.h1 || 0; // Fallback to 5m if 1h is missing
-            const liquidity = pair.liquidity?.usd || 0;
-            const mcap = pair.marketCap || pair.fdv || 0; // Try marketCap first, then FDV
-
-            // Detailed debug for first 3 pairs each cycle
-            if (debugCount < 1) {
-                SocketManager.emitLog(`[DEBUG] Example Target ${pair.baseToken.symbol}: Vol=$${Math.floor(volume1h)}, Liq=$${Math.floor(liquidity)}, MCAP=$${Math.floor(mcap)}`, "info");
-                debugCount++;
+            if (!pairs || pairs.length === 0) {
+                const noPairsMsg = "[SCANNER] No active pairs found on DexScreener right now.";
+                console.log(noPairsMsg);
+                SocketManager.emitLog(noPairsMsg, "warning");
+                return;
             }
 
-            // Check Criteria
-            const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
-            const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
-            const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
+            console.log(`[SCANNER] Evaluating ${pairs.length} potential targets...`);
+            SocketManager.emitLog(`[SCANNER] Evaluating ${pairs.length} potential targets...`, "info");
 
-            if (meetsVolume && meetsLiquidity && meetsMcap) {
-                console.log(`[SCANNER] MATCH FOUND: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
-                console.log(`Vol: $${volume1h}, Liq: $${liquidity}, Mcap: $${mcap}`);
+            let debugCount = 0;
 
-                this.seenPairs.add(pair.pairAddress);
+            for (const pair of pairs) {
+                if (pair.chainId !== "solana") continue;
+                if (this.seenPairs.has(pair.pairAddress)) continue;
+                if (pair.baseToken.address === SOL_MINT) continue;
 
-                const result: ScanResult = {
-                    mint: new PublicKey(pair.baseToken.address),
-                    pairAddress: pair.pairAddress,
-                    volume1h,
-                    liquidity,
-                    mcap,
-                    symbol: pair.baseToken.symbol
-                };
+                const volume1h = pair.volume?.m5 || pair.volume?.h1 || 0;
+                const liquidity = pair.liquidity?.usd || 0;
+                const mcap = pair.marketCap || pair.fdv || 0;
 
-                await this.callback(result);
+                // Debug log for the first pair found to verify data flow
+                if (debugCount < 1) {
+                    const debugMsg = `[DEBUG] Example: ${pair.baseToken.symbol} | Vol: $${Math.floor(volume1h)} | Liq: $${Math.floor(liquidity)} | MCAP: $${Math.floor(mcap)}`;
+                    console.log(debugMsg);
+                    SocketManager.emitLog(debugMsg, "info");
+                    debugCount++;
+                }
+
+                // Check Criteria
+                const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
+                const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
+                const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
+
+                if (meetsVolume && meetsLiquidity && meetsMcap) {
+                    const matchMsg = `[MATCH] ${pair.baseToken.symbol} met all criteria!`;
+                    console.log(matchMsg);
+                    SocketManager.emitLog(matchMsg, "success");
+
+                    this.seenPairs.add(pair.pairAddress);
+
+                    const result: ScanResult = {
+                        mint: new PublicKey(pair.baseToken.address),
+                        pairAddress: pair.pairAddress,
+                        volume1h: Number(volume1h),
+                        liquidity: Number(liquidity),
+                        mcap: Number(mcap),
+                        symbol: pair.baseToken.symbol
+                    };
+
+                    await this.callback(result);
+                }
             }
+        } catch (err: any) {
+            const errMsg = `[ERROR] Scan Request Failed: ${err.message}`;
+            console.error(errMsg);
+            SocketManager.emitLog(errMsg, "error");
         }
     }
 
