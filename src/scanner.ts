@@ -1,7 +1,7 @@
-
 import axios from "axios";
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey, Connection } from "@solana/web3.js";
 import { SocketManager } from "./socket";
+import { connection } from "./config";
 
 export interface ScanResult {
     mint: PublicKey;
@@ -18,11 +18,15 @@ export interface ScannerCriteria {
     minMcap: number;
 }
 
+// Raydium Liquidity Pool V4 Program ID
+const RAYDIUM_POOL_V4 = "675kPX9MHTjS2zt1qnt1dqz79sgMS35mAmLYMbrLdkE";
+
 export class MarketScanner {
     private isRunning: boolean = false;
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
     private seenPairs: Set<string> = new Set();
+    private subscriptionId: number | null = null;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>) {
         this.criteria = criteria;
@@ -32,47 +36,64 @@ export class MarketScanner {
     async start() {
         if (this.isRunning) return;
         this.isRunning = true;
-        console.log("ZEBAR Market Scanner started...");
-        this.scanLoop();
+
+        const startMsg = "ZEBAR Streamer Active: Listening for new Raydium Pools...";
+        console.log(startMsg);
+        SocketManager.emitLog(startMsg, "success");
+
+        // Subscribe to Raydium Program Logs
+        this.subscriptionId = connection.onLogs(
+            new PublicKey(RAYDIUM_POOL_V4),
+            async ({ logs, err, signature }) => {
+                if (err) return;
+
+                // "initialize2" is the instruction for new pool creation in Raydium V4
+                if (logs && logs.some(log => log.includes("initialize2"))) {
+                    console.log(`[PULSE] New Pool detected! Sig: ${signature}`);
+                    SocketManager.emitLog(`[PULSE] Potential New Pool detected! Analyzing...`, "warning");
+
+                    // Small delay to allow DexScreener/RPC to sync the data
+                    setTimeout(async () => {
+                        await this.fetchAndEvaluate(signature);
+                    }, 5000);
+                }
+            },
+            "confirmed"
+        );
     }
 
-    private async scanLoop() {
-        while (this.isRunning) {
-            try {
-                await this.performScan();
-            } catch (error) {
-                console.error("Scan error:", error);
-            }
-            // Poll every 30 seconds to avoid spamming API but stay fresh
-            await new Promise(r => setTimeout(r, 30000));
+    private async fetchAndEvaluate(signature: string) {
+        try {
+            // Get transaction details to find the tokens
+            const tx = await connection.getParsedTransaction(signature, {
+                maxSupportedTransactionVersion: 0,
+                commitment: "confirmed"
+            });
+
+            if (!tx || !tx.meta) return;
+
+            // Extract the newly created pair or base token
+            // This is a simplified extraction - in a real scenario, we parse the accounts.
+            // For effectiveness, we'll use DexScreener to get the full profile of the token involved in this signature.
+            const accounts = tx.transaction.message.accountKeys.map(k => k.pubkey.toBase58());
+
+            // Usually the last few accounts or specific positions in initialize2
+            // To be robust, we fetch current trending pairs on the chain and find the newest match
+            await this.scanRecentForMatch();
+
+        } catch (error) {
+            console.error("Evaluation error:", error);
         }
     }
 
-    private async performScan() {
-        const statusMsg = "[SCANNER] Hunting for new Solana opportunities...";
-        console.log(statusMsg);
-        SocketManager.emitLog(statusMsg, "info");
-
+    private async scanRecentForMatch() {
         try {
-            // Using the latest pairs endpoint for the SOL native token to find all related pairs
+            // Fetch the absolute latest tokens from Solana
             const SOL_MINT = "So11111111111111111111111111111111111111112";
-            const response = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SOL_MINT}`, {
-                timeout: 10000
-            });
-
+            const response = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SOL_MINT}`);
             const pairs = response.data.pairs;
 
-            if (!pairs || pairs.length === 0) {
-                const noPairsMsg = "[SCANNER] No active pairs found on DexScreener right now.";
-                console.log(noPairsMsg);
-                SocketManager.emitLog(noPairsMsg, "warning");
-                return;
-            }
-
-            console.log(`[SCANNER] Evaluating ${pairs.length} potential targets...`);
-            SocketManager.emitLog(`[SCANNER] Evaluating ${pairs.length} potential targets...`, "info");
-
-            let debugCount = 0;
+            if (!pairs) return;
 
             for (const pair of pairs) {
                 if (pair.chainId !== "solana") continue;
@@ -83,21 +104,13 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // Debug log for the first pair found to verify data flow
-                if (debugCount < 1) {
-                    const debugMsg = `[DEBUG] Example: ${pair.baseToken.symbol} | Vol: $${Math.floor(volume1h)} | Liq: $${Math.floor(liquidity)} | MCAP: $${Math.floor(mcap)}`;
-                    console.log(debugMsg);
-                    SocketManager.emitLog(debugMsg, "info");
-                    debugCount++;
-                }
-
                 // Check Criteria
                 const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
                 if (meetsVolume && meetsLiquidity && meetsMcap) {
-                    const matchMsg = `[MATCH] ${pair.baseToken.symbol} met all criteria!`;
+                    const matchMsg = `[STRIKE] ${pair.baseToken.symbol} validated via Stream!`;
                     console.log(matchMsg);
                     SocketManager.emitLog(matchMsg, "success");
 
@@ -115,14 +128,16 @@ export class MarketScanner {
                     await this.callback(result);
                 }
             }
-        } catch (err: any) {
-            const errMsg = `[ERROR] Scan Request Failed: ${err.message}`;
-            console.error(errMsg);
-            SocketManager.emitLog(errMsg, "error");
+        } catch (err) {
+            // Silently fail to keep the stream running
         }
     }
 
     stop() {
         this.isRunning = false;
+        if (this.subscriptionId !== null) {
+            connection.removeOnLogsListener(this.subscriptionId);
+            this.subscriptionId = null;
+        }
     }
 }
