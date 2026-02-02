@@ -1,7 +1,6 @@
 import axios from "axios";
-import { PublicKey, Connection } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
-import { connection } from "./config";
 
 export interface ScanResult {
     mint: PublicKey;
@@ -18,15 +17,12 @@ export interface ScannerCriteria {
     minMcap: number;
 }
 
-// Meteora DLMM Program ID
-const METEORA_DLMM_PROGRAM = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo";
-
 export class MarketScanner {
     private isRunning: boolean = false;
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
     private seenPairs: Set<string> = new Set();
-    private subscriptionId: number | null = null;
+    private scanInterval: NodeJS.Timeout | null = null;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>) {
         this.criteria = criteria;
@@ -37,63 +33,47 @@ export class MarketScanner {
         if (this.isRunning) return;
         this.isRunning = true;
 
-        const startMsg = "ZEBAR Streamer Active: Listening for new Meteora DLMM Pools...";
+        const startMsg = "ZEBAR Sweeper Active: Scanning the Solana Market for top-performing tokens...";
         console.log(startMsg);
         SocketManager.emitLog(startMsg, "success");
 
-        // Subscribe to Meteora DLMM Program Logs
-        this.subscriptionId = connection.onLogs(
-            new PublicKey(METEORA_DLMM_PROGRAM),
-            async ({ logs, err, signature }) => {
-                if (err) return;
-
-                // "InitializeLbPair" is the instruction for new DLMM pair creation
-                if (logs && logs.some(log => log.includes("InitializeLbPair"))) {
-                    console.log(`[PULSE] New Meteora DLMM Pool detected! Sig: ${signature}`);
-                    SocketManager.emitLog(`[PULSE] New Meteora DLMM Pool detected! Analyzing...`, "warning");
-
-                    // Small delay to allow DexScreener/RPC to sync the data
-                    setTimeout(async () => {
-                        await this.fetchAndEvaluate(signature);
-                    }, 5000);
-                }
-            },
-            "confirmed"
-        );
+        // Start the sweeping loop
+        this.runSweeper();
     }
 
-    private async fetchAndEvaluate(signature: string) {
-        try {
-            // Get transaction details to find the tokens
-            const tx = await connection.getParsedTransaction(signature, {
-                maxSupportedTransactionVersion: 0,
-                commitment: "confirmed"
-            });
-
-            if (!tx || !tx.meta) return;
-
-            // Extract the newly created pair or base token
-            // This is a simplified extraction - in a real scenario, we parse the accounts.
-            // For effectiveness, we'll use DexScreener to get the full profile of the token involved in this signature.
-            const accounts = tx.transaction.message.accountKeys.map(k => k.pubkey.toBase58());
-
-            // Usually the last few accounts or specific positions in initialize2
-            // To be robust, we fetch current trending pairs on the chain and find the newest match
-            await this.scanRecentForMatch();
-
-        } catch (error) {
-            console.error("Evaluation error:", error);
+    private async runSweeper() {
+        while (this.isRunning) {
+            try {
+                await this.performMarketSweep();
+            } catch (error: any) {
+                console.error(`[SWEEPER ERROR] ${error.message}`);
+            }
+            // Wait 30 seconds between sweeps to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 30000));
         }
     }
 
-    private async scanRecentForMatch() {
+    private async performMarketSweep() {
+        SocketManager.emitLog("[SWEEPER] Sweeping market for active opportunities...", "info");
+
         try {
-            // Fetch the absolute latest tokens from Solana
+            // Using a broad search for Solana tokens to catch all active pairs
             const SOL_MINT = "So11111111111111111111111111111111111111112";
-            const response = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SOL_MINT}`);
+            const response = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${SOL_MINT}`, {
+                timeout: 10000
+            });
+
             const pairs = response.data.pairs;
 
-            if (!pairs) return;
+            if (!pairs || pairs.length === 0) {
+                SocketManager.emitLog("[SWEEPER] No active pairs found on the radar right now.", "warning");
+                return;
+            }
+
+            console.log(`[SWEEPER] Evaluating ${pairs.length} active tokens...`);
+            SocketManager.emitLog(`[SWEEPER] Evaluating ${pairs.length} active tokens...`, "info");
+
+            let debugCount = 0;
 
             for (const pair of pairs) {
                 if (pair.chainId !== "solana") continue;
@@ -104,21 +84,29 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // Check Criteria (OR Force first match for testing if criteria are set very low)
+                // Debug log for the first pair found each sweep to keep users informed
+                if (debugCount < 1) {
+                    const debugMsg = `[ANALYSIS] Top Token ${pair.baseToken.symbol}: 24h Vol: $${Math.floor(volume24h)} | Liq: $${Math.floor(liquidity)} | MCAP: $${Math.floor(mcap)}`;
+                    console.log(debugMsg);
+                    SocketManager.emitLog(debugMsg, "info");
+                    debugCount++;
+                }
+
+                // Check Criteria
                 const meetsVolume = Number(volume24h) >= Number(this.criteria.minVolume24h);
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
-                // FOR TESTING: If criteria are extremely low (e.g. all 100), we'll treat it as "Pick Anything"
+                // FOR TESTING: If criteria are set to 100 or lower, force a match to show it works
                 const isTesting = this.criteria.minVolume24h <= 100 && this.criteria.minMcap <= 100;
 
                 if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
                     const matchMsg = isTesting
-                        ? `[TESTING] Forcing Strike on ${pair.baseToken.symbol} (Criteria Bypassed)`
-                        : `[STRIKE] ${pair.baseToken.symbol} validated via Stream!`;
+                        ? `[TARGET FOUND] Force-loading ${pair.baseToken.symbol} for deployment testing!`
+                        : `[TARGET FOUND] ${pair.baseToken.symbol} performance exceeds your criteria!`;
 
                     console.log(matchMsg);
-                    SocketManager.emitLog(matchMsg, isTesting ? "warning" : "success");
+                    SocketManager.emitLog(matchMsg, "success");
 
                     this.seenPairs.add(pair.pairAddress);
 
@@ -134,16 +122,15 @@ export class MarketScanner {
                     await this.callback(result);
                 }
             }
-        } catch (err) {
-            // Silently fail to keep the stream running
+        } catch (err: any) {
+            const errMsg = `[SWEEPER API ERROR] ${err.message}`;
+            console.error(errMsg);
+            SocketManager.emitLog(errMsg, "error");
         }
     }
 
     stop() {
         this.isRunning = false;
-        if (this.subscriptionId !== null) {
-            connection.removeOnLogsListener(this.subscriptionId);
-            this.subscriptionId = null;
-        }
+        console.log("ZEBAR Sweeper Service Stopped.");
     }
 }
