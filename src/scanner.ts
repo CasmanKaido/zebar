@@ -1,6 +1,7 @@
 
 import axios from "axios";
 import { PublicKey } from "@solana/web3.js";
+import { SocketManager } from "./socket";
 
 export interface ScanResult {
     mint: PublicKey;
@@ -48,11 +49,17 @@ export class MarketScanner {
     }
 
     private async performScan() {
-        console.log("[SCANNER] Scanning market for Golden Ratio pairs...");
-        const response = await axios.get("https://api.dexscreener.com/latest/dex/search?q=solana");
+        SocketManager.emitLog("[SCANNER] Hunting for new Solana opportunities...", "info");
+        const SOL_MINT = "So11111111111111111111111111111111111111112";
+        const response = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${SOL_MINT}`);
         const pairs = response.data.pairs;
 
-        if (!pairs) return;
+        if (!pairs) {
+            SocketManager.emitLog("[SCANNER] No active pairs found in this cycle.", "warning");
+            return;
+        }
+
+        SocketManager.emitLog(`[SCANNER] Evaluating ${pairs.length} potential targets...`, "info");
 
         for (const pair of pairs) {
             if (pair.chainId !== "solana") continue;
