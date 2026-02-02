@@ -104,15 +104,21 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // Check Criteria
+                // Check Criteria (OR Force first match for testing if criteria are set very low)
                 const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
-                if (meetsVolume && meetsLiquidity && meetsMcap) {
-                    const matchMsg = `[STRIKE] ${pair.baseToken.symbol} validated via Stream!`;
+                // FOR TESTING: If criteria are extremely low (e.g. all 100), we'll treat it as "Pick Anything"
+                const isTesting = this.criteria.minVolume1h <= 100 && this.criteria.minMcap <= 100;
+
+                if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
+                    const matchMsg = isTesting
+                        ? `[TESTING] Forcing Strike on ${pair.baseToken.symbol} (Criteria Bypassed)`
+                        : `[STRIKE] ${pair.baseToken.symbol} validated via Stream!`;
+
                     console.log(matchMsg);
-                    SocketManager.emitLog(matchMsg, "success");
+                    SocketManager.emitLog(matchMsg, isTesting ? "warning" : "success");
 
                     this.seenPairs.add(pair.pairAddress);
 

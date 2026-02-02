@@ -32,8 +32,8 @@ app.get("/api/status", (req, res) => {
     res.json({ running: botManager.isRunning });
 });
 
-app.post("/api/start", (req, res) => {
-    botManager.start(req.body);
+app.post("/api/start", async (req, res) => {
+    await botManager.start(req.body);
     res.json({ success: true, running: true });
 });
 

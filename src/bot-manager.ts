@@ -30,15 +30,23 @@ export class BotManager {
         this.strategy = new StrategyManager(connection, wallet);
     }
 
-    start(config?: Partial<BotSettings>) {
+    async start(config?: Partial<BotSettings>) {
         if (this.isRunning) return;
         if (config) {
             this.settings = { ...this.settings, ...config };
         }
 
+        // Check Balance
+        const balance = await connection.getBalance(wallet.publicKey);
+        if (balance === 0) {
+            SocketManager.emitLog(`[WARNING] Your wallet (${wallet.publicKey.toBase58().slice(0, 8)}...) has 0 SOL. Buys will fail.`, "error");
+        } else {
+            SocketManager.emitLog(`[WALLET] Active: ${wallet.publicKey.toBase58().slice(0, 8)}... | Balance: ${(balance / 1e9).toFixed(3)} SOL`, "success");
+        }
+
         this.isRunning = true;
         SocketManager.emitStatus(true);
-        SocketManager.emitLog(`ZEBAR Scanning Mode (Vol > $${this.settings.minVolume1h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
+        SocketManager.emitLog(`ZEBAR Streamer Active (Vol > $${this.settings.minVolume1h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
 
         const criteria: ScannerCriteria = {
             minVolume1h: this.settings.minVolume1h,
