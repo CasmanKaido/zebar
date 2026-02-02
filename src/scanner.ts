@@ -73,23 +73,36 @@ export class MarketScanner {
             console.log(`[SWEEPER] Evaluating ${pairs.length} active tokens...`);
             SocketManager.emitLog(`[SWEEPER] Evaluating ${pairs.length} active tokens...`, "info");
 
-            let debugCount = 0;
+            let foundInThisSweep = 0;
 
             for (const pair of pairs) {
                 if (pair.chainId !== "solana") continue;
                 if (this.seenPairs.has(pair.pairAddress)) continue;
-                if (pair.baseToken.address === SOL_MINT) continue;
+
+                // WRAPPED SOL or STABLES we might want to ignore as targets
+                const IGNORED_MINTS = [
+                    SOL_MINT,
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+                ];
+
+                // Determine which token is our "Target" (the one that isn't SOL or a Stable)
+                let targetToken = pair.baseToken;
+                if (IGNORED_MINTS.includes(targetToken.address)) {
+                    targetToken = pair.quoteToken;
+                }
+
+                // If both are ignored (e.g. SOL/USDC), then skip this pair entirely
+                if (IGNORED_MINTS.includes(targetToken.address)) continue;
 
                 const volume24h = pair.volume?.h24 || 0;
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // Debug log for the first pair found each sweep to keep users informed
-                if (debugCount < 1) {
-                    const debugMsg = `[ANALYSIS] Top Token ${pair.baseToken.symbol}: 24h Vol: $${Math.floor(volume24h)} | Liq: $${Math.floor(liquidity)} | MCAP: $${Math.floor(mcap)}`;
-                    console.log(debugMsg);
-                    SocketManager.emitLog(debugMsg, "info");
-                    debugCount++;
+                // Log the first few tokens we see for debugging
+                if (foundInThisSweep < 3) {
+                    console.log(`[ANALYSIS] Candidate: ${targetToken.symbol} | Vol: $${Math.floor(volume24h)} | Liq: $${Math.floor(liquidity)} | MCAP: $${Math.floor(mcap)}`);
+                    foundInThisSweep++;
                 }
 
                 // Check Criteria
@@ -97,13 +110,13 @@ export class MarketScanner {
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
-                // FOR TESTING: If criteria are set to 100 or lower, force a match to show it works
+                // FOR TESTING: If filters are all 100, we force pick the FIRST valid non-ignored token
                 const isTesting = this.criteria.minVolume24h <= 100 && this.criteria.minMcap <= 100;
 
                 if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
                     const matchMsg = isTesting
-                        ? `[TARGET FOUND] Force-loading ${pair.baseToken.symbol} for deployment testing!`
-                        : `[TARGET FOUND] ${pair.baseToken.symbol} performance exceeds your criteria!`;
+                        ? `[TARGET FOUND] Test Match: ${targetToken.symbol} (Criteria Bypassed)`
+                        : `[TARGET FOUND] ${targetToken.symbol} passed all metrics!`;
 
                     console.log(matchMsg);
                     SocketManager.emitLog(matchMsg, "success");
@@ -111,12 +124,12 @@ export class MarketScanner {
                     this.seenPairs.add(pair.pairAddress);
 
                     const result: ScanResult = {
-                        mint: new PublicKey(pair.baseToken.address),
+                        mint: new PublicKey(targetToken.address),
                         pairAddress: pair.pairAddress,
                         volume24h: Number(volume24h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
-                        symbol: pair.baseToken.symbol
+                        symbol: targetToken.symbol
                     };
 
                     await this.callback(result);
