@@ -101,7 +101,7 @@ function App() {
         const body = running ? {} : {
             buyAmount,
             lpppAmount,
-            minVolume1h: minVolume,
+            minVolume24h: minVolume,
             minLiquidity,
             minMcap
         };
@@ -185,7 +185,7 @@ function App() {
 
                         <div className="mt-4 pt-4 border-t border-border space-y-4">
                             <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Scanner Criteria</p>
-                            <SettingInput label="Min 1h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
+                            <SettingInput label="Min 24h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
                             <SettingInput label="Min Liquidity ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
                             <SettingInput label="Min Mcap ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
                         </div>

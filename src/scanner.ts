@@ -6,14 +6,14 @@ import { connection } from "./config";
 export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
-    volume1h: number;
+    volume24h: number;
     liquidity: number;
     mcap: number;
     symbol: string;
 }
 
 export interface ScannerCriteria {
-    minVolume1h: number;
+    minVolume24h: number;
     minLiquidity: number;
     minMcap: number;
 }
@@ -100,17 +100,17 @@ export class MarketScanner {
                 if (this.seenPairs.has(pair.pairAddress)) continue;
                 if (pair.baseToken.address === SOL_MINT) continue;
 
-                const volume1h = pair.volume?.m5 || pair.volume?.h1 || 0;
+                const volume24h = pair.volume?.h24 || 0;
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
                 // Check Criteria (OR Force first match for testing if criteria are set very low)
-                const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
+                const meetsVolume = Number(volume24h) >= Number(this.criteria.minVolume24h);
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
                 // FOR TESTING: If criteria are extremely low (e.g. all 100), we'll treat it as "Pick Anything"
-                const isTesting = this.criteria.minVolume1h <= 100 && this.criteria.minMcap <= 100;
+                const isTesting = this.criteria.minVolume24h <= 100 && this.criteria.minMcap <= 100;
 
                 if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
                     const matchMsg = isTesting
@@ -125,7 +125,7 @@ export class MarketScanner {
                     const result: ScanResult = {
                         mint: new PublicKey(pair.baseToken.address),
                         pairAddress: pair.pairAddress,
-                        volume1h: Number(volume1h),
+                        volume24h: Number(volume24h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
                         symbol: pair.baseToken.symbol
