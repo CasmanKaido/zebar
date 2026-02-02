@@ -18,8 +18,8 @@ export interface ScannerCriteria {
     minMcap: number;
 }
 
-// Raydium Liquidity Pool V4 Program ID
-const RAYDIUM_POOL_V4 = "675kPX9MHTjS2zt1qnt1dqz79sgMS35mAmLYMbrLdkE";
+// Meteora DLMM Program ID
+const METEORA_DLMM_PROGRAM = "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo";
 
 export class MarketScanner {
     private isRunning: boolean = false;
@@ -37,20 +37,20 @@ export class MarketScanner {
         if (this.isRunning) return;
         this.isRunning = true;
 
-        const startMsg = "ZEBAR Streamer Active: Listening for new Raydium Pools...";
+        const startMsg = "ZEBAR Streamer Active: Listening for new Meteora DLMM Pools...";
         console.log(startMsg);
         SocketManager.emitLog(startMsg, "success");
 
-        // Subscribe to Raydium Program Logs
+        // Subscribe to Meteora DLMM Program Logs
         this.subscriptionId = connection.onLogs(
-            new PublicKey(RAYDIUM_POOL_V4),
+            new PublicKey(METEORA_DLMM_PROGRAM),
             async ({ logs, err, signature }) => {
                 if (err) return;
 
-                // "initialize2" is the instruction for new pool creation in Raydium V4
-                if (logs && logs.some(log => log.includes("initialize2"))) {
-                    console.log(`[PULSE] New Pool detected! Sig: ${signature}`);
-                    SocketManager.emitLog(`[PULSE] Potential New Pool detected! Analyzing...`, "warning");
+                // "InitializeLbPair" is the instruction for new DLMM pair creation
+                if (logs && logs.some(log => log.includes("InitializeLbPair"))) {
+                    console.log(`[PULSE] New Meteora DLMM Pool detected! Sig: ${signature}`);
+                    SocketManager.emitLog(`[PULSE] New Meteora DLMM Pool detected! Analyzing...`, "warning");
 
                     // Small delay to allow DexScreener/RPC to sync the data
                     setTimeout(async () => {
