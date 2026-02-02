@@ -75,15 +75,19 @@ function App() {
         socket.on('connect', () => console.log('Connected to Backend'));
         socket.on('status', (data) => setRunning(data.running));
         socket.on('log', (log: Log) => {
-            setLogs((prev) => [...prev, log]);
+            setLogs((prev) => [...prev.slice(-49), log]);
+        });
+        socket.on('logHistory', (history: Log[]) => {
+            setLogs(history);
         });
         socket.on('pool', (pool: Pool) => {
-            setPools(prev => [...prev, pool]);
+            setPools(prev => [...prev.slice(-19), pool]);
         });
         return () => {
             socket.off('connect');
             socket.off('status');
             socket.off('log');
+            socket.off('logHistory');
             socket.off('pool');
         };
     }, []);

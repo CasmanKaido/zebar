@@ -4,23 +4,35 @@ import { Server as HttpServer } from "http";
 export class SocketManager {
     public static io: SocketIOServer;
 
+    private static logHistory: any[] = [];
+    private static MAX_LOGS = 50;
+
     static init(httpServer: HttpServer) {
         this.io = new SocketIOServer(httpServer, {
             cors: {
-                origin: "*", // Allow all for local dev
+                origin: "*",
                 methods: ["GET", "POST"]
             }
         });
 
         this.io.on("connection", (socket) => {
             console.log("Frontend connected");
-            // Status will be handled by the specific manager in server.ts
+            // Send existing log history to the new client
+            socket.emit("logHistory", this.logHistory);
         });
     }
 
     static emitLog(message: string, type: "info" | "success" | "error" | "warning" = "info") {
+        const logEntry = { message, type, timestamp: new Date().toISOString() };
+
+        // Add to history
+        this.logHistory.push(logEntry);
+        if (this.logHistory.length > this.MAX_LOGS) {
+            this.logHistory.shift();
+        }
+
         if (this.io) {
-            this.io.emit("log", { message, type, timestamp: new Date().toISOString() });
+            this.io.emit("log", logEntry);
         }
     }
 
