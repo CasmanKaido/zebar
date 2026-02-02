@@ -65,6 +65,9 @@ export class MarketScanner {
             if (pair.chainId !== "solana") continue;
             if (this.seenPairs.has(pair.pairAddress)) continue;
 
+            // CRITICAL: Skip if the target token is actually just Native SOL
+            if (pair.baseToken.address === SOL_MINT) continue;
+
             const volume1h = pair.volume?.h1 || 0;
             const liquidity = pair.liquidity?.usd || 0;
             const mcap = pair.fdv || 0; // Fully Diluted Valuation is usually the mcap proxy
