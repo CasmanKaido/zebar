@@ -50,6 +50,7 @@ export class BotManager {
             if (!this.isRunning) return;
 
             SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
+            SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
             SocketManager.emitLog(`- Vol: $${Math.floor(result.volume1h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
 
             // 1. Swap (Buy)

@@ -115,6 +115,37 @@ function App() {
 
     const clearLogs = () => setLogs([]);
 
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        // We can add a simple toast or log here if needed, but for now, it just works
+    };
+
+    const formatMessage = (msg: string) => {
+        // Regex for Solana Address
+        const solanaRegex = /[1-9A-HJ-NP-Za-km-z]{32,44}/;
+        const match = msg.match(solanaRegex);
+
+        if (!match) return msg;
+
+        const address = match[0];
+        const parts = msg.split(address);
+
+        return (
+            <>
+                {parts[0]}
+                <span
+                    onClick={() => copyToClipboard(address)}
+                    className="bg-primary/20 px-1 rounded cursor-pointer hover:bg-primary/40 transition-all underline decoration-dotted inline-flex items-center gap-1 group"
+                    title="Click to copy CA"
+                >
+                    {address}
+                    <Zap size={10} className="group-hover:animate-pulse" />
+                </span>
+                {parts[1]}
+            </>
+        );
+    };
+
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
             {/* Header */}
@@ -280,7 +311,7 @@ function App() {
                                         <div key={i} className="flex gap-2">
                                             <span className="opacity-50 shrink-0">[{log.timestamp.split('T')[1].split('.')[0]}]</span>
                                             <span className={log.type === 'error' ? 'text-red-500' : log.type === 'warning' ? 'text-yellow-500' : ''}>
-                                                {log.message}
+                                                {formatMessage(log.message)}
                                             </span>
                                         </div>
                                     ))}
