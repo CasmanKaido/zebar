@@ -61,6 +61,7 @@ export class MarketScanner {
 
         SocketManager.emitLog(`[SCANNER] Evaluating ${pairs.length} potential targets...`, "info");
 
+        let debugCount = 0;
         for (const pair of pairs) {
             if (pair.chainId !== "solana") continue;
             if (this.seenPairs.has(pair.pairAddress)) continue;
@@ -68,14 +69,20 @@ export class MarketScanner {
             // CRITICAL: Skip if the target token is actually just Native SOL
             if (pair.baseToken.address === SOL_MINT) continue;
 
-            const volume1h = pair.volume?.h1 || 0;
+            const volume1h = pair.volume?.m5 || pair.volume?.h1 || 0; // Fallback to 5m if 1h is missing
             const liquidity = pair.liquidity?.usd || 0;
-            const mcap = pair.fdv || 0; // Fully Diluted Valuation is usually the mcap proxy
+            const mcap = pair.marketCap || pair.fdv || 0; // Try marketCap first, then FDV
+
+            // Detailed debug for first 3 pairs each cycle
+            if (debugCount < 1) {
+                SocketManager.emitLog(`[DEBUG] Example Target ${pair.baseToken.symbol}: Vol=$${Math.floor(volume1h)}, Liq=$${Math.floor(liquidity)}, MCAP=$${Math.floor(mcap)}`, "info");
+                debugCount++;
+            }
 
             // Check Criteria
-            const meetsVolume = volume1h >= this.criteria.minVolume1h;
-            const meetsLiquidity = liquidity >= this.criteria.minLiquidity;
-            const meetsMcap = mcap >= this.criteria.minMcap;
+            const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
+            const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
+            const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
             if (meetsVolume && meetsLiquidity && meetsMcap) {
                 console.log(`[SCANNER] MATCH FOUND: ${pair.baseToken.symbol} (${pair.baseToken.address})`);
