@@ -56,6 +56,9 @@ app.get("/api/price", async (req, res) => {
             console.error("SOL Price fetch failed:", e);
         }
 
+        // Fallback if API fails
+        if (!prices.sol) prices.sol = 210.00;
+
         // 2. Fetch LPPP Price (DexScreener)
         try {
             const lpppRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
