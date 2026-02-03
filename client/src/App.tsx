@@ -34,25 +34,34 @@ interface Pool {
 interface SettingInputProps {
     label: string;
     value: number;
-    onChange: (value: number) => void;
-    disabled: boolean;
+    onChange: (val: number) => void;
+    disabled?: boolean;
     prefix?: string;
+    unit?: string;
+    subtext?: string;
 }
 
-const SettingInput: React.FC<SettingInputProps> = ({ label, value, onChange, disabled, prefix }) => (
-    <div className="flex flex-col gap-2 mb-4">
-        <label className="text-[13px] text-muted-foreground font-medium">{label}</label>
+const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext }: SettingInputProps) => (
+    <div className="flex flex-col gap-1.5 mb-4 last:mb-0">
+        <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{label}</label>
         <div className="relative">
-            {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">{prefix}</span>}
+            {prefix && (
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">{prefix}</span>
+            )}
             <input
                 type="number"
-                step="any"
                 value={value}
                 onChange={(e) => onChange(Number(e.target.value))}
                 disabled={disabled}
-                className={`w-full bg-input border border-border text-foreground px-3 py-2 rounded-md font-mono text-sm focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-7' : ''}`}
+                className={`w-full bg-input border border-border text-foreground px-3 py-2 rounded-md font-mono text-sm focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-7' : ''} ${unit ? 'pr-12' : ''}`}
             />
+            {unit && (
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-primary/60">{unit}</span>
+            )}
         </div>
+        {subtext && (
+            <span className="text-[10px] text-muted-foreground/60 italic">{subtext}</span>
+        )}
     </div>
 );
 
@@ -62,12 +71,19 @@ function App() {
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
 
+    // Live Prices
+    const [solPrice, setSolPrice] = useState<number | null>(null);
+
     // Scan Criteria
     const [buyAmount, setBuyAmount] = useState(0.1);
     const [lpppAmount, setLpppAmount] = useState(1000);
     const [minVolume, setMinVolume] = useState(100000);
     const [minLiquidity, setMinLiquidity] = useState(60000);
     const [minMcap, setMinMcap] = useState(60000);
+
+    // Unit States
+    const [isBuyUsd, setIsBuyUsd] = useState(false);
+    const [isLpUsd, setIsLpUsd] = useState(false);
 
     const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -92,14 +108,31 @@ function App() {
         };
     }, []);
 
+    // Fetch SOL Price periodically
     useEffect(() => {
-        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [logs]);
+        const fetchPrice = async () => {
+            try {
+                const res = await fetch('https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112');
+                const data = await res.json();
+                const price = data.data['So11111111111111111111111111111111111111112']?.price;
+                if (price) setSolPrice(Number(price));
+            } catch (e) {
+                console.error("Price fetch error:", e);
+            }
+        };
+
+        fetchPrice();
+        const interval = setInterval(fetchPrice, 60000);
+        return () => clearInterval(interval);
+    }, []);
 
     const toggleBot = async () => {
+        // Prepare units for backend (must be native)
+        const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
+
         const endpoint = running ? '/api/stop' : '/api/start';
         const body = running ? {} : {
-            buyAmount,
+            buyAmount: finalBuy,
             lpppAmount,
             minVolume1h: minVolume,
             minLiquidity,
@@ -175,13 +208,43 @@ function App() {
                 <div className="flex flex-col gap-6">
                     {/* Configuration Card */}
                     <div className="bg-card border border-border rounded-lg p-5 flex flex-col">
-                        <div className="flex items-center gap-2 mb-5">
-                            <Settings2 size={18} className="text-muted-foreground" />
-                            <h2 className="text-sm font-semibold">Configuration</h2>
+                        <div className="flex items-center justify-between mb-5">
+                            <div className="flex items-center gap-2">
+                                <Settings2 size={18} className="text-muted-foreground" />
+                                <h2 className="text-sm font-semibold">Configuration</h2>
+                            </div>
+                            {solPrice && (
+                                <span className="text-[10px] text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded border border-border">SOL: ${solPrice.toFixed(2)}</span>
+                            )}
                         </div>
 
-                        <SettingInput label="Buy Size (SOL)" value={buyAmount} onChange={setBuyAmount} disabled={running} />
-                        <SettingInput label="LP Size (LPPP)" value={lpppAmount} onChange={setLpppAmount} disabled={running} />
+                        <div className="mb-4">
+                            <button
+                                onClick={() => setIsBuyUsd(!isBuyUsd)}
+                                className="text-[9px] font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-1 bg-primary/5 px-2 py-1 rounded border border-primary/20 mb-2"
+                            >
+                                <Zap size={8} />
+                                SWITCH TO {isBuyUsd ? 'SOL' : 'USD'}
+                            </button>
+
+                            <SettingInput
+                                label={`Buy Size (${isBuyUsd ? 'USD' : 'SOL'})`}
+                                value={buyAmount}
+                                onChange={setBuyAmount}
+                                disabled={running}
+                                prefix={isBuyUsd ? "$" : ""}
+                                unit={isBuyUsd ? "USD" : "SOL"}
+                                subtext={!isBuyUsd && solPrice ? `≈ $${(buyAmount * solPrice).toFixed(2)}` : (isBuyUsd && solPrice ? `≈ ${(buyAmount / solPrice).toFixed(4)} SOL` : undefined)}
+                            />
+                        </div>
+
+                        <SettingInput
+                            label="LP Size ($LPPP)"
+                            value={lpppAmount}
+                            onChange={setLpppAmount}
+                            disabled={running}
+                            unit="LPPP"
+                        />
 
                         <div className="mt-4 pt-4 border-t border-border space-y-4">
                             <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Scanner Criteria</p>
@@ -221,6 +284,7 @@ function App() {
                             {running ? 'STOP SCANNER' : 'LAUNCH ZEBAR'}
                         </button>
                     </div>
+
                 </div>
 
                 {/* Middle Column: Stats & Display */}
