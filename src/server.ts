@@ -42,6 +42,27 @@ app.post("/api/stop", (req, res) => {
     res.json({ success: true, running: false });
 });
 
+// Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
+app.get("/api/price", async (req, res) => {
+    try {
+        // Fetch from Jupiter (V2 or V1) or CoinGecko
+        // Using CoinGecko Simple Price as Primary for reliability without API Key
+        const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
+        const data = await response.json();
+
+        if (data && data.solana && data.solana.usd) {
+            return res.json({ price: data.solana.usd });
+        }
+
+        throw new Error("Invalid price data");
+    } catch (error) {
+        console.error("Price Proxy Error:", error);
+        // Fallback to a hardcoded logic or previous known price could go here, 
+        // but user requested REAL data, so we return error if we can't get it.
+        res.status(500).json({ error: "Failed to fetch price" });
+    }
+});
+
 // Catch-all to serve React's index.html
 app.use((req, res) => {
     res.sendFile(path.join(clientPath, "index.html"));

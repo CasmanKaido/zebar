@@ -109,28 +109,26 @@ function App() {
     }, []);
 
     // Fetch SOL Price periodically
+    // Fetch SOL Price periodically
     useEffect(() => {
         const fetchPrice = async () => {
             try {
-                // Fallback to CoinGecko if Jupiter fails (Jupiter V2 requires Key)
-                const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+                // Fetch from OUR backend proxy (Reliable & CORS-free)
+                const res = await fetch(`${BACKEND_URL}/api/price`);
                 const data = await res.json();
 
-                if (data && data.solana && data.solana.usd) {
-                    setSolPrice(data.solana.usd);
+                if (data && data.price) {
+                    setSolPrice(Number(data.price));
                 } else {
-                    // Critical Fallback to keep UI working
-                    console.warn("API Error, using fallback price");
-                    setSolPrice(190.00);
+                    console.warn("Backend returned no price");
                 }
             } catch (e) {
-                console.error("Price fetch error, using fallback:", e);
-                setSolPrice(190.00);
+                console.error("Price fetch error:", e);
             }
         };
 
         fetchPrice();
-        const interval = setInterval(fetchPrice, 60000);
+        const interval = setInterval(fetchPrice, 30000); // Check every 30s
         return () => clearInterval(interval);
     }, []);
 
