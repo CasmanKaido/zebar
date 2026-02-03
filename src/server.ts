@@ -53,11 +53,21 @@ app.get("/api/price", async (req, res) => {
             const solData = await solRes.json();
             if (solData?.solana?.usd) prices.sol = solData.solana.usd;
         } catch (e) {
-            console.error("SOL Price fetch failed:", e);
+            console.error("SOL Price fetch failed (CoinGecko):", e);
         }
 
-        // Fallback if API fails
-        if (!prices.sol) prices.sol = 210.00;
+        // Fallback: Fetch SOL Price (Jupiter V2 - Real Data)
+        if (!prices.sol) {
+            try {
+                const jupRes = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112");
+                const jupData = await jupRes.json();
+                if (jupData?.data?.['So11111111111111111111111111111111111111112']?.price) {
+                    prices.sol = parseFloat(jupData.data['So11111111111111111111111111111111111111112'].price);
+                }
+            } catch (e) {
+                console.error("SOL Price fetch failed (Jupiter):", e);
+            }
+        }
 
         // 2. Fetch LPPP Price (DexScreener)
         try {
