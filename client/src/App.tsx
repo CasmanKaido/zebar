@@ -73,6 +73,7 @@ function App() {
 
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
+    const [lpppPrice, setLpppPrice] = useState<number | null>(null);
 
     // Scan Criteria
     const [buyAmount, setBuyAmount] = useState(0.1);
@@ -108,8 +109,7 @@ function App() {
         };
     }, []);
 
-    // Fetch SOL Price periodically
-    // Fetch SOL Price periodically
+    // Fetch Prices (SOL + LPPP)
     useEffect(() => {
         const fetchPrice = async () => {
             try {
@@ -132,14 +132,36 @@ function App() {
         return () => clearInterval(interval);
     }, []);
 
+    // Fetch Prices (SOL + LPPP) - NEW
+    useEffect(() => {
+        const fetchPrices = async () => {
+            try {
+                // Fetch from OUR backend proxy (Reliable & CORS-free)
+                const res = await fetch(`${BACKEND_URL}/api/price`);
+                const data = await res.json();
+
+                if (data) {
+                    if (data.sol) setSolPrice(Number(data.sol));
+                    if (data.lppp) setLpppPrice(Number(data.lppp));
+                }
+            } catch (e) {
+                console.error("Price fetch error:", e);
+            }
+        };
+
+        fetchPrices();
+        const interval = setInterval(fetchPrices, 30000); // Check every 30s
+        return () => clearInterval(interval);
+    }, []);
+
     const toggleBot = async () => {
-        // Prepare units for backend (must be native)
         const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
+        const finalLppp = isLpUsd && lpppPrice ? lpppAmount / lpppPrice : lpppAmount;
 
         const endpoint = running ? '/api/stop' : '/api/start';
         const body = running ? {} : {
             buyAmount: finalBuy,
-            lpppAmount,
+            lpppAmount: finalLppp,
             minVolume1h: minVolume,
             minLiquidity,
             minMcap
@@ -211,6 +233,30 @@ function App() {
         setIsBuyUsd(!currentIsUsd);
     };
 
+    const toggleLpUnit = () => {
+        if (!lpppPrice || lpppPrice <= 0) {
+            console.warn("LPPP Price not ready yet");
+            setIsLpUsd(!isLpUsd);
+            return;
+        }
+
+        const currentIsUsd = isLpUsd;
+        let newAmount = lpppAmount;
+
+        if (currentIsUsd) {
+            // USD -> LPPP
+            newAmount = lpppAmount / lpppPrice;
+            newAmount = Math.round(newAmount * 10) / 10;
+        } else {
+            // LPPP -> USD
+            newAmount = lpppAmount * lpppPrice;
+            newAmount = Math.round(newAmount * 100) / 100;
+        }
+
+        setLpppAmount(newAmount);
+        setIsLpUsd(!currentIsUsd);
+    };
+
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
             {/* Header */}
@@ -245,9 +291,10 @@ function App() {
                                 <Settings2 size={18} className="text-muted-foreground" />
                                 <h2 className="text-sm font-semibold">Configuration</h2>
                             </div>
-                            {solPrice && (
-                                <span className="text-[10px] text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded border border-border">SOL: ${solPrice.toFixed(2)}</span>
-                            )}
+                            <div className="flex gap-2">
+                                {solPrice && <span className="text-[10px] text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded border border-border">SOL: ${solPrice.toFixed(2)}</span>}
+                                {lpppPrice && <span className="text-[10px] text-emerald-400/80 font-mono bg-emerald-900/10 px-2 py-0.5 rounded border border-emerald-500/20">LPPP: ${lpppPrice.toFixed(4)}</span>}
+                            </div>
                         </div>
 
                         <div className="mb-4">
@@ -270,13 +317,20 @@ function App() {
                             />
                         </div>
 
-                        <SettingInput
-                            label="LP Size ($LPPP)"
-                            value={lpppAmount}
-                            onChange={setLpppAmount}
-                            disabled={running}
-                            unit="LPPP"
-                        />
+                        <div className="mb-4">
+                            <button onClick={toggleLpUnit} className="text-[9px] font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-1 bg-primary/5 px-2 py-1 rounded border border-primary/20 mb-2">
+                                <Zap size={8} /> SWITCH TO {isLpUsd ? 'LPPP' : 'USD'}
+                            </button>
+                            <SettingInput
+                                label={`LP Size (${isLpUsd ? 'USD' : 'LPPP'})`}
+                                value={lpppAmount}
+                                onChange={setLpppAmount}
+                                disabled={running}
+                                prefix={isLpUsd ? "$" : ""}
+                                unit={isLpUsd ? "USD" : "LPPP"}
+                                subtext={!isLpUsd && lpppPrice ? `≈ $${(lpppAmount * lpppPrice).toFixed(2)}` : (isLpUsd && lpppPrice ? `≈ ${(lpppAmount / lpppPrice).toFixed(1)} LPPP` : undefined)}
+                            />
+                        </div>
 
                         <div className="mt-4 pt-4 border-t border-border space-y-4">
                             <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Scanner Criteria</p>

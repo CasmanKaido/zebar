@@ -44,22 +44,33 @@ app.post("/api/stop", (req, res) => {
 
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
 app.get("/api/price", async (req, res) => {
-    try {
-        // Fetch from Jupiter (V2 or V1) or CoinGecko
-        // Using CoinGecko Simple Price as Primary for reliability without API Key
-        const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
-        const data = await response.json();
+    const prices = { sol: 0, lppp: 0 };
 
-        if (data && data.solana && data.solana.usd) {
-            return res.json({ price: data.solana.usd });
+    try {
+        // 1. Fetch SOL Price (CoinGecko)
+        try {
+            const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
+            const solData = await solRes.json();
+            if (solData?.solana?.usd) prices.sol = solData.solana.usd;
+        } catch (e) {
+            console.error("SOL Price fetch failed:", e);
         }
 
-        throw new Error("Invalid price data");
+        // 2. Fetch LPPP Price (DexScreener)
+        try {
+            const lpppRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+            const lpppData = await lpppRes.json();
+            if (lpppData?.pairs?.[0]?.priceUsd) {
+                prices.lppp = parseFloat(lpppData.pairs[0].priceUsd);
+            }
+        } catch (e) {
+            console.error("LPPP Price fetch failed:", e);
+        }
+
+        return res.json(prices);
     } catch (error) {
-        console.error("Price Proxy Error:", error);
-        // Fallback to a hardcoded logic or previous known price could go here, 
-        // but user requested REAL data, so we return error if we can't get it.
-        res.status(500).json({ error: "Failed to fetch price" });
+        console.error("Price Proxy Critical Error:", error);
+        res.status(500).json({ error: "Failed to fetch prices" });
     }
 });
 
