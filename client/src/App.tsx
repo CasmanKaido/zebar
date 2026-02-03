@@ -272,8 +272,8 @@ function App() {
                 </div>
 
                 {/* Right Column: Terminal */}
-                <div className="bg-[#050505] border border-border rounded-lg flex flex-col h-[500px] lg:h-full overflow-hidden shadow-2xl">
-                    <div className="bg-secondary p-2 px-4 border-b border-border flex items-center justify-between">
+                <div className="bg-[#050505] border border-border rounded-lg flex flex-col h-[600px] overflow-hidden shadow-2xl relative">
+                    <div className="bg-secondary p-2 px-4 border-b border-border flex items-center justify-between shrink-0">
                         <div className="flex gap-2">
                             <button
                                 onClick={() => setActiveTab('terminal')}
@@ -291,7 +291,7 @@ function App() {
                         <button onClick={clearLogs} className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1">CLEAR</button>
                     </div>
 
-                    <div className="flex-1 relative overflow-hidden">
+                    <div className="flex-1 relative overflow-hidden bg-black/40">
                         <AnimatePresence mode="wait">
                             {activeTab === 'terminal' ? (
                                 <motion.div
@@ -299,7 +299,7 @@ function App() {
                                     initial={{ opacity: 0 }}
                                     animate={{ opacity: 1 }}
                                     exit={{ opacity: 0 }}
-                                    className="h-full p-4 overflow-y-auto font-mono text-[13px] text-primary space-y-2 leading-relaxed"
+                                    className="absolute inset-0 p-4 overflow-y-auto font-mono text-[13px] text-primary space-y-2 leading-relaxed custom-scrollbar"
                                 >
                                     {logs.length === 0 && (
                                         <div className="h-full flex flex-col items-center justify-center text-muted-foreground/30 gap-2">
@@ -308,15 +308,15 @@ function App() {
                                         </div>
                                     )}
                                     {logs.map((log, i) => (
-                                        <div key={i} className="flex gap-2">
-                                            <span className="opacity-50 shrink-0">[{log.timestamp.split('T')[1].split('.')[0]}]</span>
-                                            <span className={log.type === 'error' ? 'text-red-500' : log.type === 'warning' ? 'text-yellow-500' : ''}>
+                                        <div key={i} className="flex gap-2 break-words">
+                                            <span className="opacity-40 shrink-0 select-none">[{log.timestamp.split('T')[1].split('.')[0]}]</span>
+                                            <span className={`flex-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'warning' ? 'text-yellow-400' : log.type === 'success' ? 'text-emerald-400' : 'text-primary/90'}`}>
                                                 {formatMessage(log.message)}
                                             </span>
                                         </div>
                                     ))}
                                     {running && (
-                                        <div className="w-2 h-4 bg-primary cursor-blink inline-block ml-1 align-middle"></div>
+                                        <div className="w-2 h-4 bg-primary/60 cursor-blink inline-block ml-1 align-middle"></div>
                                     )}
                                     <div ref={logsEndRef} />
                                 </motion.div>

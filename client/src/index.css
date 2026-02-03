@@ -78,6 +78,24 @@ body {
   background: var(--muted-foreground);
 }
 
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+  opacity: 0.5;
+}
+
 @keyframes blink {
 
   0%,
@@ -92,4 +110,11 @@ body {
 
 .cursor-blink {
   animation: blink 1s infinite;
+}
+
+/* Base styles to prevent layout shifts */
+html,
+body {
+  height: 100%;
+  overflow-x: hidden;
 }
