@@ -11,7 +11,8 @@ import {
     Droplets,
     BarChart3,
     LineChart,
-    Search
+    Search,
+    Wallet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 // Use environment variable or default to empty string for unified same-host deployment
@@ -74,9 +75,11 @@ function App() {
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
     const [lpppPrice, setLpppPrice] = useState<number | null>(null);
+    const [portfolio, setPortfolio] = useState<{ sol: number, lppp: number }>({ sol: 0, lppp: 0 });
 
     // Scan Criteria
     const [buyAmount, setBuyAmount] = useState(0.1);
+
     const [lpppAmount, setLpppAmount] = useState(1000);
     const [minVolume, setMinVolume] = useState(100000);
     const [minLiquidity, setMinLiquidity] = useState(60000);
@@ -151,6 +154,23 @@ function App() {
 
         fetchPrices();
         const interval = setInterval(fetchPrices, 30000); // Check every 30s
+        return () => clearInterval(interval);
+    }, []);
+
+    // Fetch Portfolio
+    useEffect(() => {
+        const fetchPortfolio = async () => {
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/portfolio`);
+                const data = await res.json();
+                if (data) setPortfolio(data);
+            } catch (e) {
+                console.error("Portfolio fetch error:", e);
+            }
+        };
+
+        fetchPortfolio();
+        const interval = setInterval(fetchPortfolio, 30000);
         return () => clearInterval(interval);
     }, []);
 
@@ -387,14 +407,32 @@ function App() {
                             </div>
                         </div>
 
-                        {/* Total Volume Stat */}
-                        <div className="bg-card border border-border rounded-lg p-6 flex flex-col justify-between">
-                            <div className="flex justify-between items-start">
-                                <span className="text-[13px] text-muted-foreground font-medium">Total Volume</span>
-                                <BarChart3 size={16} className="text-muted-foreground" />
+                        {/* Wallet Portfolio */}
+                        <div className="bg-card border border-border rounded-lg p-5 flex flex-col justify-between">
+                            <div className="flex justify-between items-start mb-2">
+                                <span className="text-[13px] text-muted-foreground font-medium">My Portfolio</span>
+                                <Wallet size={16} className="text-muted-foreground" />
                             </div>
-                            <div className="text-3xl font-bold mt-3 font-mono">
-                                $0.00
+                            <div className="flex flex-col gap-2">
+                                <div className="flex justify-between items-end">
+                                    <span className="text-xs font-mono text-muted-foreground font-bold">SOL</span>
+                                    <div className="text-right leading-none">
+                                        <div className="font-bold text-base">{portfolio.sol.toFixed(3)}</div>
+                                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                                            {solPrice ? `≈ $${(portfolio.sol * solPrice).toFixed(2)}` : '$-.--'}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="h-[1px] bg-border/40"></div>
+                                <div className="flex justify-between items-end">
+                                    <span className="text-xs font-mono text-emerald-400 font-bold">LPPP</span>
+                                    <div className="text-right leading-none">
+                                        <div className="font-bold text-base text-emerald-400">{portfolio.lppp.toLocaleString()}</div>
+                                        <div className="text-[10px] text-emerald-500/60 mt-0.5">
+                                            {lpppPrice ? `≈ $${(portfolio.lppp * lpppPrice).toFixed(2)}` : '$-.--'}
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

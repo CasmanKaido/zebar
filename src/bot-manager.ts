@@ -102,4 +102,31 @@ export class BotManager {
         SocketManager.emitStatus(false);
         SocketManager.emitLog("ZEBAR Scanning Service Stopped.", "warning");
     }
+
+    async getPortfolio() {
+        try {
+            // 1. SOL Balance
+            const solBalance = await connection.getBalance(wallet.publicKey);
+
+            // 2. LPPP Balance
+            const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
+
+            let lpppBalance = 0;
+            if (tokenAccounts.value.length > 0) {
+                // Sum up directly from parsed uiAmount (handles decimals automatically)
+                lpppBalance = tokenAccounts.value.reduce((acc, account) => {
+                    return acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0);
+                }, 0);
+            }
+
+            return {
+                sol: solBalance / 1e9,
+                lppp: lpppBalance
+            };
+        } catch (error) {
+            console.error("Portfolio Fetch Error:", error);
+            return { sol: 0, lppp: 0 };
+        }
+    }
 }

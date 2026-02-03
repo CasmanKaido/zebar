@@ -74,6 +74,12 @@ app.get("/api/price", async (req, res) => {
     }
 });
 
+// Portfolio Endpoint
+app.get("/api/portfolio", async (req, res) => {
+    const portfolio = await botManager.getPortfolio();
+    res.json(portfolio);
+});
+
 // Catch-all to serve React's index.html
 app.use((req, res) => {
     res.sendFile(path.join(clientPath, "index.html"));
