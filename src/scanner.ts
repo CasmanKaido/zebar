@@ -61,31 +61,48 @@ export class MarketScanner {
     }
 
     private async performMarketSweep() {
-        SocketManager.emitLog("[SWEEPER] Sweeping market for active opportunities...", "info");
+        SocketManager.emitLog("[SWEEPER] Harvesting the whole Solana ecosystem for opportunities...", "info");
 
         try {
-            // Using multiple discovery points to expand the search beyond just the top 30 SOL pairs
-            const DISCOVERY_MINTS = [
-                "So11111111111111111111111111111111111111112", // SOL
-                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
-                "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
-            ];
-
             let allPairs: any[] = [];
 
-            // 1. Get tokens from base mints
-            for (const mint of DISCOVERY_MINTS) {
+            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Pools (Paginated)
+            // This hits Raydium, Meteora, Orca, etc. and finds EVERYTHING with volume
+            for (let page = 1; page <= 5; page++) {
                 try {
-                    const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, { timeout: 5000 });
-                    if (res.data.pairs) allPairs = [...allPairs, ...res.data.pairs];
-                } catch (e) { }
+                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
+                    if (geckoRes.data.data) {
+                        const pagePairs = geckoRes.data.data.map((p: any) => ({
+                            pairAddress: p.attributes.address,
+                            chainId: "solana",
+                            baseToken: {
+                                symbol: p.attributes.name.split(" / ")[0],
+                                address: p.relationships.base_token.data.id.split("_")[1]
+                            },
+                            quoteToken: {
+                                symbol: p.attributes.name.split(" / ")[1],
+                                address: p.relationships.quote_token.data.id.split("_")[1]
+                            },
+                            priceUsd: p.attributes.base_token_price_usd,
+                            volume: { h1: Number(p.attributes.volume_usd.h1) },
+                            liquidity: { usd: Number(p.attributes.reserve_in_usd) },
+                            marketCap: Number(p.attributes.fdv_usd) || 0
+                        }));
+                        allPairs = [...allPairs, ...pagePairs];
+                    }
+                } catch (e: any) {
+                    console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
+                }
             }
 
-            // 2. Get tokens from broad search
-            try {
-                const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=solana`, { timeout: 5000 });
-                if (searchRes.data.pairs) allPairs = [...allPairs, ...searchRes.data.pairs];
-            } catch (e) { }
+            // 2. Add Broad DexScreener Search (Raydium & Meteora specifically)
+            const keywordQueries = ["raydium", "meteora"];
+            for (const query of keywordQueries) {
+                try {
+                    const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${query}`, { timeout: 5000 });
+                    if (searchRes.data.pairs) allPairs = [...allPairs, ...searchRes.data.pairs];
+                } catch (e) { }
+            }
 
             // Deduplicate pairs by address
             const uniquePairsMap = new Map();
@@ -98,12 +115,12 @@ export class MarketScanner {
             const pairs = Array.from(uniquePairsMap.values());
 
             if (pairs.length === 0) {
-                SocketManager.emitLog("[SWEEPER] No active pairs found on the radar right now.", "warning");
+                SocketManager.emitLog("[SWEEPER] Ecosystem harvest came up empty. Retrying...", "warning");
                 return;
             }
 
-            console.log(`[SWEEPER] Evaluating ${pairs.length} unique records...`);
-            SocketManager.emitLog(`[SWEEPER] Evaluating ${pairs.length} unique records...`, "info");
+            console.log(`[SWEEPER] Evaluating ${pairs.length} unique assets from across the ecosystem...`);
+            SocketManager.emitLog(`[SWEEPER] Evaluated ${pairs.length} assets. No caps applied.`, "info");
 
             let candidatesFound = 0;
 
@@ -112,7 +129,6 @@ export class MarketScanner {
                 const lastSeen = this.seenPairs.get(pair.pairAddress);
                 if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
 
-                // WRAPPED SOL or STABLES we might want to ignore as targets
                 const SOL_MINT = "So11111111111111111111111111111111111111112";
                 const IGNORED_MINTS = [
                     SOL_MINT,
@@ -124,10 +140,10 @@ export class MarketScanner {
                     "mSoLzYawRXYr3WvR86An1Ah6B1isS2nEv4tXQ7pA9Ym",   // mSOL
                     "7dHbS7zSToynF6L8abS2yz7iYit2tiX1XW1tH8YqXgH",   // stSOL
                     "J1tosoecvw9U96jrN17H8NfE59p5RST213R9RNoeWCH",   // jitoSOL
-                    "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", // RAY (often high liq but maybe not target)
+                    "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", // RAY
                 ];
 
-                // Determine which token is our "Target"
+                // Determine target
                 let targetToken = pair.baseToken;
                 let priceUSD = Number(pair.priceUsd || 0);
 
@@ -147,24 +163,23 @@ export class MarketScanner {
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
-                // FOR TESTING: If filters are low, we force pick
+                // Testing bypass
                 const isTesting = this.criteria.minVolume1h <= 100 && this.criteria.minMcap <= 100;
 
                 if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
                     const matchMsg = isTesting
-                        ? `[TARGET FOUND] Test Match: ${targetToken.symbol} (Criteria Bypassed)`
-                        : `[TARGET FOUND] ${targetToken.symbol} passed all metrics!`;
+                        ? `[ECOSYSTEM MATCH] Test: ${targetToken.symbol}`
+                        : `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics!`;
 
                     console.log(matchMsg);
                     SocketManager.emitLog(matchMsg, "success");
 
-                    // We mark it with a timestamp for cooldown
                     this.seenPairs.set(pair.pairAddress, Date.now());
 
                     const result: ScanResult = {
                         mint: new PublicKey(targetToken.address),
                         pairAddress: pair.pairAddress,
-                        volume24h: Number(volume1h), // Keeping field name for ScanResult compatibility or updating it later
+                        volume24h: Number(volume1h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
                         symbol: targetToken.symbol
@@ -175,16 +190,17 @@ export class MarketScanner {
                 }
             }
 
-            const summaryMsg = `[SCAN COMPLETE] Found ${candidatesFound} candidates. Next scan in 30s.`;
+            const summaryMsg = `[ECOSYSTEM SWEEP COMPLETE] Next harvest in 30s.`;
             console.log(summaryMsg);
             SocketManager.emitLog(summaryMsg, "info");
 
         } catch (err: any) {
-            const errMsg = `[SWEEPER API ERROR] ${err.message}`;
+            const errMsg = `[HARVESTER ERROR] ${err.message}`;
             console.error(errMsg);
             SocketManager.emitLog(errMsg, "error");
         }
     }
+
 
     stop() {
         this.isRunning = false;
