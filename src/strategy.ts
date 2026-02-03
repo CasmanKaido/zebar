@@ -5,6 +5,7 @@ import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } fr
 import BN from "bn.js";
 import DLMM from "@meteora-ag/dlmm";
 import axios from "axios";
+import { SocketManager } from "./socket";
 
 
 
@@ -163,17 +164,26 @@ export class StrategyManager {
      * Monitors the position and exits if it hits the target (8x).
      */
     async monitorAndExit(poolId: string, entryPrice: number) {
-        console.log(`[STRATEGY] Monitoring pool ${poolId} for 8x gain...`);
+        const msg = `[STRATEGY] Monitoring pool ${poolId} for 8x gain...`;
+        console.log(msg);
+        SocketManager.emitLog(msg, "info");
 
         // Interval check loop
         const interval = setInterval(async () => {
             // 1. Get current price/value of the LP position
             const currentPrice = await this.getPrice(poolId);
 
-            console.log(`[CHECK] Current: ${currentPrice}, Entry: ${entryPrice}, Target: ${entryPrice * 8}`);
+            const statsMsg = `[POSITION CHECK] Pool: ${poolId.slice(0, 8)}... | Price: ${currentPrice.toFixed(4)} | Target: ${(entryPrice * 8).toFixed(4)}`;
+            console.log(statsMsg);
+            // We only emit log to socket every minute or if significant move to avoid flooding
+            if (Math.random() > 0.9) {
+                SocketManager.emitLog(statsMsg, "info");
+            }
 
             if (currentPrice >= entryPrice * 8) {
-                console.log(`[TRIGGER] 8x Hit! Removing 80% liquidity...`);
+                const triggerMsg = `[TRIGGER] 8x Hit! Removing 80% liquidity...`;
+                console.log(triggerMsg);
+                SocketManager.emitLog(triggerMsg, "success");
                 await this.removeLiquidity(poolId, 0.8);
                 clearInterval(interval);
             }
