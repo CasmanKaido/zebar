@@ -150,11 +150,11 @@ function App() {
 
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
-        // We can add a simple toast or log here if needed, but for now, it just works
     };
 
     const formatMessage = (msg: string) => {
         // Regex for Solana Address
+        // eslint-disable-next-line
         const solanaRegex = /[1-9A-HJ-NP-Za-km-z]{32,44}/;
         const match = msg.match(solanaRegex);
 
@@ -177,6 +177,22 @@ function App() {
                 {parts[1]}
             </>
         );
+    };
+
+    const toggleBuyUnit = () => {
+        if (!solPrice) {
+            setIsBuyUsd(!isBuyUsd);
+            return;
+        }
+
+        if (isBuyUsd) {
+            // USD -> SOL
+            setBuyAmount(Number((buyAmount / solPrice).toFixed(4)));
+        } else {
+            // SOL -> USD
+            setBuyAmount(Number((buyAmount * solPrice).toFixed(2)));
+        }
+        setIsBuyUsd(!isBuyUsd);
     };
 
     return (
@@ -220,7 +236,7 @@ function App() {
 
                         <div className="mb-4">
                             <button
-                                onClick={() => setIsBuyUsd(!isBuyUsd)}
+                                onClick={toggleBuyUnit}
                                 className="text-[9px] font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-1 bg-primary/5 px-2 py-1 rounded border border-primary/20 mb-2"
                             >
                                 <Zap size={8} />
