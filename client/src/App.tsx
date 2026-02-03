@@ -180,19 +180,29 @@ function App() {
     };
 
     const toggleBuyUnit = () => {
-        if (!solPrice) {
+        if (!solPrice || solPrice <= 0) {
+            console.warn("SOL Price not ready yet");
             setIsBuyUsd(!isBuyUsd);
             return;
         }
 
-        if (isBuyUsd) {
+        const currentIsUsd = isBuyUsd;
+        let newAmount = buyAmount;
+
+        if (currentIsUsd) {
             // USD -> SOL
-            setBuyAmount(Number((buyAmount / solPrice).toFixed(4)));
+            newAmount = buyAmount / solPrice;
+            newAmount = Math.round(newAmount * 10000) / 10000; // Round to 4 decimals
         } else {
             // SOL -> USD
-            setBuyAmount(Number((buyAmount * solPrice).toFixed(2)));
+            newAmount = buyAmount * solPrice;
+            newAmount = Math.round(newAmount * 100) / 100; // Round to 2 decimals
         }
-        setIsBuyUsd(!isBuyUsd);
+
+        console.log(`Converting: ${buyAmount} ${currentIsUsd ? 'USD' : 'SOL'} -> ${newAmount} ${!currentIsUsd ? 'USD' : 'SOL'} (Price: ${solPrice})`);
+
+        setBuyAmount(newAmount);
+        setIsBuyUsd(!currentIsUsd);
     };
 
     return (
