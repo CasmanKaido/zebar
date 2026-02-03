@@ -12,7 +12,7 @@ export interface ScanResult {
 }
 
 export interface ScannerCriteria {
-    minVolume24h: number;
+    minVolume1h: number;
     minLiquidity: number;
     minMcap: number;
 }
@@ -143,12 +143,12 @@ export class MarketScanner {
                 const mcap = pair.marketCap || pair.fdv || 0;
 
                 // Check Criteria
-                const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume24h); // Note: keeping criteria name for compatibility
+                const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
                 // FOR TESTING: If filters are low, we force pick
-                const isTesting = this.criteria.minVolume24h <= 100 && this.criteria.minMcap <= 100;
+                const isTesting = this.criteria.minVolume1h <= 100 && this.criteria.minMcap <= 100;
 
                 if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
                     const matchMsg = isTesting
@@ -164,7 +164,7 @@ export class MarketScanner {
                     const result: ScanResult = {
                         mint: new PublicKey(targetToken.address),
                         pairAddress: pair.pairAddress,
-                        volume24h: Number(volume1h), // We use 1h vol but map to this field for now
+                        volume24h: Number(volume1h), // Keeping field name for ScanResult compatibility or updating it later
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
                         symbol: targetToken.symbol

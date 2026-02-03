@@ -9,7 +9,7 @@ import { SocketManager } from "./socket";
 export interface BotSettings {
     buyAmount: number; // in SOL
     lpppAmount: number; // in units
-    minVolume24h: number;
+    minVolume1h: number;
     minLiquidity: number;
     minMcap: number;
 }
@@ -21,7 +21,7 @@ export class BotManager {
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
-        minVolume24h: 100000,
+        minVolume1h: 100000,
         minLiquidity: 60000,
         minMcap: 60000
     };
@@ -46,10 +46,10 @@ export class BotManager {
 
         this.isRunning = true;
         SocketManager.emitStatus(true);
-        SocketManager.emitLog(`ZEBAR Streamer Active (Vol > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
+        SocketManager.emitLog(`ZEBAR Streamer Active (Vol1h > $${this.settings.minVolume1h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
 
         const criteria: ScannerCriteria = {
-            minVolume24h: this.settings.minVolume24h,
+            minVolume1h: this.settings.minVolume1h,
             minLiquidity: this.settings.minLiquidity,
             minMcap: this.settings.minMcap
         };
