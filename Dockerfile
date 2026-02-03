@@ -3,31 +3,11 @@ FROM node:18-slim AS builder
 
 WORKDIR /app
 
-# Copy package files for root (Backend)
-COPY package*.json ./
-COPY tsconfig.json ./
+# Copy all source files (Backend + Frontend)
+COPY . .
 
-# Install backend dependencies
+# Install dependencies and Build (using the combined build script in root package.json)
 RUN npm install
-
-# Copy backend source
-COPY src/ ./src/
-
-# Build Backend
-RUN npm run build
-
-# Copy package files for client (Frontend)
-WORKDIR /app/client
-COPY client/package*.json ./
-COPY client/tsconfig*.json ./
-
-# Install frontend dependencies
-RUN npm install
-
-# Copy frontend source and configs
-COPY client/ ./
-
-# Build Frontend
 RUN npm run build
 
 # Production Stage
