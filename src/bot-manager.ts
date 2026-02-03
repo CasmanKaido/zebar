@@ -9,6 +9,7 @@ import { SocketManager } from "./socket";
 export interface BotSettings {
     buyAmount: number; // in SOL
     lpppAmount: number; // in units
+    slippage: number; // in % (e.g. 10)
     minVolume1h: number;
     minLiquidity: number;
     minMcap: number;
@@ -21,6 +22,7 @@ export class BotManager {
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
+        slippage: 10,
         minVolume1h: 100000,
         minLiquidity: 60000,
         minMcap: 60000
@@ -62,8 +64,8 @@ export class BotManager {
             SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
 
             // 1. Swap (Buy)
-            SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL)...`, "warning");
-            const { success, amount } = await this.strategy.swapToken(result.mint, this.settings.buyAmount);
+            SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
+            const { success, amount } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage);
 
             if (success) {
                 SocketManager.emitLog(`Buy Successful! Swapped for ${amount.toString()} units.`, "success");

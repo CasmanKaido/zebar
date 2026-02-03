@@ -21,16 +21,17 @@ export class StrategyManager {
     /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
-    async swapToken(mint: PublicKey, amountSol: number): Promise<{ success: boolean; amount: bigint }> {
-        console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter`);
+    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10): Promise<{ success: boolean; amount: bigint }> {
+        console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
 
         try {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
+            const slippageBps = Math.floor(slippagePercent * 100);
 
             // 1. Get Quote
             const quoteResponse = (
                 await axios.get(
-                    `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=100`
+                    `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
                 )
             ).data;
 
@@ -38,12 +39,15 @@ export class StrategyManager {
                 throw new Error("Could not get quote from Jupiter");
             }
 
-            // 2. Get Swap Transaction
+            // 2. Get Swap Transaction (with Priority Fees)
             const { swapTransaction } = (
                 await axios.post('https://quote-api.jup.ag/v6/swap', {
                     quoteResponse,
                     userPublicKey: this.wallet.publicKey.toBase58(),
                     wrapAndUnwrapSol: true,
+                    // Dynamic Priority Fees for Landing Tx on Congested Network
+                    dynamicComputeUnitLimit: true,
+                    prioritizationFeeLamports: 'auto'
                 })
             ).data;
 
