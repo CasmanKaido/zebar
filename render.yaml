@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: zebar-bot
+    env: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_VERSION
+        value: 20.9.0
+    autoDeploy: true
