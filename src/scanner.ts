@@ -106,11 +106,14 @@ export class MarketScanner {
                 } catch (e) { }
             }
 
-            // Deduplicate pairs by address and FILTER FOR METEORA ONLY
+            // Deduplicate pairs by address and FILTER FOR METEORA DLMM ONLY
             const uniquePairsMap = new Map();
             allPairs.forEach(p => {
-                const isMeteora = p.dexId?.toLowerCase().includes("meteora") || p.relationships?.dex?.data?.id?.toLowerCase().includes("meteora");
-                if (isMeteora && p.chainId === "solana" && !uniquePairsMap.has(p.pairAddress)) {
+                const rawDexId = (p.dexId || p.relationships?.dex?.data?.id || "").toLowerCase();
+                // Strictly target DLMM, not standard Meteora AMM
+                const isMeteoraDLMM = rawDexId === "meteora_dlmm";
+
+                if (isMeteoraDLMM && p.chainId === "solana" && !uniquePairsMap.has(p.pairAddress)) {
                     uniquePairsMap.set(p.pairAddress, p);
                 }
             });
