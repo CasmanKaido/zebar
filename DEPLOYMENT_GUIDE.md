@@ -24,6 +24,17 @@ You can use the "Browser Terminal" in Hostinger, but it's better to use your own
 5.  Enter the **Root Password** you set in Step 1.
     *(Note: You won't see the characters while typing the password. Just type it and press Enter).*
 
+## Step 2.5: PREVENT CRASHES (Create Swap File)
+**Crucial Step:** Small servers (1GB RAM) will crash during build without this. Run these commands to add 2GB of "fake RAM" (swap):
+
+```bash
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
+```
+
 ## Step 3: Install Docker (One-Time Setup)
 Copy and paste this entire block into your VPS terminal to install Docker:
 
