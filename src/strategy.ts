@@ -343,12 +343,52 @@ export class StrategyManager {
 
         try {
             // 1. Fetch Pool Keys (Efficiently)
-            // Instead of downloading the 100MB+ mainnet.json, we fetch just the keys for this specific pair
-            const response = await axios.get(`https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`);
-            const poolData = response.data.data?.[0];
+            let poolData;
+            try {
+                const response = await axios.get(`https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`);
+                poolData = response.data.data?.[0];
+            } catch (apiErr) {
+                console.warn("[RAYDIUM] API Fetch failed, attempting on-chain discovery...");
+            }
 
             if (!poolData) {
-                return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found via API" };
+                // On-chain fallback would require full layout decoding which is heavy, 
+                // but we can at least try the V2 API which sometimes has different indexing.
+                try {
+                    const backupResponse = await axios.get(`https://api.raydium.io/v2/sdk/liquidity/mainnet.json`);
+                    // We search for the specific ID in the backup list
+                    poolData = backupResponse.data.official.find((p: any) => p.id === pairAddress) ||
+                        backupResponse.data.unOfficial.find((p: any) => p.id === pairAddress);
+
+                    if (poolData) {
+                        console.log("[RAYDIUM] Found pool data in backup V2 index.");
+                        // Map V2 format to expected structure
+                        poolData = {
+                            id: poolData.id,
+                            mintA: { address: poolData.baseMint, decimals: poolData.baseDecimals },
+                            mintB: { address: poolData.quoteMint, decimals: poolData.quoteDecimals },
+                            lpMint: { address: poolData.lpMint, decimals: poolData.lpDecimals },
+                            programId: poolData.programId,
+                            authority: poolData.authority,
+                            openOrders: poolData.openOrders,
+                            targetOrders: poolData.targetOrders,
+                            vault: { A: poolData.baseVault, B: poolData.quoteVault },
+                            marketProgramId: poolData.marketProgramId,
+                            marketId: poolData.marketId,
+                            marketAuthority: poolData.marketAuthority,
+                            marketVault: { A: poolData.marketBaseVault, B: poolData.marketQuoteVault },
+                            marketBids: poolData.marketBids,
+                            marketAsks: poolData.marketAsks,
+                            marketEventQueue: poolData.marketEventQueue
+                        };
+                    }
+                } catch (backupErr) {
+                    return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found visually or via API" };
+                }
+            }
+
+            if (!poolData) {
+                return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found anywhere" };
             }
 
             // Map API response to PoolKeys format
