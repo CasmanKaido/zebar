@@ -404,12 +404,59 @@ export class StrategyManager {
                         };
                     }
                 } catch (backupErr) {
-                    return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found visually or via API" };
+                    console.warn("[RAYDIUM] V2 Backup API failed...");
+                }
+            }
+
+            // 3. TRUE ON-CHAIN DISCOVERY (The "Nuclear Option")
+            if (!poolData) {
+                try {
+                    console.log("[RAYDIUM] Attempting direct on-chain account fetch...");
+                    const poolId = new PublicKey(pairAddress);
+                    const accountInfo = await this.connection.getAccountInfo(poolId);
+
+                    if (accountInfo) {
+                        const LIQUIDITY_STATE_LAYOUT_V4 = Liquidity.getStateLayout(4);
+                        const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(accountInfo.data);
+
+                        const marketId = poolState.marketId;
+                        const marketAccountInfo = await this.connection.getAccountInfo(marketId);
+
+                        if (marketAccountInfo) {
+                            // Decode Market Data using the Market class
+                            const MARKET_STATE_LAYOUT_V3 = Market.getLayout(marketAccountInfo.owner);
+                            const marketState = MARKET_STATE_LAYOUT_V3.decode(marketAccountInfo.data);
+
+                            // Reconstruction
+                            poolData = {
+                                id: pairAddress,
+                                mintA: { address: poolState.baseMint.toBase58(), decimals: poolState.baseDecimal.toNumber() },
+                                mintB: { address: poolState.quoteMint.toBase58(), decimals: poolState.quoteDecimal.toNumber() },
+                                lpMint: { address: poolState.lpMint.toBase58(), decimals: 9 },
+                                programId: accountInfo.owner.toBase58(),
+                                authority: PublicKey.default.toBase58(), // Calculated usually but SDK handles if implicit
+                                openOrders: poolState.openOrders.toBase58(),
+                                targetOrders: poolState.targetOrders.toBase58(),
+                                vault: { A: poolState.baseVault.toBase58(), B: poolState.quoteVault.toBase58() },
+                                marketProgramId: poolState.marketProgramId.toBase58(),
+                                marketId: marketId.toBase58(),
+                                marketAuthority: PublicKey.default.toBase58(),
+                                marketVault: { A: marketState.baseVault.toBase58(), B: marketState.quoteVault.toBase58() },
+                                marketBids: marketState.bids.toBase58(),
+                                marketAsks: marketState.asks.toBase58(),
+                                marketEventQueue: marketState.eventQueue.toBase58()
+                            };
+
+                            console.log("[RAYDIUM] SUCCESS: Reconstructed pool data from on-chain state!");
+                        }
+                    }
+                } catch (chainErr: any) {
+                    console.error("[RAYDIUM] On-Chain Discovery Failed:", chainErr.message);
                 }
             }
 
             if (!poolData) {
-                return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found anywhere" };
+                return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found anywhere (API or On-Chain)" };
             }
 
             // Map API response to PoolKeys format
