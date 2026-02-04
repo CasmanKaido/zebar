@@ -1,60 +1,55 @@
-# Hostinger VPS Deployment Guide (24/7 Hosting)
+# Cheapest 24/7 Deployment Guide (VPS + Docker)
 
-This guide is tailored for deploying your ZEBAR bot on a **Hostinger VPS** (Virtual Private Server). This runs your bot 24/7 for about **$5.99/mo** (KVM 1 Plan).
+Since you have exhausted the free tiers of PaaS providers like Vercel and Railway, the most cost-effective and reliable way to host your bot 24/7 is using a **Virtual Private Server (VPS)**.
 
-## Step 1: Buy & Set Up Hostinger VPS
-1.  Go to **Hostinger** -> **VPS**.
-2.  Choose the **KVM 1** plan (1 vCPU, 4GB RAM is plenty).
-3.  **Operating System**: Select **Ubuntu 22.04 64bit**.
-4.  Finish the purchase.
-5.  Go to the **VPS Dashboard** and set a **Root Password**.
-    *   *Note: Save this password! You will need it to login.*
+**Estimated Cost: $4 - $6 / month**
 
-## Step 2: Connect to Your Server
-You can use the "Browser Terminal" in Hostinger, but it's better to use your own terminal (Command Prompt/PowerShell).
+## Recommended Providers
+*   **Hostinger VPS** (Great for beginners, often has one-click Docker setup)
+*   **Hetzner Cloud** (Cheapest reliable option, ~€4-5/mo)
+*   **DigitalOcean** (Basic Droplet, $4/mo)
 
-1.  Find your **VPS IP Address** in the Hostinger Dashboard (e.g., `123.45.67.89`).
-2.  Open **Command Prompt** (Windows) or **Terminal** (Mac).
-3.  Type this command:
-    ```bash
-    ssh root@<YOUR_VPS_IP>
-    ```
-    *(Replace `<YOUR_VPS_IP>` with the actual numbers).*
-4.  Type `yes` if asked about authenticity.
-5.  Enter the **Root Password** you set in Step 1.
-    *(Note: You won't see the characters while typing the password. Just type it and press Enter).*
+### Special Note for Hostinger Users:
+*   **Template**: When setting up, choose **"Ubuntu 22.04 with Docker"** (Found in OS & Templates -> Applications). It skips the Docker installation step!
+*   **Firewall**: Hostinger blocks ports by default. Go to your **hPanel -> VPS -> Settings -> Security -> Firewall** and create a New Firewall Configuration. Add an "Allow" rule for **Port 3000** (TCP) so you can access your bot's website.
 
-## Step 2.5: PREVENT CRASHES (Create Swap File)
-**Crucial Step:** Small servers (1GB RAM) will crash during build without this. Run these commands to add 2GB of "fake RAM" (swap):
+## Step 1: Prepare Your Code
+I have already added the necessary Docker files to your project:
+*   `Dockerfile`: Instructions to build your bot and frontend.
+*   `docker-compose.yml`: Script to run the bot with one command.
 
+Ensure you push these changes to GitHub:
 ```bash
-fallocate -l 2G /swapfile
-chmod 600 /swapfile
-mkswap /swapfile
-swapon /swapfile
-echo '/swapfile none swap sw 0 0' | tee -a /etc/fstab
+git add .
+git commit -m "Added Docker deployment files"
+git push
 ```
 
-## Step 3: Install Docker (One-Time Setup)
-Copy and paste this entire block into your VPS terminal to install Docker:
+## Step 2: Get a VPS
+1.  Sign up for one of the providers above.
+2.  Create a **Ubuntu 22.04** or **Debian 12** server.
+3.  Choose the smallest size (1 vCPU, 512MB or 1GB RAM is enough for this bot).
+4.  Copy the **IP Address** and **root password** (or add your SSH key).
 
+## Step 3: Setup the Server
+Open a terminal on your computer and SSH into your new server:
 ```bash
-# Update and install Docker & Compose
-apt-get update
-apt-get install -y ca-certificates curl gnupg
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo \
-  "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-  tee /etc/apt/sources.list.d/docker.list > /dev/null
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+ssh root@<YOUR_SERVER_IP>
+# Enter password if asked
+```
+
+Run these commands to install Docker (copy-paste the whole block):
+```bash
+# Update and install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+
+# Install Docker Compose
+apt-get install -y docker-compose-plugin
 ```
 
 ## Step 4: Deploy Your Bot
-Now, download your bot code and run it.
+On the server, clone your repo and run it:
 
 ```bash
 # 1. Clone your repository
@@ -63,10 +58,10 @@ cd zebar
 
 # 2. Create your .env file
 nano .env
-# -> PASTE your .env contents here inside the window
-# -> Press Ctrl+X, then Y, then Enter to save.
+# PASTE your .env contents here (from your local machine)
+# Press Ctrl+X, then Y, then Enter to save.
 
-# 3. Start the bot (in the background)
+# 3. Start the bot
 docker compose up -d --build
 ```
 

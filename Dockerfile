@@ -10,8 +10,6 @@ RUN npm install
 
 # Copy source and build
 COPY client/ ./
-# Increase memory limit for build process to avoid OOM on small instances
-ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
 
 # ==========================================
