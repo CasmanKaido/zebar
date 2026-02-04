@@ -494,44 +494,30 @@ export class StrategyManager {
         console.log(`[STRATEGY] Initiating Meteora DLMM Swap for Pair: ${pairAddress}`);
 
         try {
-            const poolPubKey = new PublicKey(pairAddress);
-
-            // 1. Verify Program ID if possible (DLMM Program ID is known)
-            const METEORA_DLMM_PROGRAM_ID = "LBUZCDMG4qMH9f9kvH2CcG7pS1f9mG16nS6FvVd2NfL";
-            const accountInfo = await this.connection.getAccountInfo(poolPubKey);
-
-            if (accountInfo && accountInfo.owner.toBase58() !== METEORA_DLMM_PROGRAM_ID) {
-                return { success: false, amount: BigInt(0), error: "Not a Meteora DLMM Pool (Program ID mismatch)" };
-            }
-
             const SDK = DLMM as any;
-            const dlmmPool = await SDK.create(this.connection, poolPubKey);
+            const dlmmPool = await SDK.create(this.connection, new PublicKey(pairAddress));
 
-            if (!dlmmPool) throw new Error("Failed to initialize DLMM Pool instance");
+            // Determine direction - Use more robust property checking
+            const mintX = dlmmPool.tokenX?.publicKey || dlmmPool.tokenX?.mint || dlmmPool.mintX;
+            if (!mintX) throw new Error("Could not determine Token X mint from pool");
 
-            // 2. Determine direction - Extremely robust token identification
-            const tokenX = dlmmPool.tokenX || dlmmPool.mintX;
-            const tokenY = dlmmPool.tokenY || dlmmPool.mintY;
-
-            if (!tokenX || !tokenY) throw new Error("Pool metadata missing token information");
-
-            const mintX = (tokenX.publicKey || tokenX.mint || tokenX).toBase58();
-            const isBuyX = mintX === mint.toBase58();
+            const isBuyX = mintX.toBase58() === mint.toBase58();
             const swapAmount = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
             const swapForY = !isBuyX;
 
             console.log(`[METEORA] Swap Direction: ${swapForY ? "X -> Y" : "Y -> X"}`);
 
-            // 3. Execute Swap
+            // Using the latest SDK recommended swap method
+            // We need to handle potential versioned transactions
             const swapTx = await dlmmPool.swap({
                 inAmount: new BN(swapAmount.toString()),
-                lbPair: dlmmPool.pubkey || dlmmPool.pubKey || poolPubKey,
+                lbPair: dlmmPool.pubkey || dlmmPool.pubKey,
                 minOutAmount: new BN(0),
                 swapForY,
                 user: this.wallet.publicKey,
             });
 
-            // 4. Send transaction
+            // Send transaction - handle both Versioned and Legacy
             let txid: string;
             if (swapTx instanceof VersionedTransaction) {
                 swapTx.sign([this.wallet]);
@@ -541,15 +527,16 @@ export class StrategyManager {
             }
 
             console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txid}`);
-            return { success: true, amount: BigInt(0) };
+
+            return { success: true, amount: BigInt(0) }; // Actual amount requires parsing logs
 
         } catch (e: any) {
             console.error("[METEORA] Swap Failed:", e);
-            const msg = e.message || "Unknown error";
-            if (msg.includes("discriminator")) return { success: false, amount: BigInt(0), error: "Invalid Account (Not a DLMM Pool)" };
-            if (msg.includes("equals")) return { success: false, amount: BigInt(0), error: "SDK Internal Error (MetaData Mismatch)" };
-            return { success: false, amount: BigInt(0), error: `Meteora Error: ${msg}` };
+            // If it's the discriminator error, it means the pool isn't DLMM
+            if (e.message.includes("discriminator")) {
+                return { success: false, amount: BigInt(0), error: "Not a DLMM Pool (standard Meteora AMM not supported)" };
+            }
+            return { success: false, amount: BigInt(0), error: `Meteora Error: ${e.message}` };
         }
     }
 }
-
