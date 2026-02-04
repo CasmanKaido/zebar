@@ -177,20 +177,46 @@ export class StrategyManager {
                 activationPoint
             );
 
+            const poolAddress = newPool.pubkey;
+            console.log(`[SUCCESS] Meteora Pool Created: ${poolAddress.toBase58()}`);
 
-            // `newPool` is a DLMM instance in the latest SDK
-            // We need to get its address.
-            console.log(`[SUCCESS] Meteora Pool Created: ${newPool.pubkey.toBase58()}`);
+            // 5. AUTOMATED: Add Initial Liquidity
+            SocketManager.emitLog(`[ACTION] Seeding Liquidity: ${amountX.toString()} X & ${amountY.toString()} Y...`, "warning");
 
-            // 5. Add Initial Liquidity
-            console.log(`[ACTION] Please add liquidity to ${newPool.pubkey.toBase58()} manually or via next step.`);
+            // Define the strategy (Spot deposit around the current bin)
+            // StrategyType: 0 = Spot, 1 = Curve, 2 = Bid-Ask
+            const totalX = new BN(amountX.toString());
+            const totalY = new BN(amountY.toString());
 
-            return { poolId: newPool.pubkey.toBase58(), protocol: "meteora" };
+            // We initialize with a simple spot strategy across 1 bin (the current one)
+            // for the very first deposit to set the initial price.
+            const addLiquidityTx = await newPool.initializePositionAndAddLiquidityByStrategy({
+                positionPubKey: Keypair.generate().publicKey, // Temporary position
+                user: this.wallet.publicKey,
+                totalX,
+                totalY,
+                strategy: {
+                    maxBinId: 0,
+                    minBinId: 0,
+                    strategyType: 0 // Spot
+                }
+            });
 
+            // Sign and send
+            const txid = await sendAndConfirmTransaction(
+                this.connection,
+                addLiquidityTx,
+                [this.wallet],
+                { skipPreflight: true, commitment: "confirmed" }
+            );
 
-        } catch (error) {
-            console.error(`[ERROR] Failed to create Meteora Pool:`, error);
-            // Return null so the main loop knows it failed
+            SocketManager.emitLog(`[SUCCESS] Liquidity Seeded! Tx: ${txid.slice(0, 8)}...`, "success");
+
+            return { poolId: poolAddress.toBase58(), protocol: "meteora" };
+
+        } catch (error: any) {
+            console.error(`[ERROR] Full Automation Failed:`, error);
+            SocketManager.emitLog(`Pool/Liquidity Error: ${error.message}`, "error");
             return null;
         }
     }
