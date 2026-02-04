@@ -24,48 +24,42 @@ export class StrategyManager {
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10): Promise<{ success: boolean; amount: bigint; error?: string }> {
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
 
-        const getBaseUrl = async (useFallback: boolean) => {
-            return useFallback ? "https://api.jup.ag/swap/v6" : "https://quote-api.jup.ag/v6";
-        };
-
         try {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
-            // 1. Get Quote (With Fallback)
+            // 1. Get Quote (With Retry Logic)
             let quoteResponse;
-            let usedFallback = false;
+            let attempts = 0;
+            const maxRetries = 3;
 
-            try {
-                // Try Primary
-                quoteResponse = (await axios.get(
-                    `${await getBaseUrl(false)}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
-                )).data;
-            } catch (err: any) {
-                if (err.code === 'ENOTFOUND' || err.message.includes('jup.ag')) {
-                    console.warn("[STRATEGY] Primary Jupiter API failed, switching to fallback...");
-                    usedFallback = true;
+            while (attempts < maxRetries) {
+                try {
                     quoteResponse = (await axios.get(
-                        `${await getBaseUrl(true)}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
+                        `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
                     )).data;
-                } else {
-                    throw err;
+                    break; // Success
+                } catch (err: any) {
+                    attempts++;
+                    console.warn(`[STRATEGY] Jupiter Quote Attempt ${attempts} failed: ${err.message}`);
+                    if (attempts >= maxRetries) throw err;
+                    await new Promise(r => setTimeout(r, 1000)); // Wait 1s
                 }
             }
 
             if (!quoteResponse) {
-                throw new Error("Could not get quote from Jupiter");
+                throw new Error("Could not get quote from Jupiter (Max Retries)");
             }
 
-            // 2. Get Swap Transaction (Using same endpoint as success quote)
+            // 2. Get Swap Transaction
             const { swapTransaction } = (
-                await axios.post(`${await getBaseUrl(usedFallback)}/swap`, {
+                await axios.post('https://quote-api.jup.ag/v6/swap', {
                     quoteResponse,
                     userPublicKey: this.wallet.publicKey.toBase58(),
                     wrapAndUnwrapSol: true,
-                    // Dynamic Priority Fees for Landing Tx on Congested Network
-                    dynamicComputeUnitLimit: true,
-                    prioritizationFeeLamports: 'auto'
+                    // Note: Removing 'auto' priority fee which can trigger 401 on some endpoints if not authenticated
+                    // We rely on standard prioritization or default
+                    dynamicComputeUnitLimit: true
                 })
             ).data;
 
