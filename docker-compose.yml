@@ -1,0 +1,15 @@
+services:
+  zebar-bot:
+    build: .
+    container_name: zebar_bot_container
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      # Optional: Persist logs or data if you have local DB files
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
