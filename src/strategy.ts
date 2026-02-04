@@ -5,6 +5,7 @@ import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOK
 import BN from "bn.js";
 import DLMM from "@meteora-ag/dlmm";
 import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID } from "@raydium-io/raydium-sdk";
+import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
 
@@ -423,7 +424,8 @@ export class StrategyManager {
                         const marketAccountInfo = await this.connection.getAccountInfo(marketId);
 
                         if (marketAccountInfo) {
-                            // Decode Market Data using the Market class
+                            // Decode Market Data using the Market class from @project-serum/serum
+                            // Program ID for decoding is usually the owner of the account
                             const MARKET_STATE_LAYOUT_V3 = Market.getLayout(marketAccountInfo.owner);
                             const marketState = MARKET_STATE_LAYOUT_V3.decode(marketAccountInfo.data);
 
