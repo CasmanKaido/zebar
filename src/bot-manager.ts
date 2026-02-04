@@ -65,7 +65,7 @@ export class BotManager {
 
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
-            const { success, amount } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage);
+            const { success, amount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage);
 
             if (success) {
                 SocketManager.emitLog(`Buy Successful! Swapped for ${amount.toString()} units.`, "success");
@@ -89,7 +89,8 @@ export class BotManager {
                     this.strategy.monitorAndExit(poolInfo.poolId, 1);
                 }
             } else {
-                SocketManager.emitLog(`Buy Failed or Token Error. Skipping...`, "error");
+                // Log detailed error to frontend
+                SocketManager.emitLog(`Buy Failed: ${error || "Unknown Error"}`, "error");
             }
         });
 

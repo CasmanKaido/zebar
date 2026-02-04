@@ -21,7 +21,7 @@ export class StrategyManager {
     /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
-    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10): Promise<{ success: boolean; amount: bigint }> {
+    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10): Promise<{ success: boolean; amount: bigint; error?: string }> {
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
 
         try {
@@ -77,8 +77,12 @@ export class StrategyManager {
             return { success: true, amount: outAmount };
 
         } catch (error: any) {
-            console.error(`[ERROR] Jupiter Swap failed:`, error.message);
-            return { success: false, amount: BigInt(0) };
+            let errMsg = error.message;
+            if (axios.isAxiosError(error) && error.response?.data) {
+                errMsg = `API Error: ${JSON.stringify(error.response.data)}`;
+            }
+            console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
+            return { success: false, amount: BigInt(0), error: errMsg };
         }
     }
 
