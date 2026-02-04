@@ -24,24 +24,42 @@ export class StrategyManager {
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10): Promise<{ success: boolean; amount: bigint; error?: string }> {
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
 
+        const getBaseUrl = async (useFallback: boolean) => {
+            return useFallback ? "https://api.jup.ag/swap/v6" : "https://quote-api.jup.ag/v6";
+        };
+
         try {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
-            // 1. Get Quote
-            const quoteResponse = (
-                await axios.get(
-                    `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
-                )
-            ).data;
+            // 1. Get Quote (With Fallback)
+            let quoteResponse;
+            let usedFallback = false;
+
+            try {
+                // Try Primary
+                quoteResponse = (await axios.get(
+                    `${await getBaseUrl(false)}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
+                )).data;
+            } catch (err: any) {
+                if (err.code === 'ENOTFOUND' || err.message.includes('jup.ag')) {
+                    console.warn("[STRATEGY] Primary Jupiter API failed, switching to fallback...");
+                    usedFallback = true;
+                    quoteResponse = (await axios.get(
+                        `${await getBaseUrl(true)}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
+                    )).data;
+                } else {
+                    throw err;
+                }
+            }
 
             if (!quoteResponse) {
                 throw new Error("Could not get quote from Jupiter");
             }
 
-            // 2. Get Swap Transaction (with Priority Fees)
+            // 2. Get Swap Transaction (Using same endpoint as success quote)
             const { swapTransaction } = (
-                await axios.post('https://quote-api.jup.ag/v6/swap', {
+                await axios.post(`${await getBaseUrl(usedFallback)}/swap`, {
                     quoteResponse,
                     userPublicKey: this.wallet.publicKey.toBase58(),
                     wrapAndUnwrapSol: true,
