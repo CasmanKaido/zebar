@@ -187,8 +187,9 @@ export class StrategyManager {
 
             // We initialize with a simple spot strategy across 1 bin (the current one)
             // for the very first deposit to set the initial price.
+            const positionKeypair = Keypair.generate();
             const addLiquidityTx = await newPool.initializePositionAndAddLiquidityByStrategy({
-                positionPubKey: Keypair.generate().publicKey, // Temporary position
+                positionPubKey: positionKeypair.publicKey,
                 user: this.wallet.publicKey,
                 totalX,
                 totalY,
@@ -199,15 +200,25 @@ export class StrategyManager {
                 }
             });
 
-            // Sign and send
-            const txid = await sendAndConfirmTransaction(
-                this.connection,
-                addLiquidityTx,
-                [this.wallet],
-                { skipPreflight: true, commitment: "confirmed" }
-            );
+            // Sign and send - handle potentially multiple transactions or versioned transactions
+            let txid: string;
+            const txs = Array.isArray(addLiquidityTx) ? addLiquidityTx : [addLiquidityTx];
 
-            SocketManager.emitLog(`[SUCCESS] Liquidity Seeded! Tx: ${txid.slice(0, 8)}...`, "success");
+            for (const tx of txs) {
+                if (tx instanceof VersionedTransaction) {
+                    tx.sign([this.wallet, positionKeypair]);
+                    txid = await this.connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+                } else {
+                    txid = await sendAndConfirmTransaction(
+                        this.connection,
+                        tx,
+                        [this.wallet, positionKeypair],
+                        { skipPreflight: true, commitment: "confirmed" }
+                    );
+                }
+            }
+
+            SocketManager.emitLog(`[SUCCESS] Liquidity Seeded! Tx: ${txid!.slice(0, 8)}...`, "success");
 
             return { poolId: poolAddress.toBase58(), protocol: "meteora" };
 
@@ -486,59 +497,45 @@ export class StrategyManager {
             const SDK = DLMM as any;
             const dlmmPool = await SDK.create(this.connection, new PublicKey(pairAddress));
 
-            // Determine direction
-            // We are buying 'mint' with SOL.
-            // Check if mint is Token X or Token Y
-            const isBuyX = dlmmPool.tokenX.publicKey.toBase58() === mint.toBase58();
-            const swapAmount = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL)); // Input is SOL
-            const swapForY = !isBuyX; // If we want X, we swap Y->X (swapForY=false). If we want Y, we swap X->Y (swapForY=true)
+            // Determine direction - Use more robust property checking
+            const mintX = dlmmPool.tokenX?.publicKey || dlmmPool.tokenX?.mint || dlmmPool.mintX;
+            if (!mintX) throw new Error("Could not determine Token X mint from pool");
 
-            // Swap Parameters
-            // Meteora SDK swap signature might vary, relying on basic usage:
-            // swap({ inToken, outToken, inAmount, minOutAmount, lbPair, user, ... })
-            // But DLMM class has .swap() method usually.
+            const isBuyX = mintX.toBase58() === mint.toBase58();
+            const swapAmount = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
+            const swapForY = !isBuyX;
 
-            // Checking DLMM SDK docs usually:
-            // await dlmmPool.swap({ inToken, outToken, inAmount, minOutAmount, lbPair, user, ... })
+            console.log(`[METEORA] Swap Direction: ${swapForY ? "X -> Y" : "Y -> X"}`);
 
-            // For safety and speed, we assume we might need to use a general swap instruction builder if class method is complex.
-            // But let's try the high-level method if available or construct tx.
-
-            // Using a simplified approach assuming we can build the tx:
-            const binArrays = await dlmmPool.getBinArrayForSwap(swapForY);
-
-            // Ensure we have the swap method access
-            const swapParams = {
-                inToken: swapForY ? dlmmPool.tokenX.publicKey : dlmmPool.tokenY.publicKey,
-                outToken: swapForY ? dlmmPool.tokenY.publicKey : dlmmPool.tokenX.publicKey,
-                inAmount: new BN(swapAmount.toString()),
-                minOutAmount: new BN(0), // Slippage handling needed here
-                lbPair: dlmmPool.pubkey,
-                user: this.wallet.publicKey,
-                binArrays: binArrays,
-                slippage: new BN(slippagePercent * 100) // BPS?
-            };
-
-            // Calculate min amount out for slippage
-            // const quote = dlmmPool.swapQuote(swapAmount, swapForY, new BN(slippagePercent * 100)); 
-            // swapParams.minOutAmount = quote.minOut;
-
+            // Using the latest SDK recommended swap method
+            // We need to handle potential versioned transactions
             const swapTx = await dlmmPool.swap({
                 inAmount: new BN(swapAmount.toString()),
-                lbPair: dlmmPool.pubkey,
-                minOutAmount: new BN(0), // Needs quote logic for strict slippage
+                lbPair: dlmmPool.pubkey || dlmmPool.pubKey,
+                minOutAmount: new BN(0),
                 swapForY,
                 user: this.wallet.publicKey,
-                priorityFee: { unitLimit: 200000, unitPrice: 100000 } // Auto fee
             });
 
-            const txid = await sendAndConfirmTransaction(this.connection, swapTx, [this.wallet], { skipPreflight: true });
+            // Send transaction - handle both Versioned and Legacy
+            let txid: string;
+            if (swapTx instanceof VersionedTransaction) {
+                swapTx.sign([this.wallet]);
+                txid = await this.connection.sendRawTransaction(swapTx.serialize(), { skipPreflight: true });
+            } else {
+                txid = await sendAndConfirmTransaction(this.connection, swapTx, [this.wallet], { skipPreflight: true });
+            }
+
             console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txid}`);
 
-            return { success: true, amount: BigInt(0) }; // TODO: Return actual amount
+            return { success: true, amount: BigInt(0) }; // Actual amount requires parsing logs
 
         } catch (e: any) {
             console.error("[METEORA] Swap Failed:", e);
+            // If it's the discriminator error, it means the pool isn't DLMM
+            if (e.message.includes("discriminator")) {
+                return { success: false, amount: BigInt(0), error: "Not a DLMM Pool (standard Meteora AMM not supported)" };
+            }
             return { success: false, amount: BigInt(0), error: `Meteora Error: ${e.message}` };
         }
     }
