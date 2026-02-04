@@ -1,10 +1,10 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction } from "@solana/web3.js";
 import { wallet, connection } from "./config";
 import { PumpFunHandler } from "./pumpfun";
-import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from "@solana/spl-token";
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import BN from "bn.js";
 import DLMM from "@meteora-ag/dlmm";
-import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL } from "@raydium-io/raydium-sdk";
+import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID } from "@raydium-io/raydium-sdk";
 import axios from "axios";
 import { SocketManager } from "./socket";
 
@@ -38,14 +38,14 @@ export class StrategyManager {
             while (attempts < maxRetries) {
                 try {
                     quoteResponse = (await axios.get(
-                        `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}`
+                        `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&swapMode=ExactIn`
                     )).data;
                     break; // Success
                 } catch (err: any) {
                     attempts++;
                     console.warn(`[STRATEGY] Jupiter Quote Attempt ${attempts} failed: ${err.message}`);
                     if (attempts >= maxRetries) throw err;
-                    await new Promise(r => setTimeout(r, 1000)); // Wait 1s
+                    await new Promise(r => setTimeout(r, 2000)); // Wait 2s
                 }
             }
 
@@ -59,9 +59,8 @@ export class StrategyManager {
                     quoteResponse,
                     userPublicKey: this.wallet.publicKey.toBase58(),
                     wrapAndUnwrapSol: true,
-                    // Note: Removing 'auto' priority fee which can trigger 401 on some endpoints if not authenticated
-                    // We rely on standard prioritization or default
-                    dynamicComputeUnitLimit: true
+                    dynamicComputeUnitLimit: true,
+                    prioritizationFeeLamports: 'auto' // Prioritize for success
                 })
             ).data;
 
@@ -98,7 +97,9 @@ export class StrategyManager {
             console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
 
             // FALLBACK TO DIRECT DEX SWAP IF PAIR KNOWN
-            if (pairAddress && (errMsg.includes("ENOTFOUND") || errMsg.includes("401"))) {
+            const isTransientError = errMsg.includes("ENOTFOUND") || errMsg.includes("401") || errMsg.includes("429") || errMsg.includes("timeout") || errMsg.includes("500") || errMsg.includes("Network Error");
+
+            if (pairAddress && isTransientError) {
                 if (dexId === 'meteora') {
                     console.log("[STRATEGY] Attempting Fallback to Meteora DLMM Direct Swap...");
                     SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Meteora DLMM...", "warning");
@@ -339,25 +340,53 @@ export class StrategyManager {
         console.log(`[STRATEGY] Initiating Raydium Direct Swap for Pair: ${pairAddress}`);
 
         try {
-            // 1. Fetch Pool Keys
-            const allPools = (await axios.get('https://api.raydium.io/v2/sdk/liquidity/mainnet.json')).data;
-            const poolKeys = allPools.official.find((p: any) => p.id === pairAddress) || allPools.unOfficial.find((p: any) => p.id === pairAddress);
+            // 1. Fetch Pool Keys (Efficiently)
+            // Instead of downloading the 100MB+ mainnet.json, we fetch just the keys for this specific pair
+            const response = await axios.get(`https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`);
+            const poolData = response.data.data?.[0];
 
-            if (!poolKeys) {
-                return { success: false, amount: BigInt(0), error: "Raydium Pool Keys not found" };
+            if (!poolData) {
+                return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found via API" };
             }
+
+            // Map API response to PoolKeys format
+            const poolKeys: LiquidityPoolKeys = {
+                id: new PublicKey(poolData.id),
+                baseMint: new PublicKey(poolData.mintA.address),
+                quoteMint: new PublicKey(poolData.mintB.address),
+                lpMint: new PublicKey(poolData.lpMint.address),
+                baseDecimals: poolData.mintA.decimals,
+                quoteDecimals: poolData.mintB.decimals,
+                lpDecimals: poolData.lpMint.decimals,
+                version: 4,
+                programId: new PublicKey(poolData.programId),
+                authority: new PublicKey(poolData.authority),
+                openOrders: new PublicKey(poolData.openOrders),
+                targetOrders: new PublicKey(poolData.targetOrders),
+                baseVault: new PublicKey(poolData.vault.A),
+                quoteVault: new PublicKey(poolData.vault.B),
+                withdrawQueue: PublicKey.default,
+                lpVault: PublicKey.default,
+                marketVersion: 3,
+                marketProgramId: new PublicKey(poolData.marketProgramId),
+                marketId: new PublicKey(poolData.marketId),
+                marketAuthority: new PublicKey(poolData.marketAuthority),
+                marketBaseVault: new PublicKey(poolData.marketVault.A),
+                marketQuoteVault: new PublicKey(poolData.marketVault.B),
+                marketBids: new PublicKey(poolData.marketBids),
+                marketAsks: new PublicKey(poolData.marketAsks),
+                marketEventQueue: new PublicKey(poolData.marketEventQueue),
+                lookupTableAccount: PublicKey.default,
+            };
 
             // 2. Define Tokens
             const SOL_MINT = "So11111111111111111111111111111111111111112";
-            const currencyIn = poolKeys.quoteMint === SOL_MINT ? Token.WSOL : new Token(new PublicKey(poolKeys.quoteMint), poolKeys.quoteMint, poolKeys.quoteDecimals);
-            // Note: We blindly assume we have SOL and want to buy the other token. 
-            // In Raydium JSON, baseMint is usually the token, quoteMint is SOL/USDC.
-            // If we are buying the token (base), we are selling quote (SOL).
+            const currencyIn = poolKeys.quoteMint.toBase58() === SOL_MINT ? Token.WSOL : new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.quoteMint, Number(poolKeys.quoteDecimals), "QUOTE", "Quote Token");
 
-            const isBase = poolKeys.baseMint === mint.toBase58();
+            const isBase = poolKeys.baseMint.toBase58() === mint.toBase58();
             const currencyOut = isBase
-                ? new Token(new PublicKey(poolKeys.baseMint), poolKeys.baseMint, poolKeys.baseDecimals)
-                : new Token(new PublicKey(poolKeys.quoteMint), poolKeys.quoteMint, poolKeys.quoteDecimals);
+                ? new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.baseMint, Number(poolKeys.baseDecimals), "BASE", "Base Token")
+                : new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.quoteMint, Number(poolKeys.quoteDecimals), "QUOTE", "Quote Token");
 
             // 3. Compute Amounts
             const amountIn = new TokenAmount(currencyIn, Math.floor(amountSol * 1e9), false);
