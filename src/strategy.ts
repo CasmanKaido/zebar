@@ -99,19 +99,13 @@ export class StrategyManager {
             console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
 
             // FALLBACK TO DIRECT DEX SWAP IF PAIR KNOWN
+            // FALLBACK TO METEORA ONLY
             const isTransientError = errMsg.includes("ENOTFOUND") || errMsg.includes("401") || errMsg.includes("429") || errMsg.includes("timeout") || errMsg.includes("500") || errMsg.includes("Network Error");
 
-            if (pairAddress && isTransientError) {
-                if (dexId === 'meteora') {
-                    console.log("[STRATEGY] Attempting Fallback to Meteora DLMM Direct Swap...");
-                    SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Meteora DLMM...", "warning");
-                    return this.swapMeteoraDLMM(mint, pairAddress, amountSol, slippagePercent);
-                }
-
-                // Default: Raydium
-                console.log("[STRATEGY] Attempting Fallback to Raydium Direct Swap...");
-                SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Raydium Direct...", "warning");
-                return this.swapRaydium(mint, pairAddress, amountSol, slippagePercent);
+            if (pairAddress && isTransientError && dexId === 'meteora') {
+                console.log("[STRATEGY] Attempting Fallback to Meteora DLMM Direct Swap...");
+                SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Meteora DLMM...", "warning");
+                return this.swapMeteoraDLMM(mint, pairAddress, amountSol, slippagePercent);
             }
 
             return { success: false, amount: BigInt(0), error: errMsg };

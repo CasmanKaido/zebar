@@ -97,8 +97,8 @@ export class MarketScanner {
                 }
             }
 
-            // 2. Add Broad DexScreener Search (Raydium & Meteora specifically)
-            const keywordQueries = ["raydium", "meteora"];
+            // 2. Add Broad DexScreener Search (Meteora specifically)
+            const keywordQueries = ["meteora"];
             for (const query of keywordQueries) {
                 try {
                     const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${query}`, { timeout: 5000 });
@@ -106,10 +106,11 @@ export class MarketScanner {
                 } catch (e) { }
             }
 
-            // Deduplicate pairs by address
+            // Deduplicate pairs by address and FILTER FOR METEORA ONLY
             const uniquePairsMap = new Map();
             allPairs.forEach(p => {
-                if (p.chainId === "solana" && !uniquePairsMap.has(p.pairAddress)) {
+                const isMeteora = p.dexId?.toLowerCase().includes("meteora") || p.relationships?.dex?.data?.id?.toLowerCase().includes("meteora");
+                if (isMeteora && p.chainId === "solana" && !uniquePairsMap.has(p.pairAddress)) {
                     uniquePairsMap.set(p.pairAddress, p);
                 }
             });
