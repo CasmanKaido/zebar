@@ -434,26 +434,45 @@ export class StrategyManager {
                     // Raydium V4 Program ID
                     const RAYDIUM_V4_PROGRAM_ID = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
                     const SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
+                    const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
-                    const filters = [
-                        { dataSize: 752 }, // Liquidity V4 State Size
-                        { memcmp: { offset: 400, bytes: mint.toBase58() } }, // Base Mint = Token
-                        { memcmp: { offset: 432, bytes: SOL_MINT.toBase58() } }  // Quote Mint = SOL
+                    // Filter 1: Token / SOL
+                    const filtersSol = [
+                        { dataSize: 752 },
+                        { memcmp: { offset: 400, bytes: mint.toBase58() } }, // Base = Token
+                        { memcmp: { offset: 432, bytes: SOL_MINT.toBase58() } }  // Quote = SOL
                     ];
 
-                    // Note: We should technically check both directions (Token/SOL and SOL/Token)
-                    // But 99% of pools are Token/SOL. Optimization: Check one direction first.
-
-                    let accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters });
+                    let accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersSol });
 
                     if (accounts.length === 0) {
-                        // Check reversed direction
-                        const filtersRev = [
+                        // Filter 2: SOL / Token
+                        const filtersSolRev = [
                             { dataSize: 752 },
                             { memcmp: { offset: 400, bytes: SOL_MINT.toBase58() } },
                             { memcmp: { offset: 432, bytes: mint.toBase58() } }
                         ];
-                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersRev });
+                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersSolRev });
+                    }
+
+                    if (accounts.length === 0) {
+                        // Filter 3: Token / USDC (Common for larger launches)
+                        const filtersUsdc = [
+                            { dataSize: 752 },
+                            { memcmp: { offset: 400, bytes: mint.toBase58() } },
+                            { memcmp: { offset: 432, bytes: USDC_MINT.toBase58() } }
+                        ];
+                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersUsdc });
+                    }
+
+                    if (accounts.length === 0) {
+                        // Filter 4: USDC / Token
+                        const filtersUsdcRev = [
+                            { dataSize: 752 },
+                            { memcmp: { offset: 400, bytes: USDC_MINT.toBase58() } },
+                            { memcmp: { offset: 432, bytes: mint.toBase58() } }
+                        ];
+                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersUsdcRev });
                     }
 
                     if (accounts.length > 0) {
