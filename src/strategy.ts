@@ -37,8 +37,9 @@ export class StrategyManager {
 
             while (attempts < maxRetries) {
                 try {
+                    // Using api.jup.ag/swap/v6 instead of quote-api.jup.ag
                     quoteResponse = (await axios.get(
-                        `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&swapMode=ExactIn`
+                        `https://api.jup.ag/swap/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`
                     )).data;
                     break; // Success
                 } catch (err: any) {
@@ -55,12 +56,13 @@ export class StrategyManager {
 
             // 2. Get Swap Transaction
             const { swapTransaction } = (
-                await axios.post('https://quote-api.jup.ag/v6/swap', {
+                await axios.post('https://api.jup.ag/swap/v6/swap', {
                     quoteResponse,
                     userPublicKey: this.wallet.publicKey.toBase58(),
                     wrapAndUnwrapSol: true,
                     dynamicComputeUnitLimit: true,
-                    prioritizationFeeLamports: 'auto' // Prioritize for success
+                    // Use microLamports for better fee control on public API
+                    computeUnitPriceMicroLamports: 100000
                 })
             ).data;
 
