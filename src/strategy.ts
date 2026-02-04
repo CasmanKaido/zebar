@@ -493,6 +493,18 @@ export class StrategyManager {
                     const poolId = new PublicKey(pairAddress);
                     const accountInfo = await this.connection.getAccountInfo(poolId);
 
+                    if (!accountInfo) {
+                        console.error(`[RAYDIUM] No account found at address: ${pairAddress}`);
+                        throw new Error("Pool account does not exist on-chain");
+                    }
+
+                    // Verify this is actually a Raydium account by checking owner
+                    const RAYDIUM_V4_PROGRAM_ID = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
+                    if (!accountInfo.owner.equals(RAYDIUM_V4_PROGRAM_ID)) {
+                        console.error(`[RAYDIUM] Account owner mismatch. Expected Raydium V4, got: ${accountInfo.owner.toBase58()}`);
+                        throw new Error("Account is not a Raydium V4 pool");
+                    }
+
                     if (accountInfo) {
                         const LIQUIDITY_STATE_LAYOUT_V4 = Liquidity.getStateLayout(4);
                         const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(accountInfo.data);
