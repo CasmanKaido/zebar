@@ -427,7 +427,47 @@ export class StrategyManager {
                 }
             }
 
+            // 2. TRUE ON-CHAIN SEARCH (If API fails, find the address ourselves)
+            if (!poolData) {
+                try {
+                    console.log("[RAYDIUM] Determining correct pool address on-chain...");
+                    // Raydium V4 Program ID
+                    const RAYDIUM_V4_PROGRAM_ID = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
+                    const SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
+
+                    const filters = [
+                        { dataSize: 752 }, // Liquidity V4 State Size
+                        { memcmp: { offset: 400, bytes: mint.toBase58() } }, // Base Mint = Token
+                        { memcmp: { offset: 432, bytes: SOL_MINT.toBase58() } }  // Quote Mint = SOL
+                    ];
+
+                    // Note: We should technically check both directions (Token/SOL and SOL/Token)
+                    // But 99% of pools are Token/SOL. Optimization: Check one direction first.
+
+                    let accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters });
+
+                    if (accounts.length === 0) {
+                        // Check reversed direction
+                        const filtersRev = [
+                            { dataSize: 752 },
+                            { memcmp: { offset: 400, bytes: SOL_MINT.toBase58() } },
+                            { memcmp: { offset: 432, bytes: mint.toBase58() } }
+                        ];
+                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersRev });
+                    }
+
+                    if (accounts.length > 0) {
+                        const correctPairAddress = accounts[0].pubkey.toBase58();
+                        console.log(`[RAYDIUM] Found On-Chain Pool Address: ${correctPairAddress} (Replacing: ${pairAddress})`);
+                        pairAddress = correctPairAddress; // UPDATE LOCAL VAR
+                    }
+                } catch (searchErr) {
+                    console.warn("[RAYDIUM] On-Chain Address Search Failed:", searchErr);
+                }
+            }
+
             // 3. TRUE ON-CHAIN DISCOVERY (The "Nuclear Option")
+            // This now uses the potentially corrected 'pairAddress'
             if (!poolData) {
                 try {
                     console.log("[RAYDIUM] Attempting direct on-chain account fetch...");
