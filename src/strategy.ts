@@ -370,7 +370,25 @@ export class StrategyManager {
                 const response = await axios.get(`https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`);
                 poolData = response.data.data?.[0];
             } catch (apiErr) {
-                console.warn("[RAYDIUM] API Fetch failed, attempting on-chain discovery...");
+                console.warn("[RAYDIUM] API Fetch by ID failed, proceeding to Mint discovery...");
+            }
+
+            // 1b. Fallback: Fetch by Mint (If pairAddress was invalid or from Meteora)
+            if (!poolData) {
+                try {
+                    console.log("[RAYDIUM] Pool ID lookup failed. Attempting lookup by Token Mint...");
+                    // Use WSOL Mint for the pair
+                    const SOL_MINT = "So11111111111111111111111111111111111111112";
+                    const response = await axios.get(`https://api-v3.raydium.io/pools/info/mint?mint1=${mint.toBase58()}&mint2=${SOL_MINT}&poolType=all&poolSortField=default&sortType=desc&pageSize=1&page=1`);
+                    poolData = response.data.data?.[0];
+
+                    if (poolData) {
+                        console.log(`[RAYDIUM] Found correct Pool ID via Mint: ${poolData.id}`);
+                        // We found it!
+                    }
+                } catch (mintErr) {
+                    console.warn("[RAYDIUM] API Fetch by Mint failed...");
+                }
             }
 
             if (!poolData) {
