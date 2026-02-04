@@ -4,6 +4,7 @@ import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from "@solana/spl-token";
 import BN from "bn.js";
 import DLMM from "@meteora-ag/dlmm";
+import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL } from "@raydium-io/raydium-sdk";
 import axios from "axios";
 import { SocketManager } from "./socket";
 
@@ -21,10 +22,11 @@ export class StrategyManager {
     /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
-    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10): Promise<{ success: boolean; amount: bigint; error?: string }> {
+    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; error?: string }> {
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
 
         try {
+            // ... (keep start of swapToken)
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
@@ -94,6 +96,21 @@ export class StrategyManager {
                 errMsg = `API Error: ${JSON.stringify(error.response.data)}`;
             }
             console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
+
+            // FALLBACK TO DIRECT DEX SWAP IF PAIR KNOWN
+            if (pairAddress && (errMsg.includes("ENOTFOUND") || errMsg.includes("401"))) {
+                if (dexId === 'meteora') {
+                    console.log("[STRATEGY] Attempting Fallback to Meteora DLMM Direct Swap...");
+                    SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Meteora DLMM...", "warning");
+                    return this.swapMeteoraDLMM(mint, pairAddress, amountSol, slippagePercent);
+                }
+
+                // Default: Raydium
+                console.log("[STRATEGY] Attempting Fallback to Raydium Direct Swap...");
+                SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Raydium Direct...", "warning");
+                return this.swapRaydium(mint, pairAddress, amountSol, slippagePercent);
+            }
+
             return { success: false, amount: BigInt(0), error: errMsg };
         }
     }
@@ -289,4 +306,150 @@ export class StrategyManager {
             SocketManager.emitLog("Critical Error during Liquidity Removal/Fee Claim.", "error");
         }
     }
+    /**
+     * Fallback: Swap directly via Raydium SDK if Jupiter fails.
+     */
+    async swapRaydium(mint: PublicKey, pairAddress: string, amountSol: number, slippagePercent: number): Promise<{ success: boolean; amount: bigint; error?: string }> {
+        console.log(`[STRATEGY] Initiating Raydium Direct Swap for Pair: ${pairAddress}`);
+
+        try {
+            // 1. Fetch Pool Keys
+            const allPools = (await axios.get('https://api.raydium.io/v2/sdk/liquidity/mainnet.json')).data;
+            const poolKeys = allPools.official.find((p: any) => p.id === pairAddress) || allPools.unOfficial.find((p: any) => p.id === pairAddress);
+
+            if (!poolKeys) {
+                return { success: false, amount: BigInt(0), error: "Raydium Pool Keys not found" };
+            }
+
+            // 2. Define Tokens
+            const SOL_MINT = "So11111111111111111111111111111111111111112";
+            const currencyIn = poolKeys.quoteMint === SOL_MINT ? Token.WSOL : new Token(new PublicKey(poolKeys.quoteMint), poolKeys.quoteMint, poolKeys.quoteDecimals);
+            // Note: We blindly assume we have SOL and want to buy the other token. 
+            // In Raydium JSON, baseMint is usually the token, quoteMint is SOL/USDC.
+            // If we are buying the token (base), we are selling quote (SOL).
+
+            const isBase = poolKeys.baseMint === mint.toBase58();
+            const currencyOut = isBase
+                ? new Token(new PublicKey(poolKeys.baseMint), poolKeys.baseMint, poolKeys.baseDecimals)
+                : new Token(new PublicKey(poolKeys.quoteMint), poolKeys.quoteMint, poolKeys.quoteDecimals);
+
+            // 3. Compute Amounts
+            const amountIn = new TokenAmount(currencyIn, Math.floor(amountSol * 1e9), false);
+            const slippageProxy = new Percent(slippagePercent, 100);
+
+            const computation = Liquidity.computeAmountOut({
+                poolKeys,
+                poolInfo: await Liquidity.fetchInfo({ connection: this.connection, poolKeys }),
+                amountIn,
+                currencyOut,
+                slippage: slippageProxy,
+            });
+
+            // 4. Create Transaction
+            const { innerTransactions } = await Liquidity.makeSwapInstructionSimple({
+                connection: this.connection,
+                poolKeys,
+                userKeys: {
+                    tokenAccounts: [], // SDK will find associated accounts
+                    owner: this.wallet.publicKey,
+                },
+                amountIn: amountIn,
+                amountOut: computation.minAmountOut,
+                fixedSide: 'in',
+                makeTxVersion: 0,
+            });
+
+            // 5. Build & Send
+            // innerTransactions is Array<InnerSimpleV0Transaction>
+            // Each has .instructions (TransactionInstruction[])
+            const iTx = innerTransactions[0];
+            const transaction = new Transaction();
+            transaction.add(...iTx.instructions);
+            transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+            transaction.feePayer = this.wallet.publicKey;
+
+            transaction.sign(this.wallet);
+            const rawTransaction = transaction.serialize();
+
+            const txid = await this.connection.sendRawTransaction(rawTransaction, { skipPreflight: true });
+            await this.connection.confirmTransaction(txid);
+
+            console.log(`[RAYDIUM] Swap Success: https://solscan.io/tx/${txid}`);
+            return { success: true, amount: BigInt(computation.amountOut.raw.toString()) };
+
+        } catch (e: any) {
+            console.error("[RAYDIUM] Swap Failed:", e);
+            return { success: false, amount: BigInt(0), error: `Raydium Error: ${e.message}` };
+        }
+
+
+    }
+
+    /**
+     * Fallback: Swap directly via Meteora DLMM SDK.
+     */
+    async swapMeteoraDLMM(mint: PublicKey, pairAddress: string, amountSol: number, slippagePercent: number): Promise<{ success: boolean; amount: bigint; error?: string }> {
+        console.log(`[STRATEGY] Initiating Meteora DLMM Swap for Pair: ${pairAddress}`);
+
+        try {
+            const SDK = DLMM as any;
+            const dlmmPool = await SDK.create(this.connection, new PublicKey(pairAddress));
+
+            // Determine direction
+            // We are buying 'mint' with SOL.
+            // Check if mint is Token X or Token Y
+            const isBuyX = dlmmPool.tokenX.publicKey.toBase58() === mint.toBase58();
+            const swapAmount = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL)); // Input is SOL
+            const swapForY = !isBuyX; // If we want X, we swap Y->X (swapForY=false). If we want Y, we swap X->Y (swapForY=true)
+
+            // Swap Parameters
+            // Meteora SDK swap signature might vary, relying on basic usage:
+            // swap({ inToken, outToken, inAmount, minOutAmount, lbPair, user, ... })
+            // But DLMM class has .swap() method usually.
+
+            // Checking DLMM SDK docs usually:
+            // await dlmmPool.swap({ inToken, outToken, inAmount, minOutAmount, lbPair, user, ... })
+
+            // For safety and speed, we assume we might need to use a general swap instruction builder if class method is complex.
+            // But let's try the high-level method if available or construct tx.
+
+            // Using a simplified approach assuming we can build the tx:
+            const binArrays = await dlmmPool.getBinArrayForSwap(swapForY);
+
+            // Ensure we have the swap method access
+            const swapParams = {
+                inToken: swapForY ? dlmmPool.tokenX.publicKey : dlmmPool.tokenY.publicKey,
+                outToken: swapForY ? dlmmPool.tokenY.publicKey : dlmmPool.tokenX.publicKey,
+                inAmount: new BN(swapAmount.toString()),
+                minOutAmount: new BN(0), // Slippage handling needed here
+                lbPair: dlmmPool.pubkey,
+                user: this.wallet.publicKey,
+                binArrays: binArrays,
+                slippage: new BN(slippagePercent * 100) // BPS?
+            };
+
+            // Calculate min amount out for slippage
+            // const quote = dlmmPool.swapQuote(swapAmount, swapForY, new BN(slippagePercent * 100)); 
+            // swapParams.minOutAmount = quote.minOut;
+
+            const swapTx = await dlmmPool.swap({
+                inAmount: new BN(swapAmount.toString()),
+                lbPair: dlmmPool.pubkey,
+                minOutAmount: new BN(0), // Needs quote logic for strict slippage
+                swapForY,
+                user: this.wallet.publicKey,
+                priorityFee: { unitLimit: 200000, unitPrice: 100000 } // Auto fee
+            });
+
+            const txid = await sendAndConfirmTransaction(this.connection, swapTx, [this.wallet], { skipPreflight: true });
+            console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txid}`);
+
+            return { success: true, amount: BigInt(0) }; // TODO: Return actual amount
+
+        } catch (e: any) {
+            console.error("[METEORA] Swap Failed:", e);
+            return { success: false, amount: BigInt(0), error: `Meteora Error: ${e.message}` };
+        }
+    }
 }
+

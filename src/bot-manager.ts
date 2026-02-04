@@ -65,7 +65,7 @@ export class BotManager {
 
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
-            const { success, amount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage);
+            const { success, amount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
 
             if (success) {
                 SocketManager.emitLog(`Buy Successful! Swapped for ${amount.toString()} units.`, "success");

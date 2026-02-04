@@ -5,6 +5,7 @@ import { SocketManager } from "./socket";
 export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
+    dexId: string;
     volume24h: number;
     liquidity: number;
     mcap: number;
@@ -75,6 +76,7 @@ export class MarketScanner {
                         const pagePairs = geckoRes.data.data.map((p: any) => ({
                             pairAddress: p.attributes.address,
                             chainId: "solana",
+                            dexId: p.relationships.dex.data.id, // e.g. 'raydium', 'meteora'
                             baseToken: {
                                 symbol: p.attributes.name.split(" / ")[0],
                                 address: p.relationships.base_token.data.id.split("_")[1]
@@ -179,6 +181,7 @@ export class MarketScanner {
                     const result: ScanResult = {
                         mint: new PublicKey(targetToken.address),
                         pairAddress: pair.pairAddress,
+                        dexId: pair.dexId || 'unknown',
                         volume24h: Number(volume1h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
