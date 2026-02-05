@@ -5,7 +5,7 @@ import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import BN from "bn.js";
 import DLMM from "@meteora-ag/dlmm";
-import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID } from "@raydium-io/raydium-sdk";
+import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID, SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk";
 import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
@@ -641,12 +641,17 @@ export class StrategyManager {
             const amountOut = computation.amountOut;
             const minAmountOut = computation.minAmountOut;
 
-            // 4. Create Transaction
+
+            // HELPER: Fetch Token Accounts manually for SDK verification
+            // This prevents "failed to simulate" errors inside the SDK due to missing account context
+            const userTokenAccounts = await this.getOwnerTokenAccounts();
+
+            // 4. Create Transaction Instructions (Simple V0)
             const { innerTransactions } = await Liquidity.makeSwapInstructionSimple({
                 connection: this.connection,
                 poolKeys,
                 userKeys: {
-                    tokenAccounts: [], // SDK will find associated accounts
+                    tokenAccounts: userTokenAccounts, // <--- PASS REAL ACCOUNTS
                     owner: this.wallet.publicKey,
                 },
                 amountIn: amountIn,
@@ -662,20 +667,21 @@ export class StrategyManager {
 
             let lastTxId = "";
             for (const iTx of innerTransactions) {
-                const transaction = new Transaction();
+                const tx = new Transaction();
 
-                // PRIORITY FEES (Add to EVERY transaction)
-                const PRIORITY_FEE_MICRO_LAMPOSTS = 100000;
-                transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 150000 })); // Increased limit
-                transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPOSTS }));
+                // PRIORITY FEES (Add to EVERY transaction) - Critical for Raydium
+                tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }));
+                tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100000 }));
 
-                transaction.add(...iTx.instructions);
-                transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-                transaction.feePayer = this.wallet.publicKey;
+                tx.add(...iTx.instructions);
+                tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+                tx.feePayer = this.wallet.publicKey;
 
-                transaction.sign(this.wallet);
-                const rawTransaction = transaction.serialize();
+                tx.sign(this.wallet);
+                const rawTransaction = tx.serialize();
 
+                // Skip Preflight to generally avoid "Simulation Error" blocking the send
+                // We rely on our added Compute Budget to get it processed
                 const txid = await this.connection.sendRawTransaction(rawTransaction, { skipPreflight: true });
                 console.log(`[RAYDIUM] Sent Internal Tx: https://solscan.io/tx/${txid}`);
 
@@ -693,6 +699,34 @@ export class StrategyManager {
         }
 
 
+    }
+
+    async getConnectionTokenAccounts(owner: PublicKey) {
+        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(owner, {
+            programId: TOKEN_PROGRAM_ID
+        });
+
+        return tokenAccounts.value.map(i => ({
+            pubkey: i.pubkey,
+            programId: i.account.owner,
+            accountInfo: SPL_ACCOUNT_LAYOUT.decode(i.account.data as any) // We might need raw data for decode
+            // Actually Raydium SDK expects specific format.
+            // Simplest is to pass empty and let SDK fetch, BUT IT FAILS.
+            // Alternative: Use `getTokenAccountsByOwner` with raw encoding and let SDK parse it if we pass it correctly.
+        }));
+    }
+
+    // Helper for SDK format
+    async getOwnerTokenAccounts() {
+        // Implementation that matches what Raydium expects
+        const walletTokenAccount = await this.connection.getTokenAccountsByOwner(this.wallet.publicKey, {
+            programId: TOKEN_PROGRAM_ID,
+        });
+        return walletTokenAccount.value.map((i) => ({
+            pubkey: i.pubkey,
+            programId: i.account.owner,
+            accountInfo: SPL_ACCOUNT_LAYOUT.decode(i.account.data),
+        }));
     }
 
     /**
