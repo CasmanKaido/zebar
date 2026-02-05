@@ -1,4 +1,4 @@
-import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram } from "@solana/web3.js";
 import { wallet, connection, JUPITER_API_KEY } from "./config";
 import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
@@ -660,6 +660,12 @@ export class StrategyManager {
             // Each has .instructions (TransactionInstruction[])
             const iTx = innerTransactions[0];
             const transaction = new Transaction();
+
+            // PRIORITY FEES: Essential for landing txs on Raydium
+            const PRIORITY_FEE_MICRO_LAMPOSTS = 100000; // 0.0001 SOL roughly
+            transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 100000 }));
+            transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPOSTS }));
+
             transaction.add(...iTx.instructions);
             transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
             transaction.feePayer = this.wallet.publicKey;
