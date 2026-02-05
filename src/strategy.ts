@@ -121,32 +121,41 @@ export class StrategyManager {
             }
             console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
 
-            // FALLBACK TO DIRECT DEX SWAP IF PAIR KNOWN
-            // WATERFALL FALLBACK STRATEGY: Jupiter -> Meteora -> Raydium
+            // FALLBACK TO DIRECT DEX SWAP
+            // WATERFALL FALLBACK STRATEGY: Jupiter -> Meteora -> Raydium -> Pump.fun
             const isTransientError = errMsg.includes("ENOTFOUND") || errMsg.includes("401") || errMsg.includes("429") || errMsg.includes("timeout") || errMsg.includes("500") || errMsg.includes("Network Error");
+            const isRouteNotFoundError = errMsg.includes("Route not found") || errMsg.includes("404") || errMsg.includes("Could not get quote");
 
-            if (pairAddress && isTransientError) {
+            // Trigger fallback if transient network error OR route not found (token too new/low liquidity for Jupiter)
+            const shouldFallback = isTransientError || isRouteNotFoundError;
 
-                // Priority 2: Meteora DLMM (If applicable)
-                if (dexId === 'meteora' || dexId === 'meteora_dlmm') {
+            if (shouldFallback) {
+                console.log("[STRATEGY] Jupiter Failed. evaluating Fallback options...");
+
+                // Priority 2: Meteora DLMM (Only if we know it's a Meteora pool or have a pair address)
+                if (pairAddress && (dexId === 'meteora' || dexId === 'meteora_dlmm')) {
                     console.log("[STRATEGY] Attempting Fallback to Meteora DLMM Direct Swap...");
                     SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Meteora DLMM...", "warning");
 
                     const meteoraResult = await this.swapMeteoraDLMM(mint, pairAddress, amountSol, slippagePercent);
-
-                    // If Meteora succeeds, return
                     if (meteoraResult.success) return meteoraResult;
 
-                    // If Meteora fails (e.g. Standard Pool), fall through to Raydium (Safety Net)
+                    // If Meteora fails, we continue to Raydium
                     console.warn(`[STRATEGY] Meteora DLMM Failed (${meteoraResult.error}). Attempting Raydium as last resort...`);
                 }
 
                 // Priority 3: Raydium (Default / Safety Net)
+                // If we have pairAddress OR we are willing to search for it (swapRaydium searches on-chain now)
                 console.log("[STRATEGY] Attempting Fallback to Raydium Direct Swap...");
                 SocketManager.emitLog("[FALLBACK] Switching to Raydium Direct...", "warning");
-                const raydiumResult = await this.swapRaydium(mint, pairAddress, amountSol, slippagePercent);
+
+                const raydiumResult = await this.swapRaydium(mint, pairAddress || '', amountSol, slippagePercent); // swapRaydium handles missing pairAddress now
                 if (raydiumResult.success) return raydiumResult;
 
+                // Priority 4: Pump.fun (Final Fallback)
+                console.log("[STRATEGY] Raydium Failed. Attempting Fallback to Pump.fun Bonding Curve...");
+                SocketManager.emitLog("[FALLBACK] Raydium Failed. Trying Pump.fun...", "warning");
+                return this.swapPumpFun(mint, amountSol, slippagePercent);
                 // Priority 4: Pump.fun (Final Fallback)
                 console.log("[STRATEGY] Raydium Failed. Attempting Fallback to Pump.fun Bonding Curve...");
                 SocketManager.emitLog("[FALLBACK] Raydium Failed. Trying Pump.fun...", "warning");
