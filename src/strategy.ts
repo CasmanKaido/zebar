@@ -747,7 +747,9 @@ export class StrategyManager {
             const curveState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
 
             if (!curveState) {
-                return { success: false, amount: BigInt(0), error: "Bonding Curve not found (Token might be migrated)" };
+                const msg = "Bonding Curve not found (Token might be migrated)";
+                console.error(`[PUMP ERROR] ${msg}`);
+                return { success: false, amount: BigInt(0), error: msg };
             }
 
             console.log(`[PUMP] Found Bonding Curve: ${curveState.bondingCurve.toBase58()}`);
@@ -756,7 +758,9 @@ export class StrategyManager {
             const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(curveState, amountSol, slippagePercent * 100);
 
             if (amountTokens === BigInt(0)) {
-                return { success: false, amount: BigInt(0), error: "Calculation failed due to liquidity limits" };
+                const msg = "Calculation failed due to liquidity limits (Amount 0)";
+                console.error(`[PUMP ERROR] ${msg}`);
+                return { success: false, amount: BigInt(0), error: msg };
             }
 
             console.log(`[PUMP] Buying ~${amountTokens.toString()} tokens for max ${maxSolCost.toString()} Lamports`);

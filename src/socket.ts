@@ -25,6 +25,14 @@ export class SocketManager {
     static emitLog(message: string, type: "info" | "success" | "error" | "warning" = "info") {
         const logEntry = { message, type, timestamp: new Date().toISOString() };
 
+        // Mirror to Console for Server Logs (Coolify/Docker)
+        const prefix = type.toUpperCase();
+        if (type === "error") {
+            console.error(`[${prefix}] ${message}`);
+        } else {
+            console.log(`[${prefix}] ${message}`);
+        }
+
         // Add to history
         this.logHistory.push(logEntry);
         if (this.logHistory.length > this.MAX_LOGS) {
