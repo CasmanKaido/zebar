@@ -1,5 +1,6 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction } from "@solana/web3.js";
-import { wallet, connection } from "./config";
+import { wallet, connection, JUPITER_API_KEY } from "./config";
+import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import BN from "bn.js";
@@ -36,11 +37,17 @@ export class StrategyManager {
             let attempts = 0;
             const maxRetries = 3;
 
+            const headers = {
+                'Content-Type': 'application/json',
+                'x-api-key': JUPITER_API_KEY || ''
+            };
+
             while (attempts < maxRetries) {
                 try {
-                    // Using api.jup.ag/swap/v6 instead of quote-api.jup.ag
+                    // Using api.jup.ag/swap/v6 instead of quote-api.jup.ag - Requires Key for High Rate
                     quoteResponse = (await axios.get(
-                        `https://api.jup.ag/swap/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`
+                        `https://api.jup.ag/swap/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`,
+                        { headers }
                     )).data;
                     break; // Success
                 } catch (err: any) {
@@ -55,39 +62,54 @@ export class StrategyManager {
                 throw new Error("Could not get quote from Jupiter (Max Retries)");
             }
 
-            // 2. Get Swap Transaction
-            const { swapTransaction } = (
-                await axios.post('https://api.jup.ag/swap/v6/swap', {
-                    quoteResponse,
-                    userPublicKey: this.wallet.publicKey.toBase58(),
-                    wrapAndUnwrapSol: true,
-                    dynamicComputeUnitLimit: true,
-                    // Use microLamports for better fee control on public API
-                    computeUnitPriceMicroLamports: 100000
-                })
-            ).data;
+            // 2. Request Ultra Order (Get Transaction)
+            // Ultra uses /ultra/v1/order to get the unsigned transaction
+            console.log(`[ULTRA] Requesting Order...`);
+            const orderResponse = (await axios.post('https://api.jup.ag/ultra/v1/order', {
+                quoteResponse,
+                userPublicKey: this.wallet.publicKey.toBase58(),
+                wrapAndUnwrapSol: true,
+                dynamicComputeUnitLimit: true, // Ultra usually handles this better
+                computeUnitPriceMicroLamports: 100000 // Priority fee
+            }, { headers })).data;
+
+            const { transaction: swapTransaction, requestId } = orderResponse;
+
+            if (!swapTransaction) {
+                throw new Error(`Ultra Order failed: No transaction returned. Response: ${JSON.stringify(orderResponse)}`);
+            }
+            console.log(`[ULTRA] Order Created. Request ID: ${requestId}`);
+
 
             // 3. Deserialize and Sign
             const swapTransactionBuf = Buffer.from(swapTransaction, 'base64');
             const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
             transaction.sign([this.wallet]);
 
-            // 4. Execute
-            const rawTransaction = transaction.serialize();
-            const txid = await this.connection.sendRawTransaction(rawTransaction, {
-                skipPreflight: true,
-                maxRetries: 2,
-                preflightCommitment: 'confirmed'
-            });
+            // 4. Execute via Ultra API
+            console.log(`[ULTRA] Executing Transaction...`);
+            const rawTransaction = Buffer.from(transaction.serialize()).toString('base64');
 
-            console.log(`[TX] Sent Swap: https://solscan.io/tx/${txid}`);
+            const executeResponse = (await axios.post('https://api.jup.ag/ultra/v1/execute', {
+                transaction: rawTransaction,
+                requestId: requestId
+            }, { headers })).data;
 
-            // 5. Wait for confirmation and check post-balance
+            // Ultra might return distinct status fields, but usually we just want to know if it was submitted.
+            // We can rely on blockchain confirmation for finality.
+            console.log(`[ULTRA] Execution Submitted. Response:`, executeResponse);
+
+            // Just in case Ultra execute returns a txid, use it. Otherwise derive it.
+            // executeResponse might contain 'txid' or 'signature'
+            const txid = executeResponse.txid || executeResponse.signature || bs58.encode(transaction.signatures[0]);
+
+            console.log(`[TX] Sent Swap (Ultra): https://solscan.io/tx/${txid}`);
+
+            // 5. Wait for confirmation
+            // Ultra handles landing, but we still verify locally.
             await this.connection.confirmTransaction(txid);
 
-            // Fetch bought amount from transaction meta or current balance change
-            // Simplified: return the outAmount from quote as an estimate, 
-            // In production, we'd check actual postTokenBalances
+            // Fetch bought amount estimate
             const outAmount = BigInt(quoteResponse.outAmount);
 
             return { success: true, amount: outAmount };

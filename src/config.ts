@@ -8,6 +8,9 @@ dotenv.config();
 export const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
 export const WSS_URL = process.env.WSS_URL || "wss://api.mainnet-beta.solana.com";
 
+// Jupiter API Key (Ultra/V6)
+export const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
+
 // Pump.fun Program ID
 export const PUMP_FUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 
