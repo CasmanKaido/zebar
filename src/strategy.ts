@@ -655,28 +655,36 @@ export class StrategyManager {
                 makeTxVersion: 0,
             });
 
-            // 5. Build & Send
-            // innerTransactions is Array<InnerSimpleV0Transaction>
-            // Each has .instructions (TransactionInstruction[])
-            const iTx = innerTransactions[0];
-            const transaction = new Transaction();
+            // 5. Build & Send Sequentially
+            // Raydium SDK might break the swap into multiple transactions (e.g. Setup ATA -> Swap)
+            // We must execute them in order.
+            console.log(`[RAYDIUM] Processing ${innerTransactions.length} internal transactions...`);
 
-            // PRIORITY FEES: Essential for landing txs on Raydium
-            const PRIORITY_FEE_MICRO_LAMPOSTS = 100000; // 0.0001 SOL roughly
-            transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 100000 }));
-            transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPOSTS }));
+            let lastTxId = "";
+            for (const iTx of innerTransactions) {
+                const transaction = new Transaction();
 
-            transaction.add(...iTx.instructions);
-            transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-            transaction.feePayer = this.wallet.publicKey;
+                // PRIORITY FEES (Add to EVERY transaction)
+                const PRIORITY_FEE_MICRO_LAMPOSTS = 100000;
+                transaction.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 150000 })); // Increased limit
+                transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPOSTS }));
 
-            transaction.sign(this.wallet);
-            const rawTransaction = transaction.serialize();
+                transaction.add(...iTx.instructions);
+                transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+                transaction.feePayer = this.wallet.publicKey;
 
-            const txid = await this.connection.sendRawTransaction(rawTransaction, { skipPreflight: true });
-            await this.connection.confirmTransaction(txid);
+                transaction.sign(this.wallet);
+                const rawTransaction = transaction.serialize();
 
-            console.log(`[RAYDIUM] Swap Success: https://solscan.io/tx/${txid}`);
+                const txid = await this.connection.sendRawTransaction(rawTransaction, { skipPreflight: true });
+                console.log(`[RAYDIUM] Sent Internal Tx: https://solscan.io/tx/${txid}`);
+
+                // Confirm before next step (Crucial for ATAs)
+                await this.connection.confirmTransaction(txid, "confirmed");
+                lastTxId = txid;
+            }
+
+            console.log(`[RAYDIUM] Swap Sequence Complete! Final Tx: https://solscan.io/tx/${lastTxId}`);
             return { success: true, amount: BigInt(computation.amountOut.raw.toString()) };
 
         } catch (e: any) {
