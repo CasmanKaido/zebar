@@ -122,7 +122,13 @@ export class StrategyManager {
                 // Priority 3: Raydium (Default / Safety Net)
                 console.log("[STRATEGY] Attempting Fallback to Raydium Direct Swap...");
                 SocketManager.emitLog("[FALLBACK] Switching to Raydium Direct...", "warning");
-                return this.swapRaydium(mint, pairAddress, amountSol, slippagePercent);
+                const raydiumResult = await this.swapRaydium(mint, pairAddress, amountSol, slippagePercent);
+                if (raydiumResult.success) return raydiumResult;
+
+                // Priority 4: Pump.fun (Final Fallback)
+                console.log("[STRATEGY] Raydium Failed. Attempting Fallback to Pump.fun Bonding Curve...");
+                SocketManager.emitLog("[FALLBACK] Raydium Failed. Trying Pump.fun...", "warning");
+                return this.swapPumpFun(mint, amountSol, slippagePercent);
             }
 
             return { success: false, amount: BigInt(0), error: errMsg };
@@ -601,6 +607,9 @@ export class StrategyManager {
                 slippage: slippageProxy,
             });
 
+            const amountOut = computation.amountOut;
+            const minAmountOut = computation.minAmountOut;
+
             // 4. Create Transaction
             const { innerTransactions } = await Liquidity.makeSwapInstructionSimple({
                 connection: this.connection,
@@ -691,6 +700,73 @@ export class StrategyManager {
                 return { success: false, amount: BigInt(0), error: "Not a DLMM Pool (standard Meteora AMM not supported)" };
             }
             return { success: false, amount: BigInt(0), error: `Meteora Error: ${e.message}` };
+        }
+    }
+
+
+    /**
+     * Fallback: Swap on Pump.fun Bonding Curve
+     * Used when the token is NOT on Raydium or Meteora yet.
+     */
+    async swapPumpFun(mint: PublicKey, amountSol: number, slippagePercent: number = 25): Promise<{ success: boolean; amount: bigint; error?: string }> {
+        console.log(`[STRATEGY] Initializing Pump.fun Swap for ${mint.toBase58()}...`);
+
+        try {
+            // 1. Fetch Bonding Curve State
+            const curveState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
+
+            if (!curveState) {
+                return { success: false, amount: BigInt(0), error: "Bonding Curve not found (Token might be migrated)" };
+            }
+
+            console.log(`[PUMP] Found Bonding Curve: ${curveState.bondingCurve.toBase58()}`);
+
+            // 2. Calculate Amounts
+            const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(curveState, amountSol, slippagePercent * 100);
+
+            if (amountTokens === BigInt(0)) {
+                return { success: false, amount: BigInt(0), error: "Calculation failed due to liquidity limits" };
+            }
+
+            console.log(`[PUMP] Buying ~${amountTokens.toString()} tokens for max ${maxSolCost.toString()} Lamports`);
+
+            // 3. Create Instruction
+            const { instruction, associatedUser, createAtaInstruction } = await PumpFunHandler.createBuyInstruction(
+                this.wallet.publicKey,
+                mint,
+                new BN(amountTokens.toString()), // Buy specific amount of tokens
+                new BN(maxSolCost.toString())    // Max SOL we are willing to pay
+            );
+
+            // 4. Build Transaction
+            const transaction = new Transaction();
+
+            // Add priority fee
+            transaction.add(
+                // Compute Budget logic could go here
+            );
+
+            // Add ATA creation if needed (usually handled, but good to ensure)
+            const ataInfo = await this.connection.getAccountInfo(associatedUser);
+            if (!ataInfo && createAtaInstruction) {
+                transaction.add(createAtaInstruction);
+            }
+
+            transaction.add(instruction);
+
+            // 5. Send
+            const txid = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet], {
+                skipPreflight: true,
+                commitment: "confirmed",
+                maxRetries: 3
+            });
+
+            console.log(`[PUMP] Swap Success! Tx: https://solscan.io/tx/${txid}`);
+            return { success: true, amount: BigInt(amountTokens.toString()) };
+
+        } catch (error: any) {
+            console.error(`[PUMP] Swap Failed:`, error);
+            return { success: false, amount: BigInt(0), error: error.message };
         }
     }
 }
