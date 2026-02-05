@@ -102,4 +102,5 @@ const PORT = process.env.PORT || 3001;
 
 httpServer.listen(PORT, () => {
     console.log(`ZEBAR Unified Server running on port ${PORT}`);
+    console.log(`ZEBAR Version: 1.1.0 (Raydium Fix + Compute Budget)`);
 });
