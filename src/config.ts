@@ -10,6 +10,7 @@ export const WSS_URL = process.env.WSS_URL || "wss://api.mainnet-beta.solana.com
 
 // Jupiter API Key (Ultra/V6)
 export const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
+export const JUPITER_API_URL = "https://api.jup.ag/ultra/v1/order";
 
 // Pump.fun Program ID
 export const PUMP_FUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");

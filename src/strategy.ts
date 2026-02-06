@@ -33,53 +33,40 @@ export class StrategyManager {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
-            // 1. Get Quote (With Retry Logic)
-            let quoteResponse;
-            let attempts = 0;
-            const maxRetries = 3;
+            // 1. Request Ultra Order (Directly - No separate quote step needed for Ultra)
+            console.log(`[ULTRA] Requesting Swap Order...`);
 
+            let orderResponse;
             const headers = {
-                'Content-Type': 'application/json',
                 'x-api-key': JUPITER_API_KEY || ''
             };
 
-            while (attempts < maxRetries) {
-                try {
-                    // Using api.jup.ag/swap/v6 instead of quote-api.jup.ag - Requires Key for High Rate
-                    quoteResponse = (await axios.get(
-                        `https://api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`,
-                        { headers }
-                    )).data;
-                    break; // Success
-                } catch (err: any) {
-                    attempts++;
-                    console.warn(`[STRATEGY] Jupiter Quote Attempt ${attempts} failed: ${err.message}`);
-                    if (attempts >= maxRetries) throw err;
-                    await new Promise(r => setTimeout(r, 2000)); // Wait 2s
+            try {
+                // Ultra V1: GET /ultra/v1/order
+                const params = new URLSearchParams({
+                    inputMint: "So11111111111111111111111111111111111111112",
+                    outputMint: mint.toBase58(),
+                    amount: amountLamports.toString(),
+                    taker: this.wallet.publicKey.toBase58(),
+                    // Optional: slippageBps could be added if needed, but Ultra handles it.
+                    // Ultra is "Recommended" because it manages routing/slippage automatically.
+                });
+
+                orderResponse = (await axios.get(`https://api.jup.ag/ultra/v1/order?${params}`, { headers })).data;
+
+            } catch (err: any) {
+                if (axios.isAxiosError(err) && err.response?.data) {
+                    throw new Error(`Ultra API Error: ${JSON.stringify(err.response.data)}`);
                 }
+                throw err;
             }
 
-            if (!quoteResponse) {
-                throw new Error("Could not get quote from Jupiter (Max Retries)");
-            }
-
-            // 2. Request Metis Swap Transaction
-            // Metis uses /swap/v1/swap to build the transaction
-            console.log(`[METIS] Requesting Swap Transaction...`);
-            const orderResponse = (await axios.post('https://api.jup.ag/swap/v1/swap', {
-                quoteResponse,
-                userPublicKey: this.wallet.publicKey.toBase58(),
-                wrapAndUnwrapSol: true,
-                dynamicComputeUnitLimit: true,
-                prioritizationFeeLamports: 100000 // Priority fee (Metis param)
-            }, { headers })).data;
-
-            const { swapTransaction, lastValidBlockHeight } = orderResponse; // Metis returns swapTransaction directly
+            const { transaction: swapTransaction, requestId } = orderResponse;
 
             if (!swapTransaction) {
-                throw new Error(`Metis Swap failed: No transaction returned. Response: ${JSON.stringify(orderResponse)}`);
+                throw new Error(`Ultra Order failed: No transaction returned. Response: ${JSON.stringify(orderResponse)}`);
             }
-            console.log(`[METIS] Swap Transaction Created.`);
+            console.log(`[ULTRA] Order Created. Type: Ultra Direct. Request ID: ${requestId}`);
 
 
             // 3. Deserialize and Sign
@@ -115,7 +102,7 @@ export class StrategyManager {
                 console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
 
                 // Return success
-                const outAmount = BigInt(quoteResponse.outAmount);
+                const outAmount = BigInt(0);
                 return { success: true, amount: outAmount };
 
             } catch (jitoError: any) {
@@ -130,12 +117,12 @@ export class StrategyManager {
                 await this.connection.confirmTransaction(txid);
                 console.log(`[STRATEGY] Jupiter Swap Success (RPC Fallback): https://solscan.io/tx/${txid}`);
 
-                const outAmount = BigInt(quoteResponse.outAmount);
+                const outAmount = BigInt(0);
                 return { success: true, amount: outAmount };
             }
 
             // Fetch bought amount estimate
-            const outAmount = BigInt(quoteResponse.outAmount);
+            const outAmount = BigInt(0);
 
             return { success: true, amount: outAmount };
 
