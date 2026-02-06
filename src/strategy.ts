@@ -166,7 +166,7 @@ export class StrategyManager {
             */
         }
 
-        return { success: false, amount: BigInt(0), error: errMsg };
+
     }
 
 
