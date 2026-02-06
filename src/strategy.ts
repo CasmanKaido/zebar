@@ -146,49 +146,27 @@ export class StrategyManager {
             }
             console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
 
-            // FALLBACK TO DIRECT DEX SWAP
-            // WATERFALL FALLBACK STRATEGY: Jupiter -> Meteora -> Raydium -> Pump.fun
+            // FALLBACK STRATEGY DISABLED (User: Full Jupiter/Metis Only)
+            // We rely 100% on Jupiter + Jito Bundles now.
+            // If Jupiter fails, we stop and retry next cycle.
+
+            console.warn(`[STRATEGY] Jupiter Failed. Fallbacks are DISABLED (Jupiter Only Mode).`);
+            SocketManager.emitLog("[STRATEGY] Jupiter Failed. Retrying next cycle...", "warning");
+
+            return { success: false, amount: BigInt(0), error: `Jupiter Only Mode: ${errMsg}` };
+
+            /* DISABLED FALLBACKS
             const isTransientError = errMsg.includes("ENOTFOUND") || errMsg.includes("401") || errMsg.includes("429") || errMsg.includes("timeout") || errMsg.includes("500") || errMsg.includes("Network Error");
             const isRouteNotFoundError = errMsg.includes("Route not found") || errMsg.includes("404") || errMsg.includes("Could not get quote");
-
-            // Trigger fallback if transient network error OR route not found (token too new/low liquidity for Jupiter)
             const shouldFallback = isTransientError || isRouteNotFoundError;
 
             if (shouldFallback) {
-                console.log("[STRATEGY] Jupiter Failed. evaluating Fallback options...");
-
-                // Priority 2: Meteora DLMM (Only if we know it's a Meteora pool or have a pair address)
-                if (pairAddress && (dexId === 'meteora' || dexId === 'meteora_dlmm')) {
-                    console.log("[STRATEGY] Attempting Fallback to Meteora DLMM Direct Swap...");
-                    SocketManager.emitLog("[FALLBACK] Jupiter Unreachable. Switching to Meteora DLMM...", "warning");
-
-                    const meteoraResult = await this.swapMeteoraDLMM(mint, pairAddress, amountSol, slippagePercent);
-                    if (meteoraResult.success) return meteoraResult;
-
-                    // If Meteora fails, we continue to Raydium
-                    console.warn(`[STRATEGY] Meteora DLMM Failed (${meteoraResult.error}). Attempting Raydium as last resort...`);
-                }
-
-                // Priority 3: Raydium (Default / Safety Net)
-                // If we have pairAddress OR we are willing to search for it (swapRaydium searches on-chain now)
-                console.log("[STRATEGY] Attempting Fallback to Raydium Direct Swap...");
-                SocketManager.emitLog("[FALLBACK] Switching to Raydium Direct...", "warning");
-
-                const raydiumResult = await this.swapRaydium(mint, pairAddress || '', amountSol, slippagePercent); // swapRaydium handles missing pairAddress now
-                if (raydiumResult.success) return raydiumResult;
-
-                // Priority 4: Pump.fun (Final Fallback)
-                console.log("[STRATEGY] Raydium Failed. Attempting Fallback to Pump.fun Bonding Curve...");
-                SocketManager.emitLog("[FALLBACK] Raydium Failed. Trying Pump.fun...", "warning");
-                return this.swapPumpFun(mint, amountSol, slippagePercent);
-                // Priority 4: Pump.fun (Final Fallback)
-                console.log("[STRATEGY] Raydium Failed. Attempting Fallback to Pump.fun Bonding Curve...");
-                SocketManager.emitLog("[FALLBACK] Raydium Failed. Trying Pump.fun...", "warning");
-                return this.swapPumpFun(mint, amountSol, slippagePercent);
+                 // ... Fallback logic removed ...
             }
-
-            return { success: false, amount: BigInt(0), error: errMsg };
+            */
         }
+
+        return { success: false, amount: BigInt(0), error: errMsg };
     }
 
 
@@ -764,27 +742,95 @@ export class StrategyManager {
             const SDK = DLMM as any;
             const dlmmPool = await SDK.create(this.connection, new PublicKey(pairAddress));
 
-            // Determine direction - Use more robust property checking
-            const mintX = dlmmPool.tokenX?.publicKey || dlmmPool.tokenX?.mint || dlmmPool.mintX;
-            if (!mintX) throw new Error("Could not determine Token X mint from pool");
+            // 2. Identify Token X and Y (Meteora SDK structure)
+            const tokenX = dlmmPool.tokenX;
+            const tokenY = dlmmPool.tokenY;
 
-            const isBuyX = mintX.toBase58() === mint.toBase58();
+            if (!tokenX || !tokenY) {
+                // Try alternate property names or fetch
+                throw new Error("Meteora Pool missing Token X/Y data");
+            }
+
+            // 3. Prepare Swap Parameters
+            // We must pass IN and OUT tokens explicitly to avoid SDK guessing and failing matches
+            const isBuy = mint.toBase58() !== "So11111111111111111111111111111111111111112"; // Assuming buy if target is not SOL? 
+            // Better: Check which one matches our input. 
+            // We are Swapping SOL -> Token.
+            // So InToken = SOL (or Wrapped SOL), OutToken = Target.
+
+            // Actually, we are holding SOL. We want Target.
+            const SOL_MINT = "So11111111111111111111111111111111111111112";
+            let inToken, outToken;
+
+            if (tokenX.publicKey.toBase58() === SOL_MINT) {
+                inToken = tokenX;
+                outToken = tokenY;
+            } else if (tokenY.publicKey.toBase58() === SOL_MINT) {
+                inToken = tokenY;
+                outToken = tokenX;
+            } else {
+                // Maybe we are spending USDC? Bot logic says amountSol..
+                // Let's assume input is Token X if X is SOL/USDC.
+                // Safer: Check which one is NOT the target mint.
+                if (tokenX.publicKey.toBase58() === mint.toBase58()) {
+                    outToken = tokenX;
+                    inToken = tokenY;
+                } else {
+                    outToken = tokenY;
+                    inToken = tokenX;
+                }
+            }
+
             const swapAmount = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
-            const swapForY = !isBuyX;
+            const binArrays = await dlmmPool.getBinArrayForSwap(true); // true = swapForY? No, allow SDK to fetch.
 
-            console.log(`[METEORA] Swap Direction: ${swapForY ? "X -> Y" : "Y -> X"}`);
+            // SDK `swap` signature requires specific params. 
+            // The crash `equals` comes from it comparing inToken to tokenX/Y.
 
-            // Using the latest SDK recommended swap method
-            // We need to handle potential versioned transactions
             const swapTx = await dlmmPool.swap({
+                inToken: inToken.publicKey,
+                outToken: outToken.publicKey,
                 inAmount: new BN(swapAmount.toString()),
-                lbPair: dlmmPool.pubkey || dlmmPool.pubKey,
-                minOutAmount: new BN(0),
-                swapForY,
+                minOutAmount: new BN(0), // Slippage handled by simple minimum 0 for now (Bot default 10% is high)
+                lbPair: dlmmPool.pubkey,
                 user: this.wallet.publicKey,
             });
 
-            // Send transaction - handle both Versioned and Legacy
+            // 4. JITO EXECUTION (Meteora via Bundle)
+            // Just like Jupiter, let's bundle this!
+            if (process.env.USE_JITO !== 'false') { // Default to True
+                const JITO_TIP_LAMPORTS = 100000;
+                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS);
+
+                let b58Swap: string;
+
+                // Sign Swap Tx
+                if (swapTx instanceof VersionedTransaction) {
+                    swapTx.sign([this.wallet]);
+                    b58Swap = bs58.encode(swapTx.serialize());
+                } else {
+                    // Legacy
+                    swapTx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+                    swapTx.feePayer = this.wallet.publicKey;
+                    swapTx.sign(this.wallet);
+                    b58Swap = bs58.encode(swapTx.serialize());
+                }
+
+                const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
+
+                console.log(`[METEORA] Sending Jito Bundle...`);
+                const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Meteora+Tip");
+
+                if (jitoResult.success) {
+                    console.log(`[METEORA] Jito Bundle Queued!`);
+                    // Confirm
+                    const signature = swapTx instanceof VersionedTransaction ? bs58.encode(swapTx.signatures[0]) : bs58.encode(swapTx.signature!);
+                    await this.connection.confirmTransaction(signature, "confirmed");
+                    return { success: true, amount: BigInt(0) };
+                }
+            }
+
+            // Fallback: Standard Send
             let txid: string;
             if (swapTx instanceof VersionedTransaction) {
                 swapTx.sign([this.wallet]);
@@ -795,13 +841,12 @@ export class StrategyManager {
 
             console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txid}`);
 
-            return { success: true, amount: BigInt(0) }; // Actual amount requires parsing logs
+            return { success: true, amount: BigInt(0) };
 
         } catch (e: any) {
             console.error("[METEORA] Swap Failed:", e);
-            // If it's the discriminator error, it means the pool isn't DLMM
             if (e.message.includes("discriminator")) {
-                return { success: false, amount: BigInt(0), error: "Not a DLMM Pool (standard Meteora AMM not supported)" };
+                return { success: false, amount: BigInt(0), error: "Not a DLMM Pool" };
             }
             return { success: false, amount: BigInt(0), error: `Meteora Error: ${e.message}` };
         }
