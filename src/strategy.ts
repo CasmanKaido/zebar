@@ -47,7 +47,7 @@ export class StrategyManager {
                 try {
                     // Using api.jup.ag/swap/v6 instead of quote-api.jup.ag - Requires Key for High Rate
                     quoteResponse = (await axios.get(
-                        `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`,
+                        `https://api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`,
                         { headers }
                     )).data;
                     break; // Success
@@ -63,23 +63,23 @@ export class StrategyManager {
                 throw new Error("Could not get quote from Jupiter (Max Retries)");
             }
 
-            // 2. Request Ultra Order (Get Transaction)
-            // Ultra uses /ultra/v1/order to get the unsigned transaction
-            console.log(`[ULTRA] Requesting Order...`);
-            const orderResponse = (await axios.post('https://api.jup.ag/ultra/v1/order', {
+            // 2. Request Metis Swap Transaction
+            // Metis uses /swap/v1/swap to build the transaction
+            console.log(`[METIS] Requesting Swap Transaction...`);
+            const orderResponse = (await axios.post('https://api.jup.ag/swap/v1/swap', {
                 quoteResponse,
                 userPublicKey: this.wallet.publicKey.toBase58(),
                 wrapAndUnwrapSol: true,
-                dynamicComputeUnitLimit: true, // Ultra usually handles this better
-                computeUnitPriceMicroLamports: 100000 // Priority fee
+                dynamicComputeUnitLimit: true,
+                prioritizationFeeLamports: 100000 // Priority fee (Metis param)
             }, { headers })).data;
 
-            const { transaction: swapTransaction, requestId } = orderResponse;
+            const { swapTransaction, lastValidBlockHeight } = orderResponse; // Metis returns swapTransaction directly
 
             if (!swapTransaction) {
-                throw new Error(`Ultra Order failed: No transaction returned. Response: ${JSON.stringify(orderResponse)}`);
+                throw new Error(`Metis Swap failed: No transaction returned. Response: ${JSON.stringify(orderResponse)}`);
             }
-            console.log(`[ULTRA] Order Created. Request ID: ${requestId}`);
+            console.log(`[METIS] Swap Transaction Created.`);
 
 
             // 3. Deserialize and Sign
