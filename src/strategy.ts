@@ -9,6 +9,7 @@ import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SO
 import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
+import { JitoExecutor } from "./jito";
 
 
 
@@ -86,28 +87,52 @@ export class StrategyManager {
             const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
             transaction.sign([this.wallet]);
 
-            // 4. Execute via Ultra API
-            console.log(`[ULTRA] Executing Transaction...`);
-            const rawTransaction = Buffer.from(transaction.serialize()).toString('base64');
+            // 4. JITO EXECUTION (Bundle: Swap + Tip)
+            // This bypasses RPC congestion and front-running
+            console.log(`[JITO] Preparing Bundle Execution...`);
 
-            const executeResponse = (await axios.post('https://api.jup.ag/ultra/v1/execute', {
-                transaction: rawTransaction,
-                requestId: requestId
-            }, { headers })).data;
+            try {
+                const JITO_TIP_LAMPORTS = 100000; // 0.0001 SOL Tip
+                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS);
 
-            // Ultra might return distinct status fields, but usually we just want to know if it was submitted.
-            // We can rely on blockchain confirmation for finality.
-            console.log(`[ULTRA] Execution Submitted. Response:`, executeResponse);
+                // Main Swap Tx is already signed by `transaction.sign([this.wallet])` above
+                // Jito expects base58 encoded transactions
+                const b58Swap = bs58.encode(transaction.serialize());
+                const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
 
-            // Just in case Ultra execute returns a txid, use it. Otherwise derive it.
-            // executeResponse might contain 'txid' or 'signature'
-            const txid = executeResponse.txid || executeResponse.signature || bs58.encode(transaction.signatures[0]);
+                const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Jupiter+Tip");
 
-            console.log(`[TX] Sent Swap (Ultra): https://solscan.io/tx/${txid}`);
+                if (!jitoResult.success) {
+                    throw new Error("Jito Bundle submission failed");
+                }
 
-            // 5. Wait for confirmation
-            // Ultra handles landing, but we still verify locally.
-            await this.connection.confirmTransaction(txid);
+                console.log(`[JITO] Bundle Submitted. Waiting for confirmation...`);
+                // We track the Swap Transaction Signature
+                // (The bundle ID is internal to Jito, the blockchain sees the tx signature)
+                const signature = bs58.encode(transaction.signatures[0]);
+
+                await this.connection.confirmTransaction(signature, "confirmed");
+                console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
+
+                // Return success
+                const outAmount = BigInt(quoteResponse.outAmount);
+                return { success: true, amount: outAmount };
+
+            } catch (jitoError: any) {
+                console.warn(`[JITO] Execution Failed (${jitoError.message}). Falling back to Standard RPC...`);
+
+                // FALLBACK: Standard RPC Execution
+                const rawTx = transaction.serialize();
+                const txid = await this.connection.sendRawTransaction(rawTx, {
+                    skipPreflight: true,
+                    maxRetries: 2
+                });
+                await this.connection.confirmTransaction(txid);
+                console.log(`[STRATEGY] Jupiter Swap Success (RPC Fallback): https://solscan.io/tx/${txid}`);
+
+                const outAmount = BigInt(quoteResponse.outAmount);
+                return { success: true, amount: outAmount };
+            }
 
             // Fetch bought amount estimate
             const outAmount = BigInt(quoteResponse.outAmount);
