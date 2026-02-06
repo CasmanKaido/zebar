@@ -47,7 +47,7 @@ export class StrategyManager {
                 try {
                     // Using api.jup.ag/swap/v6 instead of quote-api.jup.ag - Requires Key for High Rate
                     quoteResponse = (await axios.get(
-                        `https://api.jup.ag/swap/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`,
+                        `https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${mint.toBase58()}&amount=${amountLamports}&slippageBps=${slippageBps}&onlyDirectRoutes=false&swapMode=ExactIn`,
                         { headers }
                     )).data;
                     break; // Success
