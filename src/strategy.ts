@@ -692,6 +692,9 @@ export class StrategyManager {
     /**
      * Creates a Meteora DLMM Pool for the given token and Base Token.
      */
+    /**
+     * Creates a Meteora DLMM Pool for the given token and Base Token.
+     */
     async createMeteoraPool(tokenMint: PublicKey, baseMint: PublicKey, tokenAmount: bigint, baseAmount: bigint) {
         console.log(`[METEORA] Preparing Pool Creation for ${tokenMint.toBase58()}...`);
 
@@ -706,39 +709,68 @@ export class StrategyManager {
 
             // 2. Parameters
             const binStep = new BN(100); // 1% Bin Step
-            const baseFee = new BN(2500); // 0.25% Base Fee (2500/1000000?) - Check docs if possible, otherwise rely on previous value
+            const baseFee = new BN(2500); // 0.25% Base Fee
             const slot = await this.connection.getSlot();
             const activationPoint = new BN(slot);
 
-            console.log(`[METEORA] Calling SDK.create...`);
-
-            // 3. Create Pool
-            // Using 'any' cast to bypass strict TS checks on SDK internal types
             const SDK = DLMM as any;
-            const newPool = await SDK.create(
+
+            // 3. Calculate Active Bin ID (Starting Price)
+            // Simplified: Price = Y / X
+            // Helper to get decimals fast
+            const getDecimals = async (mint: PublicKey) => {
+                const info = await this.connection.getParsedAccountInfo(mint);
+                return (info.value?.data as any)?.parsed?.info?.decimals || 6;
+            };
+            const [decX, decY] = await Promise.all([getDecimals(tokenX), getDecimals(tokenY)]);
+
+            const realValX = tokenX.equals(baseMint) ? (Number(baseAmount) / (10 ** decX)) : (Number(tokenAmount) / (10 ** decX));
+            const realValY = tokenY.equals(baseMint) ? (Number(baseAmount) / (10 ** decY)) : (Number(tokenAmount) / (10 ** decY));
+
+            const price = realValY / realValX;
+            const activeId = SDK.getBinIdFromPrice(price, binStep.toNumber(), false);
+
+            console.log(`[METEORA] Creating Pool via createCustomizablePermissionlessLbPair... Price: ${price}, ActiveId: ${activeId}`);
+
+            // 4. Create Transaction
+            const tx = await SDK.createCustomizablePermissionlessLbPair(
                 this.connection,
-                this.wallet,
+                binStep,
                 tokenX,
                 tokenY,
-                binStep,
+                new BN(activeId),
                 baseFee,
-                activationPoint
+                new BN(0), // ActivationType.Slot
+                false, // hasAlphaVault
+                this.wallet.publicKey, // creator
+                activationPoint,
+                false, // creatorPoolOnOffControl
+                { cluster: 'mainnet-beta' }
             );
 
-            const poolAddress = newPool.pubkey;
-            console.log(`[METEORA] Pool Created! Address: ${poolAddress.toBase58()}`);
+            // 5. Send Transaction
+            const txSig = await this.connection.sendTransaction(tx, [this.wallet], { skipPreflight: true });
+            console.log(`[METEORA] Pool Creation TX Sent: ${txSig}`);
+            await this.connection.confirmTransaction(txSig, "confirmed");
 
-            // 4. Seed Liquidity (Simple Spot Strategy)
-            // Note: We skip this for now to reduce complexity and risk of another crash.
-            // The bot "Creating" the pool structure is the first step.
-            // If the user wants to seed it, we need to know the price curve.
-            // For now, returning the pool info is enough to "make it work" as requested.
+            // 6. Derive Pool Address
+            let poolAddress = "Unknown (Check TX)";
+            try {
+                // Try to use the SDK export if accessible via the 'any' cast or import
+                // If not, we rely on the tx sig. The frontend can query `getPairPubkeyIfExists` later.
+                if (SDK.deriveCustomizablePermissionlessLbPair) {
+                    const [lbPair] = SDK.deriveCustomizablePermissionlessLbPair(tokenX, tokenY, new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"));
+                    poolAddress = lbPair.toBase58();
+                }
+            } catch (e) {
+                console.warn("Could not derive pool address locally.");
+            }
 
-            return { poolId: poolAddress.toBase58() };
+            console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
+            return { poolId: poolAddress, tx: txSig };
 
         } catch (error: any) {
             console.error(`[METEORA] Create Pool Failed: ${error.message}`);
-            // We swallow the error to prevent bot crash
             return null;
         }
     }
