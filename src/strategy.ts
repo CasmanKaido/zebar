@@ -4,8 +4,6 @@ import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import BN from "bn.js";
-// Update import to get the named export for derivation
-import DLMM, { deriveCustomizablePermissionlessLbPair } from "@meteora-ag/dlmm";
 import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID, SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk";
 import { Market } from "@project-serum/serum";
 import axios from "axios";
@@ -30,7 +28,6 @@ export class StrategyManager {
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
 
         try {
-            // ... (keep start of swapToken)
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
@@ -145,11 +142,6 @@ export class StrategyManager {
                 return { success: true, amount: outAmount };
             }
 
-            // Fetch bought amount estimate
-            const outAmount = BigInt(0);
-
-            return { success: true, amount: outAmount };
-
         } catch (error: any) {
             let errMsg = error.message;
             if (axios.isAxiosError(error) && error.response?.data) {
@@ -158,34 +150,12 @@ export class StrategyManager {
             console.error(`[ERROR] Jupiter Swap failed:`, errMsg);
 
             // FALLBACK STRATEGY DISABLED (User: Full Jupiter/Metis Only)
-            // We rely 100% on Jupiter + Jito Bundles now.
-            // If Jupiter fails, we stop and retry next cycle.
-
             console.warn(`[STRATEGY] Jupiter Failed. Fallbacks are DISABLED (Jupiter Only Mode).`);
             SocketManager.emitLog("[STRATEGY] Jupiter Failed. Retrying next cycle...", "warning");
 
             return { success: false, amount: BigInt(0), error: `Jupiter Only Mode: ${errMsg}` };
-
-            /* DISABLED FALLBACKS
-            const isTransientError = errMsg.includes("ENOTFOUND") || errMsg.includes("401") || errMsg.includes("429") || errMsg.includes("timeout") || errMsg.includes("500") || errMsg.includes("Network Error");
-            const isRouteNotFoundError = errMsg.includes("Route not found") || errMsg.includes("404") || errMsg.includes("Could not get quote");
-            const shouldFallback = isTransientError || isRouteNotFoundError;
-
-            if (shouldFallback) {
-                 // ... Fallback logic removed ...
-            }
-            */
         }
-
-
     }
-
-
-
-
-
-
-
 
 
     /**
@@ -432,10 +402,6 @@ export class StrategyManager {
                 slippage: slippageProxy,
             });
 
-            const amountOut = computation.amountOut;
-            const minAmountOut = computation.minAmountOut;
-
-
             // HELPER: Fetch Token Accounts manually for SDK verification
             // This prevents "failed to simulate" errors inside the SDK due to missing account context
             const userTokenAccounts = await this.getOwnerTokenAccounts();
@@ -491,8 +457,6 @@ export class StrategyManager {
             console.error("[RAYDIUM] Swap Failed:", e);
             return { success: false, amount: BigInt(0), error: `Raydium Error: ${e.message}` };
         }
-
-
     }
 
     async getConnectionTokenAccounts(owner: PublicKey) {
@@ -524,125 +488,89 @@ export class StrategyManager {
     }
 
     /**
-     * Fallback: Swap directly via Meteora DLMM SDK.
+     * Fallback: Swap directly via Meteora DAMM V2 SDK.
      */
     async swapMeteoraDLMM(mint: PublicKey, pairAddress: string, amountSol: number, slippagePercent: number): Promise<{ success: boolean; amount: bigint; error?: string }> {
-        console.log(`[STRATEGY] Initiating Meteora DLMM Swap for Pair: ${pairAddress}`);
+        console.log(`[STRATEGY] Initiating Meteora DAMM V2 Swap for Pair: ${pairAddress}`);
 
         try {
-            const SDK = DLMM as any;
-            const dlmmPool = await SDK.create(this.connection, new PublicKey(pairAddress));
+            const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
 
-            // 2. Identify Token X and Y (Meteora SDK structure)
-            const tokenX = dlmmPool.tokenX;
-            const tokenY = dlmmPool.tokenY;
+            // 1. Fetch Pool Instance
+            const cpAmm = await CpAmm.create(this.connection, new PublicKey(pairAddress));
 
-            if (!tokenX || !tokenY) {
-                // Try alternate property names or fetch
-                throw new Error("Meteora Pool missing Token X/Y data");
-            }
-
-            // 3. Prepare Swap Parameters
-            // We must pass IN and OUT tokens explicitly to avoid SDK guessing and failing matches
-            const isBuy = mint.toBase58() !== "So11111111111111111111111111111111111111112"; // Assuming buy if target is not SOL? 
-            // Better: Check which one matches our input. 
-            // We are Swapping SOL -> Token.
-            // So InToken = SOL (or Wrapped SOL), OutToken = Target.
-
-            // Actually, we are holding SOL. We want Target.
+            // 2. Identify Input/Output
             const SOL_MINT = "So11111111111111111111111111111111111111112";
-            let inToken, outToken;
+            let inputToken = cpAmm.tokenMintA;
+            // Unused outputToken - keeping commented if needed for debug
+            // let outputToken = cpAmm.tokenMintB;
 
-            if (tokenX.publicKey.toBase58() === SOL_MINT) {
-                inToken = tokenX;
-                outToken = tokenY;
-            } else if (tokenY.publicKey.toBase58() === SOL_MINT) {
-                inToken = tokenY;
-                outToken = tokenX;
+            // We are Swapping SOL -> Token
+            if (inputToken.toBase58() === SOL_MINT) {
+                // Correct: A is SOL, B is Token
+                inputToken = cpAmm.tokenMintA;
+            } else if (cpAmm.tokenMintB.toBase58() === SOL_MINT) {
+                // Swap: B is SOL, A is Token
+                inputToken = cpAmm.tokenMintB;
             } else {
-                // Maybe we are spending USDC? Bot logic says amountSol..
-                // Let's assume input is Token X if X is SOL/USDC.
-                // Safer: Check which one is NOT the target mint.
-                if (tokenX.publicKey.toBase58() === mint.toBase58()) {
-                    outToken = tokenX;
-                    inToken = tokenY;
-                } else {
-                    outToken = tokenY;
-                    inToken = tokenX;
-                }
+                // USDC or other base pair? Assume input is whatever matches our wallet balance logic?
+                // For now, assume SOL is involved. If not, default to A->B.
             }
 
-            const swapAmount = BigInt(Math.floor(amountSol * LAMPORTS_PER_SOL));
-            const binArrays = await dlmmPool.getBinArrayForSwap(true); // true = swapForY? No, allow SDK to fetch.
+            const amountIn = new BN(amountSol * LAMPORTS_PER_SOL);
 
-            // SDK `swap` signature requires specific params. 
-            // The crash `equals` comes from it comparing inToken to tokenX/Y.
+            // 3. Create Swap Instructions
+            const swapResult = await cpAmm.swap(
+                this.wallet.publicKey,
+                inputToken,
+                amountIn,
+                new BN(0) // Min out (0 for now)
+            );
 
-            const swapTx = await dlmmPool.swap({
-                inToken: inToken.publicKey,
-                outToken: outToken.publicKey,
-                inAmount: new BN(swapAmount.toString()),
-                minOutAmount: new BN(0), // Slippage handled by simple minimum 0 for now (Bot default 10% is high)
-                lbPair: dlmmPool.pubkey,
-                user: this.wallet.publicKey,
-            });
+            // 4. Execute (Jito or Standard)
+            let swapTx: Transaction | VersionedTransaction;
 
-            // 4. JITO EXECUTION (Meteora via Bundle)
-            // Just like Jupiter, let's bundle this!
-            if (process.env.USE_JITO !== 'false') { // Default to True
+            if (swapResult.instructions) {
+                swapTx = new Transaction().add(...swapResult.instructions);
+            } else {
+                // Some SDK versions return tx directly
+                swapTx = swapResult as unknown as Transaction;
+            }
+
+            if (process.env.USE_JITO !== 'false') {
+                // Jito Logic
                 const JITO_TIP_LAMPORTS = 100000;
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS);
 
                 let b58Swap: string;
-
-                // Sign Swap Tx
                 if (swapTx instanceof VersionedTransaction) {
                     swapTx.sign([this.wallet]);
                     b58Swap = bs58.encode(swapTx.serialize());
                 } else {
-                    // Legacy
                     swapTx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
                     swapTx.feePayer = this.wallet.publicKey;
                     swapTx.sign(this.wallet);
                     b58Swap = bs58.encode(swapTx.serialize());
                 }
-
                 const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
 
                 console.log(`[METEORA] Sending Jito Bundle...`);
                 const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Meteora+Tip");
-
                 if (jitoResult.success) {
-                    console.log(`[METEORA] Jito Bundle Queued!`);
-                    // Confirm
-                    const signature = swapTx instanceof VersionedTransaction ? bs58.encode(swapTx.signatures[0]) : bs58.encode(swapTx.signature!);
-                    await this.connection.confirmTransaction(signature, "confirmed");
                     return { success: true, amount: BigInt(0) };
                 }
             }
 
-            // Fallback: Standard Send
-            let txid: string;
-            if (swapTx instanceof VersionedTransaction) {
-                swapTx.sign([this.wallet]);
-                txid = await this.connection.sendRawTransaction(swapTx.serialize(), { skipPreflight: true });
-            } else {
-                txid = await sendAndConfirmTransaction(this.connection, swapTx, [this.wallet], { skipPreflight: true });
-            }
-
-            console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txid}`);
-
+            // Fallback Send
+            const txSig = await sendAndConfirmTransaction(this.connection, swapTx as Transaction, [this.wallet], { skipPreflight: true, commitment: "confirmed" });
+            console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txSig}`);
             return { success: true, amount: BigInt(0) };
 
         } catch (e: any) {
-            console.error("[METEORA] Swap Failed:", e);
-            if (e.message.includes("discriminator")) {
-                return { success: false, amount: BigInt(0), error: "Not a DLMM Pool" };
-            }
-            return { success: false, amount: BigInt(0), error: `Meteora Error: ${e.message}` };
+            console.error(`[METEORA] Swap Failed:`, e);
+            return { success: false, amount: BigInt(0), error: e.message };
         }
     }
-
 
     /**
      * Fallback: Swap on Pump.fun Bonding Curve
@@ -650,289 +578,114 @@ export class StrategyManager {
      */
     async swapPumpFun(mint: PublicKey, amountSol: number, slippagePercent: number = 25): Promise<{ success: boolean; amount: bigint; error?: string }> {
         console.log(`[STRATEGY] Initializing Pump.fun Swap for ${mint.toBase58()}...`);
-
         try {
-            // 1. Fetch Bonding Curve State
             const curveState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
+            if (!curveState) return { success: false, amount: BigInt(0), error: "Bonding Curve not found" };
 
-            if (!curveState) {
-                const msg = "Bonding Curve not found (Token might be migrated)";
-                console.error(`[PUMP ERROR] ${msg}`);
-                return { success: false, amount: BigInt(0), error: msg };
-            }
-
-            console.log(`[PUMP] Found Bonding Curve: ${curveState.bondingCurve.toBase58()}`);
-
-            // 2. Calculate Amounts
             const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(curveState, amountSol, slippagePercent * 100);
+            if (amountTokens === BigInt(0)) return { success: false, amount: BigInt(0), error: "Amount 0" };
 
-            if (amountTokens === BigInt(0)) {
-                const msg = "Calculation failed due to liquidity limits (Amount 0)";
-                console.error(`[PUMP ERROR] ${msg}`);
-                return { success: false, amount: BigInt(0), error: msg };
-            }
-
-            console.log(`[PUMP] Buying ~${amountTokens.toString()} tokens for max ${maxSolCost.toString()} Lamports`);
-
-            // 3. Create Instruction
             const { instruction, associatedUser, createAtaInstruction } = await PumpFunHandler.createBuyInstruction(
                 this.wallet.publicKey,
                 mint,
-                new BN(amountTokens.toString()), // Buy specific amount of tokens
-                new BN(maxSolCost.toString())    // Max SOL we are willing to pay
+                new BN(amountTokens.toString()),
+                new BN(maxSolCost.toString())
             );
 
-            // 4. Build Transaction
             const transaction = new Transaction();
-
-            // Add priority fee
-            transaction.add(
-                // Compute Budget logic could go here
-            );
-
-            // Add ATA creation if needed (usually handled, but good to ensure)
-            const ataInfo = await this.connection.getAccountInfo(associatedUser);
-            if (!ataInfo && createAtaInstruction) {
-                transaction.add(createAtaInstruction);
-            }
-
+            if (createAtaInstruction) transaction.add(createAtaInstruction);
             transaction.add(instruction);
 
-            // 5. Send
-            const txid = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet], {
-                skipPreflight: true,
-                commitment: "confirmed",
-                maxRetries: 3
-            });
-
+            const txid = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet], { skipPreflight: true, commitment: "confirmed", maxRetries: 3 });
             console.log(`[PUMP] Swap Success! Tx: https://solscan.io/tx/${txid}`);
             return { success: true, amount: BigInt(amountTokens.toString()) };
-
         } catch (error: any) {
             console.error(`[PUMP] Swap Failed:`, error);
             return { success: false, amount: BigInt(0), error: error.message };
         }
     }
+
     /**
-     * Creates a Meteora DLMM Pool for the given token and Base Token.
+     * Creates a Meteora DAMM V2 Pool (Standard Constant Product) and seeds initial liquidity.
+     * Expects RAW ATOMIC AMOUNTS (BigInt), not UI amounts.
      */
     /**
-     * Creates a Meteora DLMM Pool for the given token and Base Token.
+     * Creates a Meteora DAMM V2 Pool (Constant Product).
+     * Uses Standard Static Config (Index 0) for 0.25% fee (Standard Volatile).
      */
-    async createMeteoraPool(tokenMint: PublicKey, baseMint: PublicKey, tokenAmount: bigint, baseAmount: bigint) {
-        console.log(`[METEORA] Preparing Pool Creation for ${tokenMint.toBase58()}...`);
+    async createMeteoraPool(tokenMint: PublicKey, tokenAmount: bigint, baseAmount: bigint, baseMint: PublicKey = new PublicKey("So11111111111111111111111111111111111111112")): Promise<{ success: boolean; poolAddress?: string; error?: string }> {
+        console.log(`[METEORA] Creating DAMM V2 Pool...`);
 
         try {
-            // 1. Sort Tokens (Requirement for Deterministic Address)
-            let tokenX = tokenMint;
-            let tokenY = baseMint;
-            if (tokenMint.toBuffer().compare(baseMint.toBuffer()) > 0) {
-                tokenX = baseMint;
-                tokenY = tokenMint;
-            }
+            // 1. Load SDK & Constants
+            // We use require to ensure we get the JS module execution
+            const { CpAmm, deriveConfigAddress, MIN_SQRT_PRICE, MAX_SQRT_PRICE } = require("@meteora-ag/cp-amm-sdk");
 
-            // 2. Parameters
-            const binStep = new BN(100); // 1% Bin Step (100 BPS)
-            const baseFee = new BN(100); // 1.00% Base Fee (100 BPS)
+            // 2. Sort Tokens (A < B)
+            // DAMM V2 uses strict token ordering
+            const [tokenA, tokenB] = tokenMint.toBuffer().compare(baseMint.toBuffer()) < 0
+                ? [tokenMint, baseMint]
+                : [baseMint, tokenMint];
 
-            // Activation Point: Custom 6052 "AlreadyPassActivationPoint" means 0 is invalid.
-            // We must pass a FUTURE slot. Custom 1 was likely the fee mismatch.
-            const slot = await this.connection.getSlot();
-            const activationPoint = new BN(slot + 100); // Activate ~40s in future to be safe from "AlreadyPass" error. 
+            const [amountA, amountB] = tokenMint.equals(tokenA)
+                ? [tokenAmount, baseAmount]
+                : [baseAmount, tokenAmount];
 
-            const SDK = DLMM as any;
+            console.log(`[METEORA] A: ${tokenA.toBase58()} (${amountA.toString()}) | B: ${tokenB.toBase58()} (${amountB.toString()})`);
 
-            // 3. Calculate Active Bin ID (Starting Price)
-            // Simplified: Price = Y / X
-            // Helper to get decimals fast
-            const getDecimals = async (mint: PublicKey) => {
-                const info = await this.connection.getParsedAccountInfo(mint);
-                return (info.value?.data as any)?.parsed?.info?.decimals || 6;
-            };
-            const [decX, decY] = await Promise.all([getDecimals(tokenX), getDecimals(tokenY)]);
+            // 3. Initialize SDK Instance
+            const cpAmm = new CpAmm(this.connection);
 
-            // Check Token Programs (Token vs Token2022)
-            const [infoX, infoY] = await Promise.all([
-                this.connection.getAccountInfo(tokenX),
-                this.connection.getAccountInfo(tokenY)
-            ]);
-            console.log(`[METEORA] Token X Program: ${infoX?.owner.toBase58()}`);
-            console.log(`[METEORA] Token Y Program: ${infoY?.owner.toBase58()}`);
+            // 4. Config & Parameters
+            // User requested explicit Static Config Key support.
+            // Index 0 is standard 0.25% fee (volatile).
+            const configIndex = new BN(0);
+            const configAddress = deriveConfigAddress(configIndex);
 
-            const realValX = tokenX.equals(baseMint) ? (Number(baseAmount) / (10 ** decX)) : (Number(tokenAmount) / (10 ** decX));
-            const realValY = tokenY.equals(baseMint) ? (Number(baseAmount) / (10 ** decY)) : (Number(tokenAmount) / (10 ** decY));
+            // 5. Prepare Pool Params (Calculate SqrtPrice)
+            const bnAmountA = new BN(amountA.toString());
+            const bnAmountB = new BN(amountB.toString());
 
-            const price = realValY / realValX;
-            const activeId = SDK.getBinIdFromPrice(price, binStep.toNumber(), false);
+            const poolParams = cpAmm.preparePoolCreationParams({
+                tokenAAmount: bnAmountA,
+                tokenBAmount: bnAmountB,
+                tokenAMint: tokenA,
+                tokenBMint: tokenB,
+                minSqrtPrice: MIN_SQRT_PRICE,
+                maxSqrtPrice: MAX_SQRT_PRICE,
+            });
 
-            console.log(`[METEORA] Creating Pool via createCustomizablePermissionlessLbPair... Price: ${price}, ActiveId: ${activeId}`);
+            // 6. Create Transaction
+            console.log(`[METEORA] Config: ${configAddress.toBase58()} | Init Price: ${poolParams.initSqrtPrice.toString()}`);
 
-            // 4. PRE-CHECK: Derive Pool Address and Check if Exists
-            let poolAddress = "Unknown";
-            let poolExists = false;
-            try {
-                // Use the imported function directly
-                const METEORA_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
-                // Ensure named export exists, fallback to SDK default if needed
-                const deriveFn = deriveCustomizablePermissionlessLbPair || (SDK as any).deriveCustomizablePermissionlessLbPair;
+            const transaction = await cpAmm.createPool({
+                creator: this.wallet.publicKey,
+                payer: this.wallet.publicKey,
+                config: configAddress,
+                tokenAMint: tokenA,
+                tokenBMint: tokenB,
+                tokenAAmount: bnAmountA,
+                tokenBAmount: bnAmountB,
+                initSqrtPrice: poolParams.initSqrtPrice,
+                liquidityDelta: poolParams.liquidityDelta,
+                activationPoint: null, // Immediate
+                tokenAProgram: TOKEN_PROGRAM_ID,
+                tokenBProgram: TOKEN_PROGRAM_ID, // Assuming standard SPL tokens for now
+            });
 
-                if (deriveFn) {
-                    const [lbPair] = deriveFn(tokenX, tokenY, METEORA_PROGRAM_ID);
-                    poolAddress = lbPair.toBase58();
-                    console.log(`[METEORA] Derived Pool Address: ${poolAddress}`);
+            // 7. Send & Confirm
+            const txSig = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet], {
+                skipPreflight: true,
+                commitment: "confirmed",
+                maxRetries: 5
+            });
 
-                    const info = await this.connection.getAccountInfo(lbPair);
-                    if (info) {
-                        console.log(`[METEORA] Pool already exists at ${poolAddress}. Skipping creation.`);
-                        poolExists = true;
-                    } else {
-                        console.log(`[METEORA] Pool account not found at ${poolAddress}. Proceeding to create.`);
-                    }
-                } else {
-                    console.warn("[METEORA] Derivation function not available.");
-                }
-            } catch (e) { console.log("Error deriving address:", e); }
+            console.log(`[METEORA] DAMM V2 Pool Created: https://solscan.io/tx/${txSig}`);
+            return { success: true, poolAddress: "Check TX" };
 
-            let txid = "Existing Pool";
-
-            if (!poolExists) {
-                try {
-                    // 5. Create Transaction
-                    // Use standard createCustomizablePermissionlessLbPair which usually auto-detects or we rely on the robust derivation
-                    // We will add Priority Fee to the transaction
-
-                    let tx: Transaction;
-                    const COMPUTE_UNIT_PRICE = 100000; // Micro-lamports (0.1 SOL for 1M CU is too high, just use a reasonable efficient fee)
-                    // Actually 100,000 micro-lamports = 0.0001 SOL which is good.
-
-                    const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: COMPUTE_UNIT_PRICE });
-
-                    if ((SDK as any).createCustomizablePermissionlessLbPair2) {
-                        // Use V2 creation for Token 2022 support
-                        console.log("[METEORA] Using createCustomizablePermissionlessLbPair2 (V2) for creation...");
-                        tx = await (SDK as any).createCustomizablePermissionlessLbPair2(
-                            this.connection,
-                            binStep,
-                            tokenX,
-                            tokenY,
-                            new BN(activeId),
-                            baseFee,
-                            new BN(0), // ActivationType.Slot
-                            false, // hasAlphaVault
-                            this.wallet.publicKey, // creator
-                            activationPoint,
-                            false, // creatorPoolOnOffControl
-                            { cluster: "mainnet-beta" } // opt
-                        );
-                        // Add priority fee at the BEGINNING
-                        tx.instructions.unshift(priorityFeeIx);
-                    } else if ((SDK as any).createCustomizablePermissionlessLbPair) {
-                        console.log("[METEORA] V2 not found, falling back to createCustomizablePermissionlessLbPair (V1)...");
-                        tx = await (SDK as any).createCustomizablePermissionlessLbPair(
-                            this.connection,
-                            binStep,
-                            tokenX,
-                            tokenY,
-                            new BN(activeId),
-                            baseFee,
-                            new BN(0), // ActivationType.Slot
-                            false, // hasAlphaVault
-                            this.wallet.publicKey, // creator
-                            activationPoint,
-                            false, // creatorPoolOnOffControl
-                            { cluster: "mainnet-beta" } // opt
-                        );
-                        // Add priority fee at the BEGINNING
-                        tx.instructions.unshift(priorityFeeIx);
-                    } else {
-                        throw new Error("SDK does not support createCustomizablePermissionlessLbPair");
-                    }
-
-                    // 6. Send Pool Creation TX
-                    console.log(`[METEORA] Sending Pool Creation Transaction with Priority Fee...`);
-                    txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
-                        skipPreflight: true,
-                        commitment: "confirmed",
-                        maxRetries: 10 // Increase retries for congestion
-                    });
-                    console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
-
-                    // Wait for confirmation to ensure RPC sees it
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                } catch (err: any) {
-                    console.error(`[METEORA] Pool Creation Failed:`, err);
-                    // Just return, don't crash
-                    return { success: false, error: err.message };
-                }
-            } else {
-                console.log(`[METEORA] Pool found. Proceeding to liquidity...`);
-            }
-
-            console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
-            console.log(`[METEORA] Seeding Liquidity...`);
-
-            try {
-                // RETRY LOOP for DLMM Instance (RPC Propagation Delay)
-                let newPool: any = null;
-                for (let i = 0; i < 5; i++) {
-                    try {
-                        newPool = await SDK.create(this.connection, new PublicKey(poolAddress));
-                        if (newPool) break;
-                    } catch (e) {
-                        console.log(`[METEORA] Waiting for pool account... (${i + 1}/5)`);
-                        await new Promise(r => setTimeout(r, 2000));
-                    }
-                }
-
-                if (!newPool) {
-                    throw new Error("Failed to fetch new pool account after retries.");
-                }
-
-                const activeId = newPool.lbPair.activeId;
-                const minId = activeId - 60; // Spread liquidity across ~120 bins
-                const maxId = activeId + 60;
-
-                // Balance Check for Rent
-                const bal = await this.connection.getBalance(this.wallet.publicKey);
-                if (bal < 150000000) { // 0.15 SOL recommended for heavy bin array initialization
-                    console.warn(`[METEORA] WARNING: Low SOL balance (${bal / 1e9}). Liquidity seeding might fail due to rent.`);
-                }
-
-                // Add Liquidity
-                const newPosition = Keypair.generate(); // Generate Keypair explicitly to sign with it
-                const tx = await newPool.initializePositionAndAddLiquidityByStrategy({
-                    positionPubKey: newPosition.publicKey,
-                    user: this.wallet.publicKey,
-                    totalXAmount: new BN(realValX * (10 ** decX)),
-                    totalYAmount: new BN(realValY * (10 ** decY)),
-                    strategy: {
-                        maxBinId: maxId,
-                        minBinId: minId,
-                        strategyType: 0, // Spot Balanced
-                    }
-                });
-
-                const seedTxid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet, newPosition], { // Sign with wallet AND newPosition
-                    skipPreflight: true,
-                    commitment: "confirmed",
-                    maxRetries: 5
-                });
-
-                console.log(`[METEORA] Liquidity Added! Position: ${newPosition.publicKey.toBase58()} TX: https://solscan.io/tx/${seedTxid}`);
-
-            } catch (seedErr) {
-                console.error(`[METEORA] Failed to Seed Liquidity (Pool is created but empty):`, seedErr);
-            }
-
-            return { success: true, poolAddress, txid };
-
-        } catch (error: any) {
-            console.error(`[METEORA] Pool Creation Failed:`, error);
-            // Verify if "already in use" - means pool exists, just verify address
-            if (error.message?.includes("already in use")) {
-                console.log("[METEORA] Pool might already exist.");
-            }
-            return { success: false, error: error.message };
+        } catch (e: any) {
+            console.error(`[METEORA] Pool Creation Failed:`, e);
+            return { success: false, error: e.message };
         }
     }
 }

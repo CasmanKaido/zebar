@@ -93,7 +93,7 @@ export class BotManager {
 
                 // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
                 try {
-                    const poolInfo = await this.strategy.createMeteoraPool(result.mint, LPPP_MINT, tokenAmount, lpppAmountBase);
+                    const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, LPPP_MINT);
                     if (poolInfo.success) {
                         SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
                     } else {

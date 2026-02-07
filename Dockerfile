@@ -20,7 +20,7 @@ WORKDIR /app
 
 # Copy root manifest and install backend dependencies
 COPY package*.json ./
-RUN npm install
+RUN rm -rf node_modules package-lock.json && npm install
 
 # Copy TypeScript config and source code
 COPY tsconfig.json ./
@@ -30,7 +30,7 @@ COPY src ./src
 # Note: We run tsc directly or via a specific script if needed. 
 # The root 'build' script installs client too, which we want to avoid re-doing.
 # So we assume 'npx tsc' works fine given dependencies are installed.
-RUN npx tsc
+RUN rm -rf dist && npx tsc
 
 # Copy built frontend assets from Stage 1 -> /app/client/dist
 # This matches the expected path in server.ts: path.join(__dirname, "../client/dist")
