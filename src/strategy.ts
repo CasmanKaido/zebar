@@ -804,7 +804,27 @@ export class StrategyManager {
 
                     const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: COMPUTE_UNIT_PRICE });
 
-                    if ((SDK as any).createCustomizablePermissionlessLbPair) {
+                    if ((SDK as any).createCustomizablePermissionlessLbPair2) {
+                        // Use V2 creation for Token 2022 support
+                        console.log("[METEORA] Using createCustomizablePermissionlessLbPair2 (V2) for creation...");
+                        tx = await (SDK as any).createCustomizablePermissionlessLbPair2(
+                            this.connection,
+                            binStep,
+                            tokenX,
+                            tokenY,
+                            new BN(activeId),
+                            baseFee,
+                            new BN(0), // ActivationType.Slot
+                            false, // hasAlphaVault
+                            this.wallet.publicKey, // creator
+                            activationPoint,
+                            false, // creatorPoolOnOffControl
+                            { cluster: "mainnet-beta" } // opt
+                        );
+                        // Add priority fee at the BEGINNING
+                        tx.instructions.unshift(priorityFeeIx);
+                    } else if ((SDK as any).createCustomizablePermissionlessLbPair) {
+                        console.log("[METEORA] V2 not found, falling back to createCustomizablePermissionlessLbPair (V1)...");
                         tx = await (SDK as any).createCustomizablePermissionlessLbPair(
                             this.connection,
                             binStep,
