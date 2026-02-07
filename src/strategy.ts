@@ -755,43 +755,55 @@ export class StrategyManager {
 
             console.log(`[METEORA] Creating Pool via createCustomizablePermissionlessLbPair... Price: ${price}, ActiveId: ${activeId}`);
 
-            // 4. Create Transaction
-            const tx = await SDK.createCustomizablePermissionlessLbPair(
-                this.connection,
-                binStep,
-                tokenX,
-                tokenY,
-                new BN(activeId),
-                baseFee,
-                new BN(0), // ActivationType.Slot
-                false, // hasAlphaVault
-                this.wallet.publicKey, // creator
-                activationPoint,
-                false, // creatorPoolOnOffControl
-                { cluster: "mainnet-beta" } // opt
-            );
-
-            // 5. Send Pool Creation TX
-            console.log(`[METEORA] Sending Pool Creation Transaction...`);
-            const txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
-                skipPreflight: true,
-                commitment: "confirmed",
-                maxRetries: 3
-            });
-            console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
-
-            // 6. Derive Pool Address
+            // 4. PRE-CHECK: Derive Pool Address and Check if Exists
             let poolAddress = "Unknown";
+            let poolExists = false;
             try {
                 if ((SDK as any).deriveCustomizablePermissionlessLbPair) {
                     const [lbPair] = (SDK as any).deriveCustomizablePermissionlessLbPair(tokenX, tokenY, new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"));
                     poolAddress = lbPair.toBase58();
+
+                    // Check if account exists
+                    const info = await this.connection.getAccountInfo(lbPair);
+                    if (info) {
+                        console.log(`[METEORA] Pool already exists at ${poolAddress}. Skipping creation.`);
+                        poolExists = true;
+                    }
                 }
             } catch (e) { console.log("Error deriving address:", e); }
 
-            console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
+            let txid = "Existing Pool";
+
+            if (!poolExists) {
+                // 5. Create Transaction
+                const tx = await SDK.createCustomizablePermissionlessLbPair(
+                    this.connection,
+                    binStep,
+                    tokenX,
+                    tokenY,
+                    new BN(activeId),
+                    baseFee,
+                    new BN(0), // ActivationType.Slot
+                    false, // hasAlphaVault
+                    this.wallet.publicKey, // creator
+                    activationPoint,
+                    false, // creatorPoolOnOffControl
+                    { cluster: "mainnet-beta" } // opt
+                );
+
+                // 6. Send Pool Creation TX
+                console.log(`[METEORA] Sending Pool Creation Transaction...`);
+                txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                    skipPreflight: true,
+                    commitment: "confirmed",
+                    maxRetries: 3
+                });
+                console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
+                console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
+            }
 
             // 7. Add Liquidity (Seed the Pool)
+            // We do this whether it was just created OR it already existed
             console.log(`[METEORA] Seeding Liquidity...`);
             try {
                 // Initialize DLMM instance for the new pool
