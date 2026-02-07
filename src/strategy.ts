@@ -748,6 +748,14 @@ export class StrategyManager {
             };
             const [decX, decY] = await Promise.all([getDecimals(tokenX), getDecimals(tokenY)]);
 
+            // Check Token Programs (Token vs Token2022)
+            const [infoX, infoY] = await Promise.all([
+                this.connection.getAccountInfo(tokenX),
+                this.connection.getAccountInfo(tokenY)
+            ]);
+            console.log(`[METEORA] Token X Program: ${infoX?.owner.toBase58()}`);
+            console.log(`[METEORA] Token Y Program: ${infoY?.owner.toBase58()}`);
+
             const realValX = tokenX.equals(baseMint) ? (Number(baseAmount) / (10 ** decX)) : (Number(tokenAmount) / (10 ** decX));
             const realValY = tokenY.equals(baseMint) ? (Number(baseAmount) / (10 ** decY)) : (Number(tokenAmount) / (10 ** decY));
 
@@ -761,20 +769,24 @@ export class StrategyManager {
             let poolExists = false;
             try {
                 // Use the imported function directly
-                // Program ID for Meteora DLMM on Mainnet
                 const METEORA_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
-                const [lbPair] = deriveCustomizablePermissionlessLbPair(tokenX, tokenY, METEORA_PROGRAM_ID);
-                poolAddress = lbPair.toBase58();
+                // Ensure named export exists, fallback to SDK default if needed
+                const deriveFn = deriveCustomizablePermissionlessLbPair || (SDK as any).deriveCustomizablePermissionlessLbPair;
 
-                console.log(`[METEORA] Derived Pool Address: ${poolAddress}`);
+                if (deriveFn) {
+                    const [lbPair] = deriveFn(tokenX, tokenY, METEORA_PROGRAM_ID);
+                    poolAddress = lbPair.toBase58();
+                    console.log(`[METEORA] Derived Pool Address: ${poolAddress}`);
 
-                // Check if account exists
-                const info = await this.connection.getAccountInfo(lbPair);
-                if (info) {
-                    console.log(`[METEORA] Pool already exists at ${poolAddress}. Skipping creation.`);
-                    poolExists = true;
+                    const info = await this.connection.getAccountInfo(lbPair);
+                    if (info) {
+                        console.log(`[METEORA] Pool already exists at ${poolAddress}. Skipping creation.`);
+                        poolExists = true;
+                    } else {
+                        console.log(`[METEORA] Pool account not found at ${poolAddress}. Proceeding to create.`);
+                    }
                 } else {
-                    console.log(`[METEORA] Pool account not found. Proceeding to create.`);
+                    console.warn("[METEORA] Derivation function not available.");
                 }
             } catch (e) { console.log("Error deriving address:", e); }
 
@@ -783,20 +795,26 @@ export class StrategyManager {
             if (!poolExists) {
                 try {
                     // 5. Create Transaction
-                    const tx = await SDK.createCustomizablePermissionlessLbPair(
-                        this.connection,
-                        binStep,
-                        tokenX,
-                        tokenY,
-                        new BN(activeId),
-                        baseFee,
-                        new BN(0), // ActivationType.Slot
-                        false, // hasAlphaVault
-                        this.wallet.publicKey, // creator
-                        activationPoint,
-                        false, // creatorPoolOnOffControl
-                        { cluster: "mainnet-beta" } // opt
-                    );
+                    // Check if we should use V2 for Token 2022 support if available
+                    let tx;
+                    if ((SDK as any).createCustomizablePermissionlessLbPair) {
+                        tx = await (SDK as any).createCustomizablePermissionlessLbPair(
+                            this.connection,
+                            binStep,
+                            tokenX,
+                            tokenY,
+                            new BN(activeId),
+                            baseFee,
+                            new BN(0), // ActivationType.Slot
+                            false, // hasAlphaVault
+                            this.wallet.publicKey, // creator
+                            activationPoint,
+                            false, // creatorPoolOnOffControl
+                            { cluster: "mainnet-beta" } // opt
+                        );
+                    } else {
+                        throw new Error("SDK does not support createCustomizablePermissionlessLbPair");
+                    }
 
                     // 6. Send Pool Creation TX
                     console.log(`[METEORA] Sending Pool Creation Transaction...`);
