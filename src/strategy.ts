@@ -629,12 +629,26 @@ export class StrategyManager {
                 ? [tokenAmount, baseAmount]
                 : [baseAmount, tokenAmount];
 
-            // 3. Detect Token Programs (Token vs Token2022)
-            const tokenAInfo = await this.connection.getAccountInfo(tokenA);
-            const tokenBInfo = await this.connection.getAccountInfo(tokenB);
+            // 3. Detect Token Programs (Token vs Token2022) with Retry
+            const fetchAccountInfoWithRetry = async (pubkey: PublicKey, retries = 3): Promise<any> => {
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        const info = await this.connection.getAccountInfo(pubkey);
+                        if (info) return info;
+                    } catch (err: any) {
+                        console.warn(`[METEORA] Retry ${i + 1}/${retries} fetching info for ${pubkey.toBase58()}: ${err.message}`);
+                        if (i === retries - 1) throw err;
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                }
+                return null;
+            };
+
+            const tokenAInfo = await fetchAccountInfoWithRetry(tokenA);
+            const tokenBInfo = await fetchAccountInfoWithRetry(tokenB);
 
             if (!tokenAInfo || !tokenBInfo) {
-                throw new Error("Failed to fetch token mint info for program detection.");
+                throw new Error("Failed to fetch token mint info (after retries) for program detection.");
             }
 
             const tokenAProgram = tokenAInfo.owner;

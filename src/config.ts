@@ -18,6 +18,7 @@ export const PUMP_FUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKu
 export const connection = new Connection(RPC_URL, {
     wsEndpoint: WSS_URL,
     commitment: "confirmed",
+    confirmTransactionInitialTimeout: 60000 // 60s timeout to reduce 408 errors
 });
 
 // Load wallet from private key in .env or a default dummy
