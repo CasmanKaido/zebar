@@ -734,7 +734,8 @@ export class StrategyManager {
             // 2. Parameters
             // 2. Parameters
             const binStep = new BN(100); // 1% Bin Step (100 BPS)
-            const baseFee = new BN(25); // 0.25% Base Fee (25 BPS) - KEEPING 25 as it is reasonable.
+            const baseFee = new BN(100); // 1.00% Base Fee (100 BPS) - Matching standard permissionless preset pattern.
+            // Activation Point: Passing current slot causes issues if slot passes.
             // Activation Point: Passing current slot causes issues if slot passes. 
             // Passing 0 usually means "active immediately".
             const activationPoint = new BN(0);
