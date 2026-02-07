@@ -25,7 +25,16 @@ export class StrategyManager {
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; error?: string }> {
-        console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%)`);
+        const { DRY_RUN } = require("./config");
+        console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%) ${DRY_RUN ? '[DRY RUN]' : ''}`);
+
+        if (DRY_RUN) {
+            console.log(`[DRY RUN] Simulating Jupiter Swap...`);
+            console.log(`[DRY RUN] Would send ${amountSol} SOL to Jupiter.`);
+            const simulatedAmount = BigInt(Math.floor((amountSol * 1e9) * 100)); // Fake 100x price
+            console.log(`[DRY RUN] Success! Received fake ${simulatedAmount} tokens.`);
+            return { success: true, amount: simulatedAmount };
+        }
 
         try {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
@@ -577,7 +586,14 @@ export class StrategyManager {
      * Used when the token is NOT on Raydium or Meteora yet.
      */
     async swapPumpFun(mint: PublicKey, amountSol: number, slippagePercent: number = 25): Promise<{ success: boolean; amount: bigint; error?: string }> {
-        console.log(`[STRATEGY] Initializing Pump.fun Swap for ${mint.toBase58()}...`);
+        const { DRY_RUN } = require("./config");
+        console.log(`[STRATEGY] Initializing Pump.fun Swap for ${mint.toBase58()}... ${DRY_RUN ? '[DRY RUN]' : ''}`);
+
+        if (DRY_RUN) {
+            console.log(`[DRY RUN] Simulating Pump.fun Swap...`);
+            const simulatedAmount = BigInt(Math.floor((amountSol * 1e9) * 100));
+            return { success: true, amount: simulatedAmount };
+        }
         try {
             const curveState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
             if (!curveState) return { success: false, amount: BigInt(0), error: "Bonding Curve not found" };
@@ -614,7 +630,16 @@ export class StrategyManager {
      * Uses Standard Static Config (Index 0) for 0.25% fee (Standard Volatile).
      */
     async createMeteoraPool(tokenMint: PublicKey, tokenAmount: bigint, baseAmount: bigint, baseMint: PublicKey = new PublicKey("So11111111111111111111111111111111111111112")): Promise<{ success: boolean; poolAddress?: string; error?: string }> {
-        console.log(`[METEORA] Creating DAMM V2 Pool...`);
+        const { DRY_RUN } = require("./config");
+        console.log(`[METEORA] Creating DAMM V2 Pool... ${DRY_RUN ? '[DRY RUN]' : ''}`);
+
+        if (DRY_RUN) {
+            console.log(`[DRY RUN] Simulating Meteora Pool Creation...`);
+            console.log(`[METEORA] Config: 8CNy9goNQNLM4wtgRw528tUQGMKD3vSuFRZY2gLGLLvF (Standard Volatile)`);
+            console.log(`[METEORA] Init Price (Simulated): 0.000001 SOL`);
+            console.log(`[METEORA] DAMM V2 Pool Created: https://solscan.io/tx/DRY_RUN_SIMULATION`);
+            return { success: true, poolAddress: "DRY_RUN_POOL" };
+        }
 
         try {
             // 1. Load SDK & Constants
