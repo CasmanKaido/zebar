@@ -768,33 +768,76 @@ export class StrategyManager {
                 this.wallet.publicKey, // creator
                 activationPoint,
                 false, // creatorPoolOnOffControl
-                { cluster: 'mainnet-beta' }
+                { cluster: "mainnet-beta" } // opt
             );
 
-            // 5. Send Transaction
-            const txSig = await this.connection.sendTransaction(tx, [this.wallet], { skipPreflight: true });
-            console.log(`[METEORA] Pool Creation TX Sent: ${txSig}`);
-            await this.connection.confirmTransaction(txSig, "confirmed");
+            // 5. Send Pool Creation TX
+            console.log(`[METEORA] Sending Pool Creation Transaction...`);
+            const txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                skipPreflight: true,
+                commitment: "confirmed",
+                maxRetries: 3
+            });
+            console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
 
             // 6. Derive Pool Address
-            let poolAddress = "Unknown (Check TX)";
+            let poolAddress = "Unknown";
             try {
-                // Try to use the SDK export if accessible via the 'any' cast or import
-                // If not, we rely on the tx sig. The frontend can query `getPairPubkeyIfExists` later.
-                if (SDK.deriveCustomizablePermissionlessLbPair) {
-                    const [lbPair] = SDK.deriveCustomizablePermissionlessLbPair(tokenX, tokenY, new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"));
+                if ((SDK as any).deriveCustomizablePermissionlessLbPair) {
+                    const [lbPair] = (SDK as any).deriveCustomizablePermissionlessLbPair(tokenX, tokenY, new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"));
                     poolAddress = lbPair.toBase58();
                 }
-            } catch (e) {
-                console.warn("Could not derive pool address locally.");
-            }
+            } catch (e) { console.log("Error deriving address:", e); }
 
             console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
-            return { poolId: poolAddress, tx: txSig };
+
+            // 7. Add Liquidity (Seed the Pool)
+            console.log(`[METEORA] Seeding Liquidity...`);
+            try {
+                // Initialize DLMM instance for the new pool
+                const dlmmPool = await SDK.create(this.connection, new PublicKey(poolAddress));
+
+                // Define Strategy (Spot: +/- 69 bins)
+                const activeId = dlmmPool.lbPair.activeId;
+                const minBinId = activeId - 69;
+                const maxBinId = activeId + 69;
+
+                const newPosition = Keypair.generate();
+
+                // Add Liquidity
+                const addLiqTx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
+                    positionPubKey: newPosition.publicKey,
+                    totalXAmount: new BN(realValX === (Number(tokenAmount) / (10 ** decX)) ? tokenAmount.toString() : baseAmount.toString()), // Logic check: ensure matching X/Y
+                    totalYAmount: new BN(realValY === (Number(baseAmount) / (10 ** decY)) ? baseAmount.toString() : tokenAmount.toString()),
+                    strategy: {
+                        maxBinId,
+                        minBinId,
+                        strategyType: 0, // Spot Strategy
+                    },
+                    user: this.wallet.publicKey
+                });
+
+                const seedTxid = await sendAndConfirmTransaction(this.connection, addLiqTx, [this.wallet, newPosition], {
+                    skipPreflight: true,
+                    commitment: "confirmed",
+                    maxRetries: 3
+                });
+
+                console.log(`[METEORA] Liquidity Added! Position: ${newPosition.publicKey.toBase58()} TX: https://solscan.io/tx/${seedTxid}`);
+
+            } catch (seedErr) {
+                console.error(`[METEORA] Failed to Seed Liquidity (Pool is created but empty):`, seedErr);
+            }
+
+            return { success: true, poolAddress, txid };
 
         } catch (error: any) {
-            console.error(`[METEORA] Create Pool Failed: ${error.message}`);
-            return null;
+            console.error(`[METEORA] Pool Creation Failed:`, error);
+            // Verify if "already in use" - means pool exists, just verify address
+            if (error.message?.includes("already in use")) {
+                console.log("[METEORA] Pool might already exist.");
+            }
+            return { success: false, error: error.message };
         }
     }
 }
