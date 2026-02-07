@@ -68,26 +68,10 @@ export class BotManager {
             const { success, amount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
 
             if (success) {
-                SocketManager.emitLog(`Buy Successful! Swapped for ${amount.toString()} units.`, "success");
+                SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
 
-                // 2. Create LP
-                const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
-                const tokenAmount = BigInt(amount.toString());
-                const lpppAmountBase = BigInt(Math.floor(this.settings.lpppAmount * 1e6));
-
-                const poolInfo = await this.strategy.createMeteoraPool(result.mint, LPPP_MINT, tokenAmount, lpppAmountBase);
-
-                if (poolInfo) {
-                    SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolId}`, "success");
-                    SocketManager.emitPool({
-                        poolId: poolInfo.poolId,
-                        token: result.symbol,
-                        created: new Date().toISOString(),
-                        roi: "1.0x"
-                    });
-
-                    this.strategy.monitorAndExit(poolInfo.poolId, 1);
-                }
+                // 3. Monitor (Optional - Future Implementation)
+                // this.strategy.monitorAndExit(...)
             } else {
                 // Log detailed error to frontend
                 SocketManager.emitLog(`Buy Failed: ${error || "Unknown Error"}`, "error");
