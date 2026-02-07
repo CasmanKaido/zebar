@@ -4,7 +4,8 @@ import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import BN from "bn.js";
-import DLMM from "@meteora-ag/dlmm";
+// Update import to get the named export for derivation
+import DLMM, { deriveCustomizablePermissionlessLbPair } from "@meteora-ag/dlmm";
 import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID, SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk";
 import { Market } from "@project-serum/serum";
 import axios from "axios";
@@ -759,47 +760,62 @@ export class StrategyManager {
             let poolAddress = "Unknown";
             let poolExists = false;
             try {
-                if ((SDK as any).deriveCustomizablePermissionlessLbPair) {
-                    const [lbPair] = (SDK as any).deriveCustomizablePermissionlessLbPair(tokenX, tokenY, new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"));
-                    poolAddress = lbPair.toBase58();
+                // Use the imported function directly
+                // Program ID for Meteora DLMM on Mainnet
+                const METEORA_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
+                const [lbPair] = deriveCustomizablePermissionlessLbPair(tokenX, tokenY, METEORA_PROGRAM_ID);
+                poolAddress = lbPair.toBase58();
 
-                    // Check if account exists
-                    const info = await this.connection.getAccountInfo(lbPair);
-                    if (info) {
-                        console.log(`[METEORA] Pool already exists at ${poolAddress}. Skipping creation.`);
-                        poolExists = true;
-                    }
+                console.log(`[METEORA] Derived Pool Address: ${poolAddress}`);
+
+                // Check if account exists
+                const info = await this.connection.getAccountInfo(lbPair);
+                if (info) {
+                    console.log(`[METEORA] Pool already exists at ${poolAddress}. Skipping creation.`);
+                    poolExists = true;
+                } else {
+                    console.log(`[METEORA] Pool account not found. Proceeding to create.`);
                 }
             } catch (e) { console.log("Error deriving address:", e); }
 
             let txid = "Existing Pool";
 
             if (!poolExists) {
-                // 5. Create Transaction
-                const tx = await SDK.createCustomizablePermissionlessLbPair(
-                    this.connection,
-                    binStep,
-                    tokenX,
-                    tokenY,
-                    new BN(activeId),
-                    baseFee,
-                    new BN(0), // ActivationType.Slot
-                    false, // hasAlphaVault
-                    this.wallet.publicKey, // creator
-                    activationPoint,
-                    false, // creatorPoolOnOffControl
-                    { cluster: "mainnet-beta" } // opt
-                );
+                try {
+                    // 5. Create Transaction
+                    const tx = await SDK.createCustomizablePermissionlessLbPair(
+                        this.connection,
+                        binStep,
+                        tokenX,
+                        tokenY,
+                        new BN(activeId),
+                        baseFee,
+                        new BN(0), // ActivationType.Slot
+                        false, // hasAlphaVault
+                        this.wallet.publicKey, // creator
+                        activationPoint,
+                        false, // creatorPoolOnOffControl
+                        { cluster: "mainnet-beta" } // opt
+                    );
 
-                // 6. Send Pool Creation TX
-                console.log(`[METEORA] Sending Pool Creation Transaction...`);
-                txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
-                    skipPreflight: true,
-                    commitment: "confirmed",
-                    maxRetries: 3
-                });
-                console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
-                console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
+                    // 6. Send Pool Creation TX
+                    console.log(`[METEORA] Sending Pool Creation Transaction...`);
+                    txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                        skipPreflight: true,
+                        commitment: "confirmed",
+                        maxRetries: 3
+                    });
+                    console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
+                    console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
+                } catch (createError: any) {
+                    // Double check if error is "already exists" related
+                    if (createError.message?.includes("InvalidAccountData") || createError.message?.includes("already in use")) {
+                        console.warn(`[METEORA] Creation failed but likely exists (${createError.message}). Proceeding to liquidity...`);
+                        // Force proceed
+                    } else {
+                        throw createError;
+                    }
+                }
             }
 
             // 7. Add Liquidity (Seed the Pool)
