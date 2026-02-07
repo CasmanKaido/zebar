@@ -33,6 +33,14 @@ export class StrategyManager {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
+            // 0. Pre-Swap Balance Check (To calculate actual received amount)
+            const ata = await getAssociatedTokenAddress(mint, this.wallet.publicKey);
+            let preBalance = BigInt(0);
+            try {
+                const acc = await this.connection.getTokenAccountBalance(ata);
+                preBalance = BigInt(acc.value.amount);
+            } catch (ignore) { /* Account likely doesn't exist yet */ }
+
             // 1. Request Ultra Order (Directly - No separate quote step needed for Ultra)
             console.log(`[ULTRA] Requesting Swap Order...`);
 
@@ -101,8 +109,16 @@ export class StrategyManager {
                 await this.connection.confirmTransaction(signature, "confirmed");
                 console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
 
-                // Return success
-                const outAmount = BigInt(0);
+                // Capture actual amount
+                let postBalance = BigInt(0);
+                try {
+                    const acc = await this.connection.getTokenAccountBalance(ata);
+                    postBalance = BigInt(acc.value.amount);
+                } catch (e) { console.warn(`[STRATEGY] Failed to fetch post-balance: ${e}`); }
+
+                const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
+                console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens.`);
+
                 return { success: true, amount: outAmount };
 
             } catch (jitoError: any) {
@@ -117,7 +133,14 @@ export class StrategyManager {
                 await this.connection.confirmTransaction(txid);
                 console.log(`[STRATEGY] Jupiter Swap Success (RPC Fallback): https://solscan.io/tx/${txid}`);
 
-                const outAmount = BigInt(0);
+                // Capture actual amount
+                let postBalance = BigInt(0);
+                try {
+                    const acc = await this.connection.getTokenAccountBalance(ata);
+                    postBalance = BigInt(acc.value.amount);
+                } catch (e) { console.warn(`[STRATEGY] Failed to fetch post-balance: ${e}`); }
+
+                const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
                 return { success: true, amount: outAmount };
             }
 
