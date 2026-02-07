@@ -618,11 +618,9 @@ export class StrategyManager {
 
         try {
             // 1. Load SDK & Constants
-            // We use require to ensure we get the JS module execution
             const { CpAmm, deriveConfigAddress, MIN_SQRT_PRICE, MAX_SQRT_PRICE } = require("@meteora-ag/cp-amm-sdk");
 
             // 2. Sort Tokens (A < B)
-            // DAMM V2 uses strict token ordering
             const [tokenA, tokenB] = tokenMint.toBuffer().compare(baseMint.toBuffer()) < 0
                 ? [tokenMint, baseMint]
                 : [baseMint, tokenMint];
@@ -631,18 +629,31 @@ export class StrategyManager {
                 ? [tokenAmount, baseAmount]
                 : [baseAmount, tokenAmount];
 
-            console.log(`[METEORA] A: ${tokenA.toBase58()} (${amountA.toString()}) | B: ${tokenB.toBase58()} (${amountB.toString()})`);
+            // 3. Detect Token Programs (Token vs Token2022)
+            const tokenAInfo = await this.connection.getAccountInfo(tokenA);
+            const tokenBInfo = await this.connection.getAccountInfo(tokenB);
 
-            // 3. Initialize SDK Instance
+            if (!tokenAInfo || !tokenBInfo) {
+                throw new Error("Failed to fetch token mint info for program detection.");
+            }
+
+            const tokenAProgram = tokenAInfo.owner;
+            const tokenBProgram = tokenBInfo.owner;
+
+            console.log(`[METEORA] A: ${tokenA.toBase58()} (Prog: ${tokenAProgram.toBase58()})`);
+            console.log(`[METEORA] B: ${tokenB.toBase58()} (Prog: ${tokenBProgram.toBase58()})`);
+
+            // 4. Initialize SDK Instance
             const cpAmm = new CpAmm(this.connection);
 
-            // 4. Config & Parameters
-            // User requested explicit Static Config Key support.
-            // Index 0 is standard 0.25% fee (volatile).
+            // 5. Config & Parameters (Standard Volatile Index 0)
             const configIndex = new BN(0);
             const configAddress = deriveConfigAddress(configIndex);
 
-            // 5. Prepare Pool Params (Calculate SqrtPrice)
+            // 6. Generate Position NFT Keypair (REQUIRED)
+            const positionNftMint = Keypair.generate();
+
+            // 7. Prepare Pool Params
             const bnAmountA = new BN(amountA.toString());
             const bnAmountB = new BN(amountB.toString());
 
@@ -655,9 +666,9 @@ export class StrategyManager {
                 maxSqrtPrice: MAX_SQRT_PRICE,
             });
 
-            // 6. Create Transaction
             console.log(`[METEORA] Config: ${configAddress.toBase58()} | Init Price: ${poolParams.initSqrtPrice.toString()}`);
 
+            // 8. Create Transaction
             const transaction = await cpAmm.createPool({
                 creator: this.wallet.publicKey,
                 payer: this.wallet.publicKey,
@@ -669,12 +680,13 @@ export class StrategyManager {
                 initSqrtPrice: poolParams.initSqrtPrice,
                 liquidityDelta: poolParams.liquidityDelta,
                 activationPoint: null, // Immediate
-                tokenAProgram: TOKEN_PROGRAM_ID,
-                tokenBProgram: TOKEN_PROGRAM_ID, // Assuming standard SPL tokens for now
+                tokenAProgram: tokenAProgram,
+                tokenBProgram: tokenBProgram,
+                positionNft: positionNftMint.publicKey, // Must provide public key
             });
 
-            // 7. Send & Confirm
-            const txSig = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet], {
+            // 9. Send & Confirm (MUST SIGN WITH POSITION NFT MINT)
+            const txSig = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet, positionNftMint], {
                 skipPreflight: true,
                 commitment: "confirmed",
                 maxRetries: 5
