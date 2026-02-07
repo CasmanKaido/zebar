@@ -38,6 +38,11 @@ export class BotManager {
         if (this.isRunning) return;
         if (config) {
             this.settings = { ...this.settings, ...config };
+
+            // Validation: Log Warning if 0 Buy Amount, but do not override
+            if (this.settings.buyAmount <= 0) {
+                SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
+            }
         }
 
         // Check Balance
