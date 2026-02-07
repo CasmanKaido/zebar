@@ -708,8 +708,8 @@ export class StrategyManager {
             }
 
             // 2. Parameters
-            const binStep = new BN(100); // 1% Bin Step
-            const baseFee = new BN(2500); // 0.25% Base Fee
+            const binStep = new BN(100); // 1% Bin Step (100 BPS)
+            const baseFee = new BN(25); // 0.25% Base Fee (25 BPS)
             const slot = await this.connection.getSlot();
             const activationPoint = new BN(slot);
 
