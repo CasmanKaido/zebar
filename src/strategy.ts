@@ -856,49 +856,66 @@ export class StrategyManager {
                         maxRetries: 10 // Increase retries for congestion
                     });
                     console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
-                    console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
-                } catch (createError: any) {
-                    // Double check if error is "already exists" related
-                    if (createError.message?.includes("InvalidAccountData") || createError.message?.includes("already in use")) {
-                        console.warn(`[METEORA] Creation failed but likely exists (${createError.message}). Proceeding to liquidity...`);
-                        // Force proceed
-                    } else {
-                        throw createError;
-                    }
+
+                    // Wait for confirmation to ensure RPC sees it
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                } catch (err: any) {
+                    console.error(`[METEORA] Pool Creation Failed:`, err);
+                    // Just return, don't crash
+                    return { success: false, error: err.message };
                 }
+            } else {
+                console.log(`[METEORA] Pool found. Proceeding to liquidity...`);
             }
 
-            // 7. Add Liquidity (Seed the Pool)
-            // We do this whether it was just created OR it already existed
+            console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
             console.log(`[METEORA] Seeding Liquidity...`);
+
             try {
-                // Initialize DLMM instance for the new pool
-                const dlmmPool = await SDK.create(this.connection, new PublicKey(poolAddress));
+                // RETRY LOOP for DLMM Instance (RPC Propagation Delay)
+                let newPool: any = null;
+                for (let i = 0; i < 5; i++) {
+                    try {
+                        newPool = await SDK.create(this.connection, new PublicKey(poolAddress));
+                        if (newPool) break;
+                    } catch (e) {
+                        console.log(`[METEORA] Waiting for pool account... (${i + 1}/5)`);
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+                }
 
-                // Define Strategy (Spot: +/- 69 bins)
-                const activeId = dlmmPool.lbPair.activeId;
-                const minBinId = activeId - 69;
-                const maxBinId = activeId + 69;
+                if (!newPool) {
+                    throw new Error("Failed to fetch new pool account after retries.");
+                }
 
-                const newPosition = Keypair.generate();
+                const activeId = newPool.lbPair.activeId;
+                const minId = activeId - 60; // Spread liquidity across ~120 bins
+                const maxId = activeId + 60;
+
+                // Balance Check for Rent
+                const bal = await this.connection.getBalance(this.wallet.publicKey);
+                if (bal < 150000000) { // 0.15 SOL recommended for heavy bin array initialization
+                    console.warn(`[METEORA] WARNING: Low SOL balance (${bal / 1e9}). Liquidity seeding might fail due to rent.`);
+                }
 
                 // Add Liquidity
-                const addLiqTx = await dlmmPool.initializePositionAndAddLiquidityByStrategy({
+                const newPosition = Keypair.generate(); // Generate Keypair explicitly to sign with it
+                const tx = await newPool.initializePositionAndAddLiquidityByStrategy({
                     positionPubKey: newPosition.publicKey,
-                    totalXAmount: new BN(realValX === (Number(tokenAmount) / (10 ** decX)) ? tokenAmount.toString() : baseAmount.toString()), // Logic check: ensure matching X/Y
-                    totalYAmount: new BN(realValY === (Number(baseAmount) / (10 ** decY)) ? baseAmount.toString() : tokenAmount.toString()),
+                    user: this.wallet.publicKey,
+                    totalXAmount: new BN(realValX * (10 ** decX)),
+                    totalYAmount: new BN(realValY * (10 ** decY)),
                     strategy: {
-                        maxBinId,
-                        minBinId,
-                        strategyType: 0, // Spot Strategy
-                    },
-                    user: this.wallet.publicKey
+                        maxBinId: maxId,
+                        minBinId: minId,
+                        strategyType: 0, // Spot Balanced
+                    }
                 });
 
-                const seedTxid = await sendAndConfirmTransaction(this.connection, addLiqTx, [this.wallet, newPosition], {
+                const seedTxid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet, newPosition], { // Sign with wallet AND newPosition
                     skipPreflight: true,
                     commitment: "confirmed",
-                    maxRetries: 3
+                    maxRetries: 5
                 });
 
                 console.log(`[METEORA] Liquidity Added! Position: ${newPosition.publicKey.toBase58()} TX: https://solscan.io/tx/${seedTxid}`);
