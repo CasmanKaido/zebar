@@ -1,9 +1,11 @@
-
 import { connection, wallet } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
+import { RugChecker } from "./rugcheck";
+
+
 
 
 export interface BotSettings {
@@ -63,12 +65,41 @@ export class BotManager {
             SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
             SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
 
+            // 0. Safety Check (RugCheck)
+            try {
+                const safety = await RugChecker.checkToken(result.mint.toBase58());
+                if (!safety.safe && safety.reason !== "New Token (No Report)") {
+                    SocketManager.emitLog(`[RUGCHECK] Skipped: ${safety.reason}`, "error");
+                    return;
+                }
+                if (safety.score > 0) {
+                    SocketManager.emitLog(`[RUGCHECK] Passed Risk Score: ${safety.score}`, "success");
+                }
+            } catch (rcError) {
+                console.warn("[RUGCHECK] Error:", rcError);
+            }
+
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
             const { success, amount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
 
             if (success) {
                 SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
+
+                // 2. Create LP (Restored)
+                const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+                const tokenAmount = BigInt(amount.toString());
+                const lpppAmountBase = BigInt(Math.floor(this.settings.lpppAmount * 1e6));
+
+                // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
+                try {
+                    const poolInfo = await this.strategy.createMeteoraPool(result.mint, LPPP_MINT, tokenAmount, lpppAmountBase);
+                    if (poolInfo) {
+                        SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolId}`, "success");
+                    }
+                } catch (lpError) {
+                    SocketManager.emitLog(`[LP ERROR] Failed to create pool: ${lpError}`, "error");
+                }
 
                 // 3. Monitor (Optional - Future Implementation)
                 // this.strategy.monitorAndExit(...)
