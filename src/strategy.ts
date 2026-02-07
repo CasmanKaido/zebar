@@ -795,8 +795,15 @@ export class StrategyManager {
             if (!poolExists) {
                 try {
                     // 5. Create Transaction
-                    // Check if we should use V2 for Token 2022 support if available
-                    let tx;
+                    // Use standard createCustomizablePermissionlessLbPair which usually auto-detects or we rely on the robust derivation
+                    // We will add Priority Fee to the transaction
+
+                    let tx: Transaction;
+                    const COMPUTE_UNIT_PRICE = 100000; // Micro-lamports (0.1 SOL for 1M CU is too high, just use a reasonable efficient fee)
+                    // Actually 100,000 micro-lamports = 0.0001 SOL which is good.
+
+                    const priorityFeeIx = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: COMPUTE_UNIT_PRICE });
+
                     if ((SDK as any).createCustomizablePermissionlessLbPair) {
                         tx = await (SDK as any).createCustomizablePermissionlessLbPair(
                             this.connection,
@@ -812,16 +819,18 @@ export class StrategyManager {
                             false, // creatorPoolOnOffControl
                             { cluster: "mainnet-beta" } // opt
                         );
+                        // Add priority fee at the BEGINNING
+                        tx.instructions.unshift(priorityFeeIx);
                     } else {
                         throw new Error("SDK does not support createCustomizablePermissionlessLbPair");
                     }
 
                     // 6. Send Pool Creation TX
-                    console.log(`[METEORA] Sending Pool Creation Transaction...`);
+                    console.log(`[METEORA] Sending Pool Creation Transaction with Priority Fee...`);
                     txid = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                         skipPreflight: true,
                         commitment: "confirmed",
-                        maxRetries: 3
+                        maxRetries: 10 // Increase retries for congestion
                     });
                     console.log(`[METEORA] Pool Creation TX Sent: https://solscan.io/tx/${txid}`);
                     console.log(`[METEORA] Pool Created! Address: ${poolAddress}`);
