@@ -32,6 +32,11 @@ interface Pool {
     created: string;
 }
 
+interface PoolUpdate {
+    poolId: string;
+    roi: string;
+}
+
 interface SettingInputProps {
     label: string;
     value: number;
@@ -101,6 +106,12 @@ function App() {
         socket.on('logHistory', (history: Log[]) => {
             setLogs(history);
         });
+        socket.on('poolHistory', (history: Pool[]) => {
+            setPools(history);
+        });
+        socket.on('poolUpdate', (update: PoolUpdate) => {
+            setPools(prev => prev.map(p => p.poolId === update.poolId ? { ...p, roi: update.roi } : p));
+        });
         socket.on('pool', (pool: Pool) => {
             setPools(prev => [...prev.slice(-19), pool]);
         });
@@ -110,6 +121,8 @@ function App() {
             socket.off('log');
             socket.off('logHistory');
             socket.off('pool');
+            socket.off('poolHistory');
+            socket.off('poolUpdate');
         };
     }, []);
 

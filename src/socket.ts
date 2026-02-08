@@ -5,6 +5,7 @@ export class SocketManager {
     public static io: SocketIOServer;
 
     private static logHistory: any[] = [];
+    private static poolHistory: any[] = [];
     private static MAX_LOGS = 50;
 
     static init(httpServer: HttpServer) {
@@ -19,6 +20,7 @@ export class SocketManager {
             console.log("Frontend connected");
             // Send existing log history to the new client
             socket.emit("logHistory", this.logHistory);
+            socket.emit("poolHistory", this.poolHistory);
         });
     }
 
@@ -51,8 +53,21 @@ export class SocketManager {
     }
 
     static emitPool(pool: any) {
+        this.poolHistory.push(pool);
         if (this.io) {
             this.io.emit("pool", pool);
+        }
+    }
+
+    static emitPoolUpdate(update: { poolId: string, roi: string }) {
+        // Update history
+        const index = this.poolHistory.findIndex(p => p.poolId === update.poolId);
+        if (index !== -1) {
+            this.poolHistory[index].roi = update.roi;
+        }
+
+        if (this.io) {
+            this.io.emit("poolUpdate", update);
         }
     }
 }

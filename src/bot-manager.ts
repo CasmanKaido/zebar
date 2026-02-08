@@ -4,6 +4,22 @@ import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 import { RugChecker } from "./rugcheck";
+import * as fs from "fs/promises";
+import * as path from "path";
+
+const POOL_DATA_FILE = path.join(__dirname, "../data/pools.json");
+
+interface PoolData {
+    poolId: string;
+    token: string; // Symbol
+    mint: string; // Token Mint Address
+    roi: string;
+    created: string;
+    initialPrice: number;
+    initialTokenAmount: number;
+    initialLpppAmount: number;
+    exited: boolean;
+}
 
 
 
@@ -32,7 +48,51 @@ export class BotManager {
 
     constructor() {
         this.strategy = new StrategyManager(connection, wallet);
+        this.loadPools();
+        this.monitorPositions(); // Start monitoring loop
     }
+
+    private async loadPools() {
+        try {
+            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
+            const history = JSON.parse(data);
+            history.forEach((p: PoolData) => SocketManager.emitPool(p)); // Load into Socket History
+            console.log(`[BOT] Loaded ${history.length} pools from history.`);
+        } catch (e) {
+            console.log("[BOT] No existing pool history found.");
+        }
+    }
+
+    private async savePools(newPool: PoolData) {
+        try {
+            let history: PoolData[] = [];
+            try {
+                const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
+                history = JSON.parse(data);
+            } catch (e) { /* File might not exist */ }
+
+            history.push(newPool);
+            await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
+        } catch (e) {
+            console.error("[BOT] Failed to save pool history:", e);
+        }
+    }
+
+    // Update ROI in JSON file without appending
+    private async updatePoolROI(poolId: string, newRoi: string, exited: boolean) {
+        try {
+            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
+            const history: PoolData[] = JSON.parse(data);
+            const index = history.findIndex(p => p.poolId === poolId);
+
+            if (index !== -1) {
+                history[index].roi = newRoi;
+                history[index].exited = exited;
+                await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
+            }
+        } catch (e) { /* Ignore read errors during loop */ }
+    }
+
 
     async start(config?: Partial<BotSettings>) {
         if (this.isRunning) return;
@@ -101,6 +161,32 @@ export class BotManager {
                     const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, LPPP_MINT);
                     if (poolInfo.success) {
                         SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
+                        // Emit structured pool event for frontend
+                        // Emit structured pool event for frontend
+                        const poolEvent = {
+                            poolId: poolInfo.poolAddress || "",
+                            token: result.symbol,
+                            roi: "0%", // Initial ROI
+                            created: new Date().toISOString()
+                        };
+
+                        // Calculate Initial Price (LPPP per Token)
+                        // amount is BigInt. Standard decimals 9 for computation (approx).
+                        const tokenAmtFloat = Number(amount) / 1e9;
+                        const initialPrice = tokenAmtFloat > 0 ? this.settings.lpppAmount / tokenAmtFloat : 0;
+
+                        const fullPoolData: PoolData = {
+                            ...poolEvent,
+                            mint: result.mint.toBase58(),
+                            initialPrice,
+                            initialTokenAmount: tokenAmtFloat,
+                            initialLpppAmount: this.settings.lpppAmount,
+                            exited: false
+                        };
+
+                        SocketManager.emitPool(poolEvent);
+                        this.savePools(fullPoolData);
+
                     } else {
                         SocketManager.emitLog(`[LP ERROR] Pool Failed: ${poolInfo.error}`, "error");
                     }
@@ -153,5 +239,78 @@ export class BotManager {
             console.error("Portfolio Fetch Error:", error);
             return { sol: 0, lppp: 0 };
         }
+    }
+
+    // Monitoring Loop (Runs every 30s)
+    private async monitorPositions() {
+        setInterval(async () => {
+            if (!this.isRunning) return; // Only monitor when bot is "ON"? No, monitor always.
+            // Actually, monitor should run always if there are positions.
+        }, 30000);
+
+        // Let's run it correctly:
+        const LPPP_MINT_ADDR = "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV";
+
+        setInterval(async () => {
+            try {
+                const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
+                const pools: PoolData[] = JSON.parse(data);
+
+                for (const pool of pools) {
+                    if (pool.exited) continue; // Skip exited pools
+
+                    // Fetch Status
+                    // Assume pool token A is the sniped token, B is LPPP (or vice versa? strategy created it).
+                    // Logic in strategy: tokenA, tokenB sorting.
+                    // We need to pass both mints.
+                    // pool.mint is the sniped token. LPPP is the other.
+                    const status = await this.strategy.getPoolStatus(pool.poolId, pool.mint, LPPP_MINT_ADDR);
+
+                    if (status.success && status.price > 0) {
+                        // Calculate ROI
+                        // Status Price is B/A. If B is LPPP, then Price is LPPP per Token.
+                        // Initial Price was LPPP per Token.
+                        // ROI = (Current / Initial) * 100
+
+                        // Check if order was flipped in strategy?
+                        // Strategy sorts mints.
+                        // getPoolStatus returns price as `amountB / amountA`.
+                        // If `pool.mint` < `LPPP`, then A=Token, B=LPPP. Price = LPPP/Token. Correct.
+                        // If `pool.mint` > `LPPP`, then A=LPPP, B=Token. Price = Token/LPPP.
+
+                        // We need to Normalize price to always be LPPP per Token.
+                        let normalizedPrice = status.price;
+                        const mintBN = new PublicKey(pool.mint).toBuffer(); // simple compare via string
+                        const lpppBN = new PublicKey(LPPP_MINT_ADDR).toBuffer();
+
+                        if (pool.mint > LPPP_MINT_ADDR) {
+                            // Token is B. LPPP is A.
+                            // Status Price = Token / LPPP.
+                            // We want LPPP / Token => 1 / Price.
+                            if (status.price !== 0) normalizedPrice = 1 / status.price;
+                        }
+
+                        const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
+                        const roiString = `${roiVal.toFixed(2)}%`;
+
+                        // Update JSON & Frontend
+                        if (roiString !== pool.roi) {
+                            await this.updatePoolROI(pool.poolId, roiString, false);
+                            SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
+                        }
+
+                        // Take Profit Logic (8x = 800% ROI)
+                        if (roiVal >= 800) {
+                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit 8x! Withdrawing Liquidity...`, "success");
+                            // TODO: Call withdrawLiquidity (Not implemented yet)
+                            // Mark as exited to stop monitoring
+                            await this.updatePoolROI(pool.poolId, roiString, true);
+                        }
+                    }
+                }
+            } catch (e) {
+                // Ignore file not found or other errors
+            }
+        }, 30000); // Check every 30 seconds
     }
 }

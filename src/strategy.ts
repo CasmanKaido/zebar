@@ -2,8 +2,9 @@ import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PE
 import { wallet, connection, JUPITER_API_KEY } from "./config";
 import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
-import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
 import BN from "bn.js";
+import { deriveTokenVaultAddress } from "@meteora-ag/cp-amm-sdk";
 import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID, SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk";
 import { Market } from "@project-serum/serum";
 import axios from "axios";
@@ -696,6 +697,29 @@ export class StrategyManager {
             const bnAmountA = new BN(amountA.toString());
             const bnAmountB = new BN(amountB.toString());
 
+            // Get Epoch for Fee Calculation
+            const epochInfo = await this.connection.getEpochInfo();
+            const currentEpoch = new BN(epochInfo.epoch);
+
+            // Fetch Mint Info for Transfer Fee Support (required for Token-2022)
+            let tokenAInfoStruct = undefined;
+            if (tokenAProgram.equals(TOKEN_2022_PROGRAM_ID)) {
+                try {
+                    const mintA = await getMint(this.connection, tokenA, "confirmed", TOKEN_2022_PROGRAM_ID);
+                    tokenAInfoStruct = { mint: mintA, currentEpoch };
+                    console.log(`[METEORA] Loaded Token-2022 Fee Info for A: ${tokenA.toBase58()}`);
+                } catch (e) { console.warn("[METEORA] Failed to load Mint A info:", e); }
+            }
+
+            let tokenBInfoStruct = undefined;
+            if (tokenBProgram.equals(TOKEN_2022_PROGRAM_ID)) {
+                try {
+                    const mintB = await getMint(this.connection, tokenB, "confirmed", TOKEN_2022_PROGRAM_ID);
+                    tokenBInfoStruct = { mint: mintB, currentEpoch };
+                    console.log(`[METEORA] Loaded Token-2022 Fee Info for B: ${tokenB.toBase58()}`);
+                } catch (e) { console.warn("[METEORA] Failed to load Mint B info:", e); }
+            }
+
             const poolParams = cpAmm.preparePoolCreationParams({
                 tokenAAmount: bnAmountA,
                 tokenBAmount: bnAmountB,
@@ -703,6 +727,8 @@ export class StrategyManager {
                 tokenBMint: tokenB,
                 minSqrtPrice: MIN_SQRT_PRICE,
                 maxSqrtPrice: MAX_SQRT_PRICE,
+                tokenAInfo: tokenAInfoStruct,
+                tokenBInfo: tokenBInfoStruct,
             });
 
             console.log(`[METEORA] Config: ${configAddress.toBase58()} | Init Price: ${poolParams.initSqrtPrice.toString()}`);
@@ -724,6 +750,28 @@ export class StrategyManager {
                 positionNft: positionNftMint.publicKey, // Must provide public key
             });
 
+            // FIX: Create Position NFT Account manually as SDK assumes it exists (or program init needs it created)
+            // Prepend the createAccount instruction to the transaction
+            const lamports = await this.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+            const createAccountIx = SystemProgram.createAccount({
+                fromPubkey: this.wallet.publicKey,
+                newAccountPubkey: positionNftMint.publicKey,
+                space: MINT_SIZE,
+                lamports,
+                programId: TOKEN_2022_PROGRAM_ID,
+            });
+
+            // Check if transaction is a Transaction object
+            if (transaction instanceof Transaction) {
+                transaction.instructions.unshift(createAccountIx);
+            } else {
+                console.warn("[METEORA] Transaction object is not standard Transaction class, trying to add instruction manually or skipping.");
+                // If it behaves like Transaction, it has instructions array
+                if ('instructions' in transaction && Array.isArray((transaction as any).instructions)) {
+                    (transaction as any).instructions.unshift(createAccountIx);
+                }
+            }
+
             // 9. Send & Confirm (MUST SIGN WITH POSITION NFT MINT)
             const txSig = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet, positionNftMint], {
                 skipPreflight: true,
@@ -737,6 +785,39 @@ export class StrategyManager {
         } catch (e: any) {
             console.error(`[METEORA] Pool Creation Failed:`, e);
             return { success: false, error: e.message };
+        }
+    async getPoolStatus(poolAddress: string, tokenAMint: string, tokenBMint: string): Promise < { price: number, tokenA: number, tokenB: number, success: boolean } > {
+            try {
+                const poolPubkey = new PublicKey(poolAddress);
+                const tokenAPubkey = new PublicKey(tokenAMint);
+                const tokenBPubkey = new PublicKey(tokenBMint);
+
+                // 1. Derive Vault Addresses
+                const vaultA = deriveTokenVaultAddress(poolPubkey, tokenAPubkey);
+                const vaultB = deriveTokenVaultAddress(poolPubkey, tokenBPubkey);
+
+                // 2. Fetch Balances
+                const balanceA = await this.connection.getTokenAccountBalance(vaultA);
+                const balanceB = await this.connection.getTokenAccountBalance(vaultB);
+
+                // 3. Parse Balances (handle decimals if needed, but uiAmount is easiest for price)
+                const amountA = balanceA.value.uiAmount || 0;
+                const amountB = balanceB.value.uiAmount || 0;
+
+                if(amountA === 0) return { price: 0, tokenA: 0, tokenB: 0, success: false };
+
+            // 4. Calculate Price (B per A) -> Assuming B is Quote (LPPP)
+            const price = amountB / amountA;
+
+            return {
+                price,
+                tokenA: amountA,
+                tokenB: amountB,
+                success: true
+            };
+        } catch (error) {
+            console.warn(`[STRATEGY] Failed to fetch pool status for ${poolAddress}:`, error);
+            return { price: 0, tokenA: 0, tokenB: 0, success: false };
         }
     }
 }
