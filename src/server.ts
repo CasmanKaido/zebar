@@ -87,10 +87,25 @@ app.get("/api/price", async (req, res) => {
     }
 });
 
-// Portfolio Endpoint
+// Portfolio Endpoint (SOL/LPPP Balances)
 app.get("/api/portfolio", async (req, res) => {
-    const portfolio = await botManager.getPortfolio();
+    const portfolio = await botManager.getWalletBalance();
     res.json(portfolio);
+});
+
+// Liquidity Management Endpoints
+app.post("/api/pool/withdraw", async (req, res) => {
+    const { poolId, percent } = req.body;
+    if (!poolId) return res.status(400).json({ error: "Missing poolId" });
+    const result = await botManager.withdrawLiquidity(poolId, percent || 80);
+    res.json(result);
+});
+
+app.post("/api/pool/increase", async (req, res) => {
+    const { poolId, amountSol } = req.body;
+    if (!poolId || !amountSol) return res.status(400).json({ error: "Missing poolId or amountSol" });
+    const result = await botManager.increaseLiquidity(poolId, amountSol);
+    res.json(result);
 });
 
 // Catch-all to serve React's index.html

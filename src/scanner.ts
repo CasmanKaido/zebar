@@ -10,6 +10,7 @@ export interface ScanResult {
     liquidity: number;
     mcap: number;
     symbol: string;
+    priceUsd: number;
 }
 
 export interface ScannerCriteria {
@@ -186,7 +187,8 @@ export class MarketScanner {
                         volume24h: Number(volume1h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
-                        symbol: targetToken.symbol
+                        symbol: targetToken.symbol,
+                        priceUsd: priceUSD
                     };
 
                     await this.callback(result);

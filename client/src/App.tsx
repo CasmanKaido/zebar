@@ -91,6 +91,11 @@ function App() {
     const [minLiquidity, setMinLiquidity] = useState(60000);
     const [minMcap, setMinMcap] = useState(60000);
 
+    // Meteora Specific
+    const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
+    const [autoSyncPrice, setAutoSyncPrice] = useState(true);
+    const [maxPools, setMaxPools] = useState(5); // Default 5 pools
+
     // Unit States
     const [isBuyUsd, setIsBuyUsd] = useState(false);
     const [isLpUsd, setIsLpUsd] = useState(false);
@@ -193,19 +198,39 @@ function App() {
         const finalLppp = isLpUsd && lpppPrice ? lpppAmount / lpppPrice : lpppAmount;
 
         const endpoint = running ? '/api/stop' : '/api/start';
-        const body = running ? {} : {
-            buyAmount: finalBuy,
-            lpppAmount: finalLppp,
-            slippage,
-            minVolume1h: minVolume,
-            minLiquidity,
-            minMcap
-        };
-
         await fetch(`${BACKEND_URL}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify({
+                buyAmount: finalBuy,
+                lpppAmount: finalLppp,
+                meteoraFeeBps,
+                autoSyncPrice,
+                maxPools,
+                slippage,
+                minVolume1h: minVolume,
+                minLiquidity,
+                minMcap
+            })
+        });
+    };
+
+    const withdrawLiquidity = async (poolId: string) => {
+        if (!confirm("Confirm 80% Liquidity Withdrawal?")) return;
+        await fetch(`${BACKEND_URL}/api/pool/withdraw`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId, percent: 80 })
+        });
+    };
+
+    const increaseLiquidity = async (poolId: string) => {
+        const amount = prompt("Enter SOL amount to add:", "0.1");
+        if (!amount || isNaN(Number(amount))) return;
+        await fetch(`${BACKEND_URL}/api/pool/increase`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId, amountSol: Number(amount) })
         });
     };
 
@@ -368,11 +393,51 @@ function App() {
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-border space-y-4">
-                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Scanner Criteria</p>
+                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Scanner Criteria</p>
                             <SettingInput label="Slippage (%)" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
                             <SettingInput label="Min 1h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
                             <SettingInput label="Min Liquidity ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
                             <SettingInput label="Min Mcap ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
+                            <SettingInput label="Session Limit (Pools)" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
+                        </div>
+
+                        {/* Meteora Specific UI */}
+                        <div className="mt-4 pt-4 border-t border-border space-y-4">
+                            <div className="flex items-center justify-between mb-1">
+                                <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Meteora Config</p>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-muted-foreground uppercase">Auto-Sync</span>
+                                    <button
+                                        onClick={() => setAutoSyncPrice(!autoSyncPrice)}
+                                        disabled={running}
+                                        className={`w-8 h-4 rounded-full transition-colors relative ${autoSyncPrice ? 'bg-primary' : 'bg-muted'}`}
+                                    >
+                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${autoSyncPrice ? 'left-4.5' : 'left-0.5'}`} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Fee Tier (%)</label>
+                                <div className="grid grid-cols-4 gap-1">
+                                    {[25, 100, 200, 400].map((bps) => (
+                                        <button
+                                            key={bps}
+                                            onClick={() => setMeteoraFeeBps(bps)}
+                                            disabled={running}
+                                            className={`py-1.5 rounded text-[10px] font-bold border transition-all ${meteoraFeeBps === bps
+                                                ? 'bg-primary/20 border-primary text-primary'
+                                                : 'bg-input border-border text-muted-foreground hover:border-muted-foreground/50'
+                                                }`}
+                                        >
+                                            {bps / 100}%
+                                        </button>
+                                    ))}
+                                </div>
+                                <span className="text-[9px] text-muted-foreground/60 italic">
+                                    {meteoraFeeBps / 100}% LP fee for {autoSyncPrice ? 'optimized' : 'static'} routing
+                                </span>
+                            </div>
                         </div>
 
                         <div className="mt-6 p-3 bg-white/5 rounded-md border border-dashed border-border flex items-center gap-3">
@@ -552,18 +617,39 @@ function App() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                         {pools.map(pool => (
-                            <div key={pool.poolId} className="bg-secondary border border-border p-4 rounded-md flex justify-between items-center group hover:border-primary/50 transition-colors">
-                                <div>
-                                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
-                                    <p className="font-mono text-[13px] text-primary">{pool.poolId.slice(0, 12)}...</p>
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] rounded font-bold">{pool.token}</span>
-                                        <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
+                            <div key={pool.poolId} className="bg-secondary border border-border p-4 rounded-md flex flex-col gap-4 group hover:border-primary/50 transition-colors">
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
+                                        <p className="font-mono text-[13px] text-primary">{pool.poolId.slice(0, 12)}...</p>
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] rounded font-bold">{pool.token}</span>
+                                            <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">ROI</p>
+                                        <p className={`text-xl font-bold transition-colors ${pool.roi.startsWith('-') ? 'text-red-400' : 'text-emerald-400 group-hover:text-primary'}`}>
+                                            {pool.roi}
+                                        </p>
                                     </div>
                                 </div>
-                                <div className="text-right">
-                                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">ROI</p>
-                                    <p className="text-xl font-bold text-white group-hover:text-primary transition-colors">{pool.roi}</p>
+
+                                <div className="grid grid-cols-2 gap-2 mt-auto">
+                                    <button
+                                        onClick={() => increaseLiquidity(pool.poolId)}
+                                        className="flex items-center justify-center gap-1.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 text-[10px] font-bold rounded transition-colors"
+                                    >
+                                        <Zap size={12} />
+                                        ADD LIQ
+                                    </button>
+                                    <button
+                                        onClick={() => withdrawLiquidity(pool.poolId)}
+                                        className="flex items-center justify-center gap-1.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-[10px] font-bold rounded transition-colors"
+                                    >
+                                        <Droplets size={12} />
+                                        CLOSE (80%)
+                                    </button>
                                 </div>
                             </div>
                         ))}

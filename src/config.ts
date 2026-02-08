@@ -32,3 +32,7 @@ export const wallet = PRIVATE_KEY
     : Keypair.generate(); // fallback to random wallet for safety if env missing
 
 console.log("Wallet Public Key:", wallet.publicKey.toBase58());
+
+// Meteora Pool Fee in Basis Points (100 bps = 1%)
+// Standard is 20 (0.2%)
+export const METEORA_POOL_FEE_BPS = parseInt(process.env.METEORA_POOL_FEE_BPS || "20");

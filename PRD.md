@@ -1,50 +1,65 @@
-# ZEBAR: Automated Liquidity & Volume Bot - PRD
+# PRD: ZEBAR – Advanced Market Sweeper & Auto-LP Engine
 
-## 1. Executive Summary
-**ZEBAR** is a specialized Solana trading bot designed to bootstrap liquidity and volume for the **$LPPP** token. It automates the process of "aping" into new high-potential launches on Pump.fun and immediately creating dual-sided liquidity pools on Meteora DLMM, pairing the new token with $LPPP.
+## 1. Project Overview
+**ZEBAR** is a high-performance Solana trading bot designed to bridge the gap between aggressive market sweeping and strategic liquidity provisioning. It automates the lifecycle of a high-growth token play: from ecosystem-wide detection to optimal entry, and finally, seeding a high-yield **2% Fee** liquidity pool on Meteora CP-AMM.
 
-## 2. Technical Objective
-The primary goal is to create a seamless, high-speed pipeline from token discovery to liquidity provisioning, thereby increasing $LPPP's utility, holder count, and market presence.
+---
 
-## 3. Core Features
+## 2. Core Operational Pillars
 
-### 3.1. Market Scanning & Filtering
-- **Source**: Solana DEX Pairs (Raydium, Meteora) via DexScreener/Birdeye API.
-- **Trigger Criteria**:
-    - **1h Volume**: Minimum $100,000.
-    - **Liquidity**: Minimum $60,000 (Locked status preferred).
-    - **Market Cap**: Minimum $60,000 (No upper limit).
-- **Mechanism**: Periodic scanning (Polling) for tokens meeting these "Golden Ratios" of liquidity-to-mcap.
+### 2.1. Intelligent Market Sweeping
+- **Broad Harvest**: Scans the entire Solana ecosystem (GeckoTerminal & DexScreener APIs) to identify trending tokens across Raydium, Meteora, and Orca.
+- **Performance Filtering**:
+    - **Min 1h Volume**: Targets tokens with active trading momentum.
+    - **Liquidity/MCAP Throttling**: Ensures entry into tokens with established depth.
+- **RugCheck Integration**: Automatic risk scoring via RugCheck API to filter out honey-pots and high-risk contracts.
 
-### 3.2. Automated Trading (Ape Strategy)
-- **Calculation**: Real-time bonding curve state fetching to calculate optimal buy amounts.
-- **Slippage**: Configurable slippage protection (Default: 10%).
-- **Parameters**: Adjustable **Buy Size (SOL)** via the frontend dashboard.
+### 2.2. Precision Execution (The Sniper)
+- **Jupiter Ultra**: Utilizes Jupiter’s Ultra-routing for the best possible price impact and automatic slippage management.
+- **Jito-Bundle Guaranteed**: Every buy is wrapped in a Jito Flashbot-style bundle with an automated tip (0.0001 SOL) to prevent front-running and guarantee landing the transaction during congestion.
 
-### 3.3. Liquidity Provisioning (LP)
-- **DEX**: Meteora DLMM (Dynamic Liquidity Market Maker).
-- **Pairing**: All sniped tokens are paired with **$LPPP** (`44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV`).
-- **Amounts**: Automatically uses the full amount of tokens bought, paired with a user-specified amount of $LPPP.
+### 2.3. Strategic Liquidity Provisioning (LP)
+- **Meteora CP-AMM Integration**: Automatically transforms sniped positions into yield-bearing liquidity pools.
+- **Dynamic Fee Config**: Selectable fee tiers (0.25%, 1%, **2%**, 4%) via the dashboard.
+- **Market-Price Auto-Sync**: 
+    - Real-time price correlation between the target Token and **$LPPP** (`44sHXM...BREV`).
+    - Dynamically calculates the exact $LPPP amount needed to initialize the pool at the "Estimated Market Price."
+- **Custom SDK Logic**: Uses specialized `createCustomPool` implementation to enable precise fee management and price alignment.
 
-### 3.4. Risk Management & Exit
-- **Position Monitoring**: Real-time price tracking of the created pools.
-- **TP (Take Profit)**: 8x Gain target.
-- **Strategy**: Automatically withdraw **80%** of liquidity upon reaching the price target, leaving a **20% "Moonbag"** to capture further upside.
+---
 
-## 4. User Interface (Command Center)
-- **Control Panel**: Modular Start/Stop bot controls.
-- **Live Settings**: On-the-fly adjustment of Buy amounts and LP ratios.
-- **Real-time Logs**: WebSocket-driven system terminal for monitoring blockchain interactions.
-- **Market Intel**: Integrated Live Chart for $LPPP via DexScreener.
-- **Stats**: Active pool tracking and ROI monitoring.
+## 3. Risk & Capital Management
+
+### 3.1. Take-Profit (TP) Strategy
+- **Position Tracking**: Real-time ROI monitoring of all created bot-pools.
+- **8x Exit Goal**: Automatic triggers for profit taking when the target multiplier is reached.
+- **Strategy**: 80% withdrawal for capital protection + 20% "Moonbag" retention for exponential upside.
+
+### 3.2. Session Safety (Batch Sniper)
+- **Session Pool Limit**: Definable limit (e.g., 5 pools). The bot tracks its performance in real-time and executes a **Hard Stop** once the target number of plays is achieved.
+- **Wallet Protection**: Ensures the bot never over-allocates capital in a single volatile window.
+
+---
+
+## 4. User Interface (The Command Center)
+- **Architecture**: Unified React (Vite) + Node.js (Express) + Socket.io.
+- **Control Panel**:
+    - Toggle between USD/SOL/LPPP units for all inputs.
+    - On-the-fly adjustment of scanner criteria and LP fees.
+    - **Live Dashboard**: Real-time terminal logs, active pool tracking, and ROI updates.
+- **Live Market Intel**: Integrated price feeds for SOL and $LPPP to monitor portfolio health in real-time.
+
+---
 
 ## 5. Technology Stack
 - **Languages**: TypeScript, JavaScript.
-- **Frameworks**: Node.js (Express), React (Vite).
-- **Blockchain Libraries**: `@solana/web3.js`, `@meteora-ag/dlmm`, `@solana/spl-token`.
-- **Aesthetics**: Cyberpunk Dark UI, Framer Motion, Vanilla CSS.
+- **SDKs**: `@meteora-ag/cp-amm-sdk`, `@solana/web3.js`, `@solana/spl-token`.
+- **Infrastructure**: WebSockets (Socket.io), Jito (Bundles), Jupiter (Swaps), Express.
+- **Persistence**: Local history tracking with `pools.json` for persistence across restarts.
+
+---
 
 ## 6. Security Architecture
-- **Environment Isolation**: Sensitive keys stored in `.env`.
-- **Hot Wallet System**: Designed to run with a dedicated bot wallet to minimize risk to primary assets.
-- **Safety Fallbacks**: Base58 validation for all keys and automatic RPC backoff logic.
+- **Environment Isolation**: Private keys managed strictly via `.env`.
+- **Dedicated Bot Wallet**: Designed for "Hot Wallet" usage with minimal permissions to safeguard primary assets.
+- **RPC Resilience**: Automatic fallback logic between Jito Bundles and standard RPC execution.

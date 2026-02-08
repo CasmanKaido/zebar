@@ -630,7 +630,7 @@ export class StrategyManager {
      * Creates a Meteora DAMM V2 Pool (Constant Product).
      * Uses Standard Static Config (Index 0) for 0.25% fee (Standard Volatile).
      */
-    async createMeteoraPool(tokenMint: PublicKey, tokenAmount: bigint, baseAmount: bigint, baseMint: PublicKey = new PublicKey("So11111111111111111111111111111111111111112")): Promise<{ success: boolean; poolAddress?: string; error?: string }> {
+    async createMeteoraPool(tokenMint: PublicKey, tokenAmount: bigint, baseAmount: bigint, baseMint: PublicKey = new PublicKey("So11111111111111111111111111111111111111112"), feeBps?: number): Promise<{ success: boolean; poolAddress?: string; positionAddress?: string; error?: string }> {
         const { DRY_RUN } = require("./config");
         console.log(`[METEORA] Creating DAMM V2 Pool... ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
@@ -644,7 +644,8 @@ export class StrategyManager {
 
         try {
             // 1. Load SDK & Constants
-            const { CpAmm, deriveConfigAddress, MIN_SQRT_PRICE, MAX_SQRT_PRICE } = require("@meteora-ag/cp-amm-sdk");
+            const { CpAmm, deriveConfigAddress, MIN_SQRT_PRICE, MAX_SQRT_PRICE, getFeeTimeSchedulerParams, FEE_PADDING } = require("@meteora-ag/cp-amm-sdk");
+            const { METEORA_POOL_FEE_BPS } = require("./config");
 
             // 2. Sort Tokens (A < B)
             const [tokenA, tokenB] = tokenMint.toBuffer().compare(baseMint.toBuffer()) < 0
@@ -734,21 +735,67 @@ export class StrategyManager {
             console.log(`[METEORA] Config: ${configAddress.toBase58()} | Init Price: ${poolParams.initSqrtPrice.toString()}`);
 
             // 8. Create Transaction
-            const transaction = await cpAmm.createPool({
-                creator: this.wallet.publicKey,
-                payer: this.wallet.publicKey,
-                config: configAddress,
-                tokenAMint: tokenA,
-                tokenBMint: tokenB,
-                tokenAAmount: bnAmountA,
-                tokenBAmount: bnAmountB,
-                initSqrtPrice: poolParams.initSqrtPrice,
-                liquidityDelta: poolParams.liquidityDelta,
-                activationPoint: null, // Immediate
-                tokenAProgram: tokenAProgram,
-                tokenBProgram: tokenBProgram,
-                positionNft: positionNftMint.publicKey, // Must provide public key
-            });
+            let transaction;
+            let poolAddress: PublicKey = PublicKey.default;
+            let positionAddress: PublicKey = PublicKey.default;
+            const targetBps = feeBps || METEORA_POOL_FEE_BPS;
+
+            if (targetBps === 20) {
+                // Use Standard Permissionless Pool (Config Index 0 - 0.2%)
+                transaction = await cpAmm.createPool({
+                    creator: this.wallet.publicKey,
+                    payer: this.wallet.publicKey,
+                    config: configAddress,
+                    tokenAMint: tokenA,
+                    tokenBMint: tokenB,
+                    tokenAAmount: bnAmountA,
+                    tokenBAmount: bnAmountB,
+                    initSqrtPrice: poolParams.initSqrtPrice,
+                    liquidityDelta: poolParams.liquidityDelta,
+                    activationPoint: null, // Immediate
+                    tokenAProgram: tokenAProgram,
+                    tokenBProgram: tokenBProgram,
+                    positionNft: positionNftMint.publicKey,
+                });
+
+                // Derive addresses for permissionless pool
+                const { derivePoolAddress, derivePositionAddress } = require("@meteora-ag/cp-amm-sdk");
+                poolAddress = derivePoolAddress(configAddress, tokenA, tokenB);
+                positionAddress = derivePositionAddress(positionNftMint.publicKey);
+            } else {
+                console.log(`[METEORA] Creating Custom Pool with ${targetBps} bps fee tier...`);
+                // Use Customizable Pool to set specific fee (e.g. 2% = 200 bps)
+                const poolFees = {
+                    baseFee: getFeeTimeSchedulerParams(targetBps, targetBps, 0, 0, 0), // Static fee
+                    dynamicFee: null,
+                    padding: FEE_PADDING
+                };
+
+                const result = await cpAmm.createCustomPool({
+                    creator: this.wallet.publicKey,
+                    payer: this.wallet.publicKey,
+                    tokenAMint: tokenA,
+                    tokenBMint: tokenB,
+                    tokenAAmount: bnAmountA,
+                    tokenBAmount: bnAmountB,
+                    initSqrtPrice: poolParams.initSqrtPrice,
+                    liquidityDelta: poolParams.liquidityDelta,
+                    sqrtMinPrice: MIN_SQRT_PRICE,
+                    sqrtMaxPrice: MAX_SQRT_PRICE,
+                    poolFees: poolFees,
+                    hasAlphaVault: false,
+                    activationType: 0, // Slot
+                    collectFeeMode: 0,
+                    activationPoint: null,
+                    tokenAProgram: tokenAProgram,
+                    tokenBProgram: tokenBProgram,
+                    positionNft: positionNftMint.publicKey,
+                    isLockLiquidity: false
+                });
+                transaction = result.tx;
+                poolAddress = result.pool;
+                positionAddress = result.position;
+            }
 
             console.log(`[METEORA] SDK Transaction Instructions: ${transaction instanceof Transaction ? transaction.instructions.length : (transaction as any).instructions.length}`);
 
@@ -760,7 +807,10 @@ export class StrategyManager {
             });
 
             console.log(`[METEORA] DAMM V2 Pool Created: https://solscan.io/tx/${txSig}`);
-            return { success: true, poolAddress: "Check TX" };
+            console.log(`[METEORA] Pool Address: ${poolAddress.toBase58()}`);
+            console.log(`[METEORA] Position Address: ${positionAddress.toBase58()}`);
+
+            return { success: true, poolAddress: poolAddress.toBase58(), positionAddress: positionAddress.toBase58() };
 
         } catch (e: any) {
             console.error(`[METEORA] Pool Creation Failed:`, e);
@@ -768,7 +818,147 @@ export class StrategyManager {
         }
     }
 
-    async getPoolStatus(poolAddress: string, tokenAMint: string, tokenBMint: string): Promise<{ price: number, tokenA: number, tokenB: number, success: boolean }> {
+    /**
+     * Removes a percentage of liquidity from a Meteora CP-AMM pool.
+     */
+    async removeMeteoraLiquidity(poolAddress: string, percent: number = 80): Promise<{ success: boolean; txSig?: string; error?: string }> {
+        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const { PublicKey, sendAndConfirmTransaction } = require("@solana/web3.js");
+        const BN = require("bn.js");
+
+        console.log(`[STRATEGY] Removing ${percent}% liquidity from pool: ${poolAddress}`);
+        try {
+            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
+            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+
+            if (userPositions.length === 0) {
+                return { success: false, error: "No active position found for this pool/wallet." };
+            }
+
+            const pos = userPositions[0];
+            const currentLiquidity = new BN(pos.positionState.unlockedLiquidity.toString());
+            const liquidityDelta = currentLiquidity.mul(new BN(percent)).div(new BN(100));
+
+            if (liquidityDelta.isZero()) {
+                return { success: false, error: "Liquidity delta is zero (maybe position is empty?)" };
+            }
+
+            const poolState = await cpAmm.getPoolState();
+
+            const tx = await cpAmm.removeLiquidity({
+                owner: this.wallet.publicKey,
+                pool: new PublicKey(poolAddress),
+                position: pos.position,
+                positionNftAccount: pos.positionNftAccount,
+                liquidityDelta,
+                tokenAMint: poolState.tokenAMint,
+                tokenBMint: poolState.tokenBMint,
+                tokenAVault: poolState.tokenAVault,
+                tokenBVault: poolState.tokenBVault,
+                tokenAProgram: poolState.tokenAProgram,
+                tokenBProgram: poolState.tokenBProgram,
+                tokenAAmountThreshold: new BN(0),
+                tokenBAmountThreshold: new BN(0),
+                vestings: [],
+                currentPoint: new BN(0)
+            }).build();
+
+            const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                skipPreflight: true,
+                commitment: "confirmed"
+            });
+
+            console.log(`[METEORA] Liquidity Removed: https://solscan.io/tx/${txSig}`);
+            return { success: true, txSig };
+
+        } catch (error: any) {
+            console.error(`[METEORA] Liquidity Removal Error:`, error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Increases liquidity in a Meteora CP-AMM pool.
+     */
+    async addMeteoraLiquidity(poolAddress: string, amountSol: number): Promise<{ success: boolean; txSig?: string; error?: string }> {
+        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const { PublicKey, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require("@solana/web3.js");
+        const BN = require("bn.js");
+
+        console.log(`[STRATEGY] Increasing liquidity by ${amountSol} SOL in pool: ${poolAddress}`);
+        try {
+            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
+            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+
+            if (userPositions.length === 0) {
+                return { success: false, error: "No active position found. Use createPosition first." };
+            }
+
+            const pos = userPositions[0];
+            const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
+
+            const poolState = await cpAmm.getPoolState();
+            const isTokenASOL = poolState.tokenAMint.equals(new PublicKey("So11111111111111111111111111111111111111112"));
+
+            const depositQuote = cpAmm.getDepositQuote({
+                inAmount: amountLamports,
+                isTokenA: isTokenASOL,
+                minSqrtPrice: poolState.sqrtMinPrice,
+                maxSqrtPrice: poolState.sqrtMaxPrice,
+                sqrtPrice: poolState.sqrtPrice
+            });
+
+            // Map quote to max amounts with 1% slippage
+            const slippageMult = new BN(101);
+            const slippageDiv = new BN(100);
+
+            const maxAmountA = isTokenASOL
+                ? depositQuote.consumedInputAmount.mul(slippageMult).div(slippageDiv)
+                : depositQuote.outputAmount.mul(slippageMult).div(slippageDiv);
+
+            const maxAmountB = isTokenASOL
+                ? depositQuote.outputAmount.mul(slippageMult).div(slippageDiv)
+                : depositQuote.consumedInputAmount.mul(slippageMult).div(slippageDiv);
+
+            const tx = await cpAmm.addLiquidity({
+                owner: this.wallet.publicKey,
+                pool: new PublicKey(poolAddress),
+                position: pos.position,
+                positionNftAccount: pos.positionNftAccount,
+                liquidityDelta: depositQuote.liquidityDelta,
+                maxAmountTokenA: maxAmountA,
+                maxAmountTokenB: maxAmountB,
+                tokenAAmountThreshold: new BN(0),
+                tokenBAmountThreshold: new BN(0),
+                tokenAMint: poolState.tokenAMint,
+                tokenBMint: poolState.tokenBMint,
+                tokenAVault: poolState.tokenAVault,
+                tokenBVault: poolState.tokenBVault,
+                tokenAProgram: poolState.tokenAProgram,
+                tokenBProgram: poolState.tokenBProgram,
+            }).build();
+
+            const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                skipPreflight: true,
+                commitment: "confirmed"
+            });
+
+            console.log(`[METEORA] Liquidity Increased: https://solscan.io/tx/${txSig}`);
+            return { success: true, txSig };
+
+        } catch (error: any) {
+            console.error(`[METEORA] Increase Liquidity Error:`, error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Gets total pool liquidity status.
+     */
+    async getPoolStatus(poolAddress: string, tokenAMint: string, tokenBMint: string): Promise<{ tokenAmount: number; baseAmount: number; price: number; success: boolean; metrics?: any }> {
+        const { deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
+        const { PublicKey } = require("@solana/web3.js");
+
         try {
             const poolPubkey = new PublicKey(poolAddress);
             const tokenAPubkey = new PublicKey(tokenAMint);
@@ -786,20 +976,20 @@ export class StrategyManager {
             const amountA = balanceA.value.uiAmount || 0;
             const amountB = balanceB.value.uiAmount || 0;
 
-            if (amountA === 0) return { price: 0, tokenA: 0, tokenB: 0, success: false };
+            if (amountA === 0) return { price: 0, tokenAmount: 0, baseAmount: 0, success: false };
 
             // 4. Calculate Price (B per A) -> Assuming B is Quote (LPPP)
             const price = amountB / amountA;
 
             return {
                 price,
-                tokenA: amountA,
-                tokenB: amountB,
+                tokenAmount: amountA,
+                baseAmount: amountB,
                 success: true
             };
         } catch (error) {
             console.warn(`[STRATEGY] Failed to fetch pool status for ${poolAddress}:`, error);
-            return { price: 0, tokenA: 0, tokenB: 0, success: false };
+            return { price: 0, tokenAmount: 0, baseAmount: 0, success: false };
         }
     }
 }
