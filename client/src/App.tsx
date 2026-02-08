@@ -30,13 +30,13 @@ interface Pool {
     token: string;
     roi: string;
     created: string;
-    unclaimedFees?: { feeA: string; feeB: string };
+    unclaimedFees?: { sol: string; token: string };
 }
 
 interface PoolUpdate {
     poolId: string;
     roi?: string;
-    unclaimedFees?: { feeA: string; feeB: string };
+    unclaimedFees?: { sol: string; token: string };
 }
 
 interface SettingInputProps {
