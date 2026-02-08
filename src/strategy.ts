@@ -786,25 +786,27 @@ export class StrategyManager {
             console.error(`[METEORA] Pool Creation Failed:`, e);
             return { success: false, error: e.message };
         }
-    async getPoolStatus(poolAddress: string, tokenAMint: string, tokenBMint: string): Promise < { price: number, tokenA: number, tokenB: number, success: boolean } > {
-            try {
-                const poolPubkey = new PublicKey(poolAddress);
-                const tokenAPubkey = new PublicKey(tokenAMint);
-                const tokenBPubkey = new PublicKey(tokenBMint);
+    }
 
-                // 1. Derive Vault Addresses
-                const vaultA = deriveTokenVaultAddress(poolPubkey, tokenAPubkey);
-                const vaultB = deriveTokenVaultAddress(poolPubkey, tokenBPubkey);
+    async getPoolStatus(poolAddress: string, tokenAMint: string, tokenBMint: string): Promise<{ price: number, tokenA: number, tokenB: number, success: boolean }> {
+        try {
+            const poolPubkey = new PublicKey(poolAddress);
+            const tokenAPubkey = new PublicKey(tokenAMint);
+            const tokenBPubkey = new PublicKey(tokenBMint);
 
-                // 2. Fetch Balances
-                const balanceA = await this.connection.getTokenAccountBalance(vaultA);
-                const balanceB = await this.connection.getTokenAccountBalance(vaultB);
+            // 1. Derive Vault Addresses
+            const vaultA = deriveTokenVaultAddress(poolPubkey, tokenAPubkey);
+            const vaultB = deriveTokenVaultAddress(poolPubkey, tokenBPubkey);
 
-                // 3. Parse Balances (handle decimals if needed, but uiAmount is easiest for price)
-                const amountA = balanceA.value.uiAmount || 0;
-                const amountB = balanceB.value.uiAmount || 0;
+            // 2. Fetch Balances
+            const balanceA = await this.connection.getTokenAccountBalance(vaultA);
+            const balanceB = await this.connection.getTokenAccountBalance(vaultB);
 
-                if(amountA === 0) return { price: 0, tokenA: 0, tokenB: 0, success: false };
+            // 3. Parse Balances (handle decimals if needed, but uiAmount is easiest for price)
+            const amountA = balanceA.value.uiAmount || 0;
+            const amountB = balanceB.value.uiAmount || 0;
+
+            if (amountA === 0) return { price: 0, tokenA: 0, tokenB: 0, success: false };
 
             // 4. Calculate Price (B per A) -> Assuming B is Quote (LPPP)
             const price = amountB / amountA;
