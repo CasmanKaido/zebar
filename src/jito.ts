@@ -3,8 +3,14 @@ import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction, Syst
 import bs58 from "bs58";
 
 export class JitoExecutor {
-    // Jito Mainnet Block Engine
-    private static BLOCK_ENGINE_URL = "https://mainnet.block-engine.jito.wtf/api/v1";
+    // Jito Block Engine Endpoints (Regional + Main)
+    private static BLOCK_ENGINE_URLS = [
+        "https://mainnet.block-engine.jito.wtf/api/v1",
+        "https://amsterdam.mainnet.block-engine.jito.wtf/api/v1",
+        "https://frankfurt.mainnet.block-engine.jito.wtf/api/v1",
+        "https://ny.mainnet.block-engine.jito.wtf/api/v1",
+        "https://tokyo.mainnet.block-engine.jito.wtf/api/v1",
+    ];
 
     // Known Jito Tip Accounts (Randomly select one to avoid contention)
     private static TIP_ACCOUNTS = [
@@ -27,33 +33,47 @@ export class JitoExecutor {
     }
 
     /**
-     * Send a Bundle directly to Jito Block Engine
+     * Send a Bundle directly to Jito Block Engine with failover
      * @param transactions Array of serialized transactions (base58 strings)
      */
     static async sendBundle(transactions: string[], description: string = "Bundle") {
         console.log(`[JITO] Sending ${description} Bundle to Jito Block Engine...`);
 
-        try {
-            const response = await axios.post(`${this.BLOCK_ENGINE_URL}/bundles`, {
-                jsonrpc: "2.0",
-                id: 1,
-                method: "sendBundle",
-                params: [transactions]
-            });
+        // Shuffle endpoints for load distribution
+        const endpoints = [...this.BLOCK_ENGINE_URLS].sort(() => Math.random() - 0.5);
 
-            if (response.data.error) {
-                console.error(`[JITO ERROR] Bundle Rejected:`, response.data.error);
-                return { success: false, error: response.data.error };
+        for (const endpoint of endpoints) {
+            try {
+                // console.log(`[JITO DEBUG] Trying Endpoint: ${endpoint}`);
+                const response = await axios.post(`${endpoint}/bundles`, {
+                    jsonrpc: "2.0",
+                    id: 1,
+                    method: "sendBundle",
+                    params: [transactions]
+                }, { timeout: 2000 }); // Quick 2s timeout per endpoint
+
+                if (response.data.error) {
+                    console.warn(`[JITO WARN] Bundle Rejected by ${endpoint}:`, response.data.error);
+                    continue; // Try next endpoint
+                }
+
+                const bundleId = response.data.result;
+                console.log(`[JITO] Bundle Sent! ID: ${bundleId} (via ${endpoint})`);
+                return { success: true, bundleId };
+
+            } catch (e: any) {
+                const status = e.response?.status;
+                if (status === 429) {
+                    console.warn(`[JITO RATE LIMIT] 429 from ${endpoint}. Switching...`);
+                } else {
+                    console.warn(`[JITO ERROR] Request Failed on ${endpoint}:`, e.message);
+                }
+                // Try next endpoint
             }
-
-            const bundleId = response.data.result;
-            console.log(`[JITO] Bundle Sent! ID: ${bundleId}`);
-            return { success: true, bundleId };
-
-        } catch (e: any) {
-            console.error(`[JITO ERROR] Request Failed:`, e.message);
-            return { success: false, error: e.message };
         }
+
+        console.error("[JITO ERROR] All endpoints failed.");
+        return { success: false, error: "All Jito Endpoints Failed" };
     }
 
     /**
