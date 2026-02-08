@@ -96,6 +96,7 @@ function App() {
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [autoSyncPrice, setAutoSyncPrice] = useState(true);
+    const [manualPrice, setManualPrice] = useState(0.0001); // Default context
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
 
     // Unit States
@@ -212,6 +213,7 @@ function App() {
                 lpppAmount: finalLppp,
                 meteoraFeeBps,
                 autoSyncPrice,
+                manualPrice: autoSyncPrice ? 0 : Number(manualPrice),
                 maxPools,
                 slippage,
                 minVolume1h: minVolume,
@@ -450,6 +452,30 @@ function App() {
                                     </button>
                                 </div>
                             </div>
+
+                            {!autoSyncPrice && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="px-3 py-2 bg-amber-500/5 border border-amber-500/20 rounded-md"
+                                >
+                                    <p className="text-[10px] text-amber-500/80 font-bold mb-1.5 uppercase tracking-tighter">Manual Price Context</p>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            step="0.000001"
+                                            value={manualPrice}
+                                            onChange={(e) => setManualPrice(Number(e.target.value))}
+                                            disabled={running}
+                                            className="flex-1 bg-input border border-border rounded px-2 py-1 text-[12px] font-mono text-primary outline-none focus:border-amber-500/50 transition-colors"
+                                        />
+                                        <span className="text-[10px] text-muted-foreground font-bold">LPPP / TOKEN</span>
+                                    </div>
+                                    <p className="text-[9px] text-muted-foreground/60 mt-1.5 leading-tight italic">
+                                        Pool will seed at exactly this ratio. Ignore market price.
+                                    </p>
+                                </motion.div>
+                            )}
 
                             <div className="flex flex-col gap-2">
                                 <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Fee Tier (%)</label>

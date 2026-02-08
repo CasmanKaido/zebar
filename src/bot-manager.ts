@@ -31,6 +31,7 @@ export interface BotSettings {
     lpppAmount: number; // in units
     meteoraFeeBps: number; // in Basis Points (e.g. 200 = 2%)
     autoSyncPrice: boolean; // Sync pairing amount with market price
+    manualPrice: number; // Manual price context (Tokens per LPPP)
     maxPools: number; // Max pools to create before auto-stop
     slippage: number; // in % (e.g. 10)
     minVolume1h: number;
@@ -48,6 +49,7 @@ export class BotManager {
         lpppAmount: 1000,
         meteoraFeeBps: 200, // Default 2%
         autoSyncPrice: true, // Default ON
+        manualPrice: 0, // Default 0 (disabled)
         maxPools: 5, // Default 5 pools
         slippage: 10,
         minVolume1h: 100000,
@@ -207,6 +209,10 @@ export class BotManager {
                         targetLpppAmount = tokenAmtFloat * tokenPriceLppp;
                         SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                     }
+                } else if (!this.settings.autoSyncPrice && this.settings.manualPrice > 0) {
+                    const tokenAmtFloat = Number(amount) / 1e9;
+                    targetLpppAmount = tokenAmtFloat * this.settings.manualPrice;
+                    SocketManager.emitLog(`[MANUAL-PRICE] Context: ${this.settings.manualPrice} LPPP/Token | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                 }
 
                 const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e6));
