@@ -59,11 +59,12 @@ export class SocketManager {
         }
     }
 
-    static emitPoolUpdate(update: { poolId: string, roi: string }) {
+    static emitPoolUpdate(update: { poolId: string, roi?: string, unclaimedFees?: any }) {
         // Update history
         const index = this.poolHistory.findIndex(p => p.poolId === update.poolId);
         if (index !== -1) {
-            this.poolHistory[index].roi = update.roi;
+            if (update.roi) this.poolHistory[index].roi = update.roi;
+            if (update.unclaimedFees) this.poolHistory[index].unclaimedFees = update.unclaimedFees;
         }
 
         if (this.io) {

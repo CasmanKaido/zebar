@@ -30,11 +30,13 @@ interface Pool {
     token: string;
     roi: string;
     created: string;
+    unclaimedFees?: { feeA: string; feeB: string };
 }
 
 interface PoolUpdate {
     poolId: string;
-    roi: string;
+    roi?: string;
+    unclaimedFees?: { feeA: string; feeB: string };
 }
 
 interface SettingInputProps {
@@ -115,7 +117,11 @@ function App() {
             setPools(history);
         });
         socket.on('poolUpdate', (update: PoolUpdate) => {
-            setPools(prev => prev.map(p => p.poolId === update.poolId ? { ...p, roi: update.roi } : p));
+            setPools(prev => prev.map(p => p.poolId === update.poolId ? {
+                ...p,
+                roi: update.roi || p.roi,
+                unclaimedFees: update.unclaimedFees || p.unclaimedFees
+            } : p));
         });
         socket.on('pool', (pool: Pool) => {
             setPools(prev => [...prev.slice(-19), pool]);
@@ -224,6 +230,14 @@ function App() {
         });
     };
 
+    const claimFees = async (poolId: string) => {
+        await fetch(`${BACKEND_URL}/api/pool/claim`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ poolId })
+        });
+    };
+
     const increaseLiquidity = async (poolId: string) => {
         const amount = prompt("Enter SOL amount to add:", "0.1");
         if (!amount || isNaN(Number(amount))) return;
@@ -232,6 +246,26 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ poolId, amountSol: Number(amount) })
         });
+    };
+
+    const updatePrivateKey = async () => {
+        const pass = prompt("Enter admin password to update key:");
+        if (pass !== "zebar-admin") return alert("Unauthorized"); // Simple safety
+
+        const newKey = prompt("Paste new base58 Private Key:");
+        if (!newKey) return;
+
+        const res = await fetch(`${BACKEND_URL}/api/config/key`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ privateKey: newKey })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert(`Wallet Updated! New address: ${data.publicKey}`);
+        } else {
+            alert(`Error: ${data.error}`);
+        }
     };
 
     const clearLogs = () => setLogs([]);
@@ -440,6 +474,23 @@ function App() {
                             </div>
                         </div>
 
+                        <div className="mt-4 pt-4 border-t border-border">
+                            <div className="flex items-center justify-between mb-2">
+                                <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Security (Experimental)</p>
+                                <span className="bg-amber-500/20 text-amber-500 text-[8px] px-1.5 py-0.5 rounded font-black tracking-tighter">BETA</span>
+                            </div>
+                            <button
+                                onClick={updatePrivateKey}
+                                className="w-full flex items-center justify-center gap-2 py-2.5 bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-[10px] font-bold rounded border border-border transition-all"
+                            >
+                                <Wallet size={12} />
+                                UPDATE BOT WALLET
+                            </button>
+                            <p className="text-[9px] text-amber-500/60 mt-2 text-center leading-tight">
+                                ⚠️ <b>WARNING:</b> Only use over HTTPS. Key swap is volatile and resets on server restart. Use a low-balance hot wallet.
+                            </p>
+                        </div>
+
                         <div className="mt-6 p-3 bg-white/5 rounded-md border border-dashed border-border flex items-center gap-3">
                             <Activity size={20} className={running ? "text-primary animate-pulse" : "text-muted-foreground"} />
                             <span className="text-[12px] text-muted-foreground">
@@ -635,19 +686,33 @@ function App() {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-2 mt-auto">
-                                    <button
-                                        onClick={() => increaseLiquidity(pool.poolId)}
-                                        className="flex items-center justify-center gap-1.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 text-[10px] font-bold rounded transition-colors"
-                                    >
-                                        <Zap size={12} />
-                                        ADD LIQ
-                                    </button>
+                                <div className="flex justify-between items-center py-2 px-3 bg-card/30 rounded border border-border/50">
+                                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Unclaimed Fees</span>
+                                    <div className="text-right">
+                                        <p className="text-[11px] font-bold text-emerald-400">{(Number(pool.unclaimedFees?.sol || 0) / 1e9).toFixed(5)} SOL</p>
+                                        <p className="text-[9px] text-muted-foreground/60">{(Number(pool.unclaimedFees?.token || 0) / 1e9).toFixed(2)} {pool.token}</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-2 mt-auto">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            onClick={() => claimFees(pool.poolId)}
+                                            className="py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 text-[10px] font-black rounded border border-emerald-500/20 transition-all flex items-center justify-center gap-1"
+                                        >
+                                            <Zap size={10} /> HARVEST
+                                        </button>
+                                        <button
+                                            onClick={() => increaseLiquidity(pool.poolId)}
+                                            className="py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-black rounded border border-primary/20 transition-all flex items-center justify-center gap-1"
+                                        >
+                                            <Droplets size={10} /> ADD LIQ
+                                        </button>
+                                    </div>
                                     <button
                                         onClick={() => withdrawLiquidity(pool.poolId)}
-                                        className="flex items-center justify-center gap-1.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-[10px] font-bold rounded transition-colors"
+                                        className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-[10px] font-black rounded border border-red-500/20 transition-all"
                                     >
-                                        <Droplets size={12} />
                                         CLOSE (80%)
                                     </button>
                                 </div>

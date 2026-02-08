@@ -23,6 +23,14 @@ export class StrategyManager {
     }
 
     /**
+     * Updates the active wallet keypair at runtime.
+     */
+    setKey(newKey: Keypair) {
+        this.wallet = newKey;
+        console.log(`[STRATEGY] Wallet Key Updated: ${this.wallet.publicKey.toBase58()}`);
+    }
+
+    /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; error?: string }> {
@@ -965,8 +973,8 @@ export class StrategyManager {
             const tokenBPubkey = new PublicKey(tokenBMint);
 
             // 1. Derive Vault Addresses
-            const vaultA = deriveTokenVaultAddress(poolPubkey, tokenAPubkey);
-            const vaultB = deriveTokenVaultAddress(poolPubkey, tokenBPubkey);
+            const vaultA = deriveTokenVaultAddress(tokenAPubkey, poolPubkey);
+            const vaultB = deriveTokenVaultAddress(tokenBPubkey, poolPubkey);
 
             // 2. Fetch Balances
             const balanceA = await this.connection.getTokenAccountBalance(vaultA);
@@ -990,6 +998,75 @@ export class StrategyManager {
         } catch (error) {
             console.warn(`[STRATEGY] Failed to fetch pool status for ${poolAddress}:`, error);
             return { price: 0, tokenAmount: 0, baseAmount: 0, success: false };
+        }
+    }
+
+    /**
+     * Fetches unclaimed fees for a Meteora position.
+     */
+    async getMeteoraFees(poolAddress: string): Promise<{ feeA: bigint; feeB: bigint }> {
+        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const { PublicKey } = require("@solana/web3.js");
+
+        try {
+            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
+            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+
+            if (userPositions.length === 0) return { feeA: 0n, feeB: 0n };
+
+            const pos = userPositions[0];
+            return {
+                feeA: BigInt(pos.positionState.feeAPending.toString()),
+                feeB: BigInt(pos.positionState.feeBPending.toString())
+            };
+        } catch (error) {
+            return { feeA: 0n, feeB: 0n };
+        }
+    }
+
+    /**
+     * Claims accumulated fees from a Meteora position.
+     */
+    async claimMeteoraFees(poolAddress: string): Promise<{ success: boolean; txSig?: string; error?: string }> {
+        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const { PublicKey, sendAndConfirmTransaction } = require("@solana/web3.js");
+
+        console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}`);
+        try {
+            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
+            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+
+            if (userPositions.length === 0) {
+                return { success: false, error: "No active position found." };
+            }
+
+            const pos = userPositions[0];
+            const poolState = await cpAmm.getPoolState();
+
+            const tx = await cpAmm.claimPositionFee({
+                owner: this.wallet.publicKey,
+                position: pos.position,
+                pool: new PublicKey(poolAddress),
+                positionNftAccount: pos.positionNftAccount,
+                tokenAMint: poolState.tokenAMint,
+                tokenBMint: poolState.tokenBMint,
+                tokenAVault: poolState.tokenAVault,
+                tokenBVault: poolState.tokenBVault,
+                tokenAProgram: poolState.tokenAProgram,
+                tokenBProgram: poolState.tokenBProgram
+            }).build();
+
+            const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                skipPreflight: true,
+                commitment: "confirmed"
+            });
+
+            console.log(`[METEORA] Fees Claimed: https://solscan.io/tx/${txSig}`);
+            return { success: true, txSig };
+
+        } catch (error: any) {
+            console.error(`[METEORA] Claim Fees Error:`, error);
+            return { success: false, error: error.message };
         }
     }
 }

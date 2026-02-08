@@ -108,6 +108,21 @@ app.post("/api/pool/increase", async (req, res) => {
     res.json(result);
 });
 
+app.post("/api/pool/claim", async (req, res) => {
+    const { poolId } = req.body;
+    if (!poolId) return res.status(400).json({ error: "Missing poolId" });
+    const result = await botManager.claimFees(poolId);
+    res.json(result);
+});
+
+// Config Endpoints
+app.post("/api/config/key", async (req, res) => {
+    const { privateKey } = req.body;
+    if (!privateKey) return res.status(400).json({ error: "Missing privateKey" });
+    const result = await botManager.updateWallet(privateKey);
+    res.json(result);
+});
+
 // Catch-all to serve React's index.html
 app.use((req, res) => {
     res.sendFile(path.join(clientPath, "index.html"));

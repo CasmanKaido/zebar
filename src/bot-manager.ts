@@ -20,6 +20,7 @@ interface PoolData {
     initialLpppAmount: number;
     exited: boolean;
     positionId?: string; // Meteora Position PDA
+    unclaimedFees?: { sol: string; token: string };
 }
 
 
@@ -235,7 +236,8 @@ export class BotManager {
                             initialTokenAmount: tokenAmtFloat,
                             initialLpppAmount: targetLpppAmount,
                             exited: false,
-                            positionId: poolInfo.positionAddress
+                            positionId: poolInfo.positionAddress,
+                            unclaimedFees: { sol: "0", token: "0" } // Initialize fees
                         };
 
                         SocketManager.emitPool(fullPoolData);
@@ -326,8 +328,21 @@ export class BotManager {
                     // Assume pool token A is the sniped token, B is LPPP (or vice versa? strategy created it).
                     // Logic in strategy: tokenA, tokenB sorting.
                     // We need to pass both mints.
-                    // pool.mint is the sniped token. LPPP is the other.
                     const status = await this.strategy.getPoolStatus(pool.poolId, pool.mint, LPPP_MINT_ADDR);
+                    const fees = await this.strategy.getMeteoraFees(pool.poolId);
+
+                    // Meteora sorts mints: A < B. Align fees.
+                    const SOL_MINT = "So11111111111111111111111111111111111111112";
+                    const [mintA, mintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(SOL_MINT).toBuffer()) < 0
+                        ? [pool.mint, SOL_MINT]
+                        : [SOL_MINT, pool.mint];
+
+                    const feeToken = pool.mint === mintA ? fees.feeA.toString() : fees.feeB.toString();
+                    const feeSol = SOL_MINT === mintA ? fees.feeA.toString() : fees.feeB.toString();
+
+                    pool.unclaimedFees = { sol: feeSol, token: feeToken };
+                    SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
+
 
                     if (status.success && status.price > 0) {
                         // Calculate ROI
@@ -409,12 +424,46 @@ export class BotManager {
         return result;
     }
 
+    /**
+     * Public method to claim fees (from API)
+     */
+    async claimFees(poolId: string) {
+        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)}...`, "warning");
+        const result = await this.strategy.claimMeteoraFees(poolId);
+        if (result.success) {
+            SocketManager.emitLog(`[SUCCESS] Fees harvested!`, "success");
+        } else {
+            SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
+        }
+        return result;
+    }
+
     async getPortfolio() {
         try {
             const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
             return JSON.parse(data);
         } catch (e) {
             return [];
+        }
+    }
+
+    /**
+     * Updates the bot's active wallet at runtime.
+     */
+    async updateWallet(privateKeyBs58: string) {
+        try {
+            const { Keypair } = require("@solana/web3.js");
+            const bs58 = require("bs58");
+            const newWallet = Keypair.fromSecretKey(bs58.decode(privateKeyBs58));
+
+            // Update Strategy
+            this.strategy.setKey(newWallet);
+
+            SocketManager.emitLog(`[WALLET] Updated to: ${newWallet.publicKey.toBase58()}`, "success");
+            return { success: true, publicKey: newWallet.publicKey.toBase58() };
+        } catch (error: any) {
+            console.error("[BOT] Wallet Update Failed:", error);
+            return { success: false, error: error.message };
         }
     }
 }
