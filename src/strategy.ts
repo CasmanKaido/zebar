@@ -758,7 +758,7 @@ export class StrategyManager {
                 newAccountPubkey: positionNftMint.publicKey,
                 space: MINT_SIZE,
                 lamports,
-                programId: TOKEN_2022_PROGRAM_ID,
+                programId: TOKEN_PROGRAM_ID,
             });
 
             // Check if transaction is a Transaction object
