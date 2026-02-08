@@ -750,24 +750,38 @@ export class StrategyManager {
                 positionNft: positionNftMint.publicKey, // Must provide public key
             });
 
-            // FIX: Create Position NFT Account manually as SDK assumes it exists (or program init needs it created)
-            // Prepend the createAccount instruction to the transaction
-            const lamports = await this.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
-            const createAccountIx = SystemProgram.createAccount({
-                fromPubkey: this.wallet.publicKey,
-                newAccountPubkey: positionNftMint.publicKey,
-                space: MINT_SIZE,
-                lamports,
-                programId: TOKEN_PROGRAM_ID,
-            });
+            // 8.1 Check if SDK added createAccount instruction
+            let hasCreateAccount = false;
 
-            // Check if transaction is a Transaction object
             if (transaction instanceof Transaction) {
-                transaction.instructions.unshift(createAccountIx);
-            } else {
-                console.warn("[METEORA] Transaction object is not standard Transaction class, trying to add instruction manually or skipping.");
-                // If it behaves like Transaction, it has instructions array
-                if ('instructions' in transaction && Array.isArray((transaction as any).instructions)) {
+                hasCreateAccount = transaction.instructions.some(ix =>
+                    ix.programId.equals(SystemProgram.programId) &&
+                    ix.keys.some(k => k.pubkey.equals(positionNftMint.publicKey))
+                );
+            } else if ('instructions' in transaction && Array.isArray((transaction as any).instructions)) {
+                hasCreateAccount = (transaction as any).instructions.some((ix: any) =>
+                    ix.programId.equals(SystemProgram.programId) &&
+                    ix.keys.some((k: any) => k.pubkey.equals(positionNftMint.publicKey))
+                );
+            }
+
+            console.log(`[METEORA] SDK Transaction Instructions: ${transaction instanceof Transaction ? transaction.instructions.length : (transaction as any).instructions.length}`);
+            console.log(`[METEORA] SDK Added Position NFT Create? ${hasCreateAccount}`);
+
+            if (!hasCreateAccount) {
+                console.log("[METEORA] Adding Manual Position NFT Creation (Standard SPL)...");
+                const lamports = await this.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+                const createAccountIx = SystemProgram.createAccount({
+                    fromPubkey: this.wallet.publicKey,
+                    newAccountPubkey: positionNftMint.publicKey,
+                    space: MINT_SIZE,
+                    lamports,
+                    programId: TOKEN_PROGRAM_ID, // Standard SPL for Position NFT
+                });
+
+                if (transaction instanceof Transaction) {
+                    transaction.instructions.unshift(createAccountIx);
+                } else if ('instructions' in transaction && Array.isArray((transaction as any).instructions)) {
                     (transaction as any).instructions.unshift(createAccountIx);
                 }
             }
