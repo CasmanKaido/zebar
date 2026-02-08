@@ -69,9 +69,15 @@ export class BotManager {
             try {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
                 history = JSON.parse(data);
-            } catch (e) { /* File might not exist */ }
+            } catch (e) {
+                // File likely doesn't exist, which is fine.
+            }
 
             history.push(newPool);
+
+            // Ensure directory exists
+            await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
+
             await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
         } catch (e) {
             console.error("[BOT] Failed to save pool history:", e);
@@ -81,16 +87,29 @@ export class BotManager {
     // Update ROI in JSON file without appending
     private async updatePoolROI(poolId: string, newRoi: string, exited: boolean) {
         try {
-            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-            const history: PoolData[] = JSON.parse(data);
+            let history: PoolData[] = [];
+            try {
+                const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
+                history = JSON.parse(data);
+            } catch (e) {
+                // Should not update if no history exists, but handle gracefully
+                return;
+            }
+
             const index = history.findIndex(p => p.poolId === poolId);
 
             if (index !== -1) {
                 history[index].roi = newRoi;
                 history[index].exited = exited;
+
+                // Ensure directory exists
+                await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
+
                 await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
             }
-        } catch (e) { /* Ignore read errors during loop */ }
+        } catch (e) {
+            console.error("[BOT] Failed to update pool ROI:", e);
+        }
     }
 
 
