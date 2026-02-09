@@ -399,15 +399,21 @@ export class BotManager {
 
                         // Take Profit Logic (80% ROI)
                         if (roiVal >= 80) {
-                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit +80%! Auto-closing position...`, "success");
-                            await this.withdrawLiquidity(pool.poolId, 100);
+                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit +80%! Auto-closing and liquidating to SOL...`, "success");
+                            const result = await this.withdrawLiquidity(pool.poolId, 100);
+                            if (result.success) {
+                                await this.liquidatePoolToSol(pool.mint);
+                            }
                             await this.updatePoolROI(pool.poolId, roiString, true);
                         }
 
                         // Stop Loss Logic (-20% ROI)
                         if (roiVal <= -20) {
-                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Auto-closing position...`, "error");
-                            await this.withdrawLiquidity(pool.poolId, 100);
+                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Auto-closing and liquidating to SOL...`, "error");
+                            const result = await this.withdrawLiquidity(pool.poolId, 100);
+                            if (result.success) {
+                                await this.liquidatePoolToSol(pool.mint);
+                            }
                             await this.updatePoolROI(pool.poolId, roiString, true);
                         }
                     }
@@ -462,6 +468,34 @@ export class BotManager {
             SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
         }
         return result;
+    }
+
+    /**
+     * Helper to sell all pool assets back to SOL.
+     */
+    private async liquidatePoolToSol(tokenMint: string) {
+        const LPPP_MINT_ADDR = "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV";
+
+        const getRawBalance = async (mintStr: string) => {
+            try {
+                const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mintStr) });
+                return accounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+            } catch (e) { return 0n; }
+        };
+
+        // 1. Sell Sniped Token -> SOL
+        const tokenBal = await getRawBalance(tokenMint);
+        if (tokenBal > 0n) {
+            SocketManager.emitLog(`[LIQUIDATE] Closing $${tokenMint.slice(0, 6)} and converting to SOL...`, "warning");
+            await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+        }
+
+        // 2. Sell LPPP -> SOL
+        const lpppBal = await getRawBalance(LPPP_MINT_ADDR);
+        if (lpppBal > 0n) {
+            SocketManager.emitLog(`[LIQUIDATE] Closing LPPP and converting to SOL...`, "warning");
+            await this.strategy.sellToken(new PublicKey(LPPP_MINT_ADDR), lpppBal);
+        }
     }
 
     async getPortfolio() {

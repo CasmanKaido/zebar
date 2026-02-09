@@ -175,6 +175,65 @@ export class StrategyManager {
         }
     }
 
+    /**
+     * Sells a token for SOL using Jupiter Aggregator.
+     */
+    async sellToken(mint: PublicKey, amountUnits: bigint, slippagePercent: number = 10): Promise<{ success: boolean; amountSol: number; error?: string }> {
+        const { DRY_RUN } = require("./config");
+        console.log(`[STRATEGY] Selling ${amountUnits.toString()} units of ${mint.toBase58()} for SOL via Jupiter ${DRY_RUN ? '[DRY RUN]' : ''}`);
+
+        if (DRY_RUN) {
+            console.log(`[DRY RUN] Simulating Jupiter Sell...`);
+            const fakeSol = Number(amountUnits) / 1e12; // Just a dummy conversion
+            return { success: true, amountSol: fakeSol };
+        }
+
+        if (amountUnits === BigInt(0)) return { success: false, amountSol: 0, error: "Amount is zero" };
+
+        try {
+            const headers = { 'x-api-key': JUPITER_API_KEY || '' };
+
+            // Ultra V1: GET /ultra/v1/order
+            const params = new URLSearchParams({
+                inputMint: mint.toBase58(),
+                outputMint: "So11111111111111111111111111111111111111112",
+                amount: amountUnits.toString(),
+                taker: this.wallet.publicKey.toBase58(),
+            });
+
+            const orderResponse = (await axios.get(`https://api.jup.ag/ultra/v1/order?${params}`, { headers })).data;
+            const { transaction: swapTransaction } = orderResponse;
+
+            if (!swapTransaction) throw new Error("No transaction returned from Jupiter Ultra");
+
+            const transaction = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
+            transaction.sign([this.wallet]);
+
+            console.log(`[JITO] Executing Sell Bundle...`);
+            try {
+                const JITO_TIP = 100000;
+                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP);
+                const result = await JitoExecutor.sendBundle([
+                    bs58.encode(transaction.serialize()),
+                    bs58.encode(tipTx.serialize() as Uint8Array)
+                ], "Sell+Tip");
+
+                if (!result.success) throw new Error("Jito Sell failed");
+                const signature = bs58.encode(transaction.signatures[0]);
+                await this.connection.confirmTransaction(signature, "confirmed");
+                console.log(`[STRATEGY] Sell Success: https://solscan.io/tx/${signature}`);
+                return { success: true, amountSol: 0 };
+            } catch (err) {
+                // Fallback
+                const txid = await this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
+                await this.connection.confirmTransaction(txid);
+                return { success: true, amountSol: 0 };
+            }
+        } catch (error: any) {
+            console.error(`[STRATEGY] Sell failed:`, error.message);
+            return { success: false, amountSol: 0, error: error.message };
+        }
+    }
 
     /**
      * Fallback: Swap directly via Raydium SDK if Jupiter fails.
