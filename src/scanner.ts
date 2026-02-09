@@ -199,8 +199,7 @@ export class MarketScanner {
                 const chainId = (p.chainId || "solana").toLowerCase();
                 const address = p.pairAddress || p.attributes?.address;
 
-                const isMeteora = dexId.includes("meteora");
-                if (isMeteora && chainId === "solana" && address && !uniquePairsMap.has(address)) {
+                if (chainId === "solana" && address && !uniquePairsMap.has(address)) {
                     // Normalize standard format for internal loop
                     uniquePairsMap.set(address, {
                         pairAddress: address,
@@ -298,14 +297,8 @@ export class MarketScanner {
                 const meetsLiquidity = Number(this.criteria.minLiquidity) === 0 || Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(this.criteria.minMcap) === 0 || Number(mcap) >= Number(this.criteria.minMcap);
 
-                // Testing bypass (Low values threshold)
-                const isTesting = this.criteria.minVolume1h > 0 && this.criteria.minVolume1h <= 100 &&
-                    this.criteria.minMcap > 0 && this.criteria.minMcap <= 100;
-
-                if ((meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) || isTesting) {
-                    const matchMsg = isTesting
-                        ? `[ECOSYSTEM MATCH] Test: ${targetToken.symbol}`
-                        : `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics!`;
+                if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
+                    const matchMsg = `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics!`;
 
                     console.log(matchMsg);
                     SocketManager.emitLog(matchMsg, "success");

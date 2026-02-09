@@ -142,7 +142,13 @@ export class BotManager {
         try {
             const res = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
             const data: any = await res.json();
-            return parseFloat(data?.pairs?.[0]?.priceUsd || "0");
+            const price = parseFloat(data?.pairs?.[0]?.priceUsd || "0");
+            // Reject suspiciously low prices (likely garbage data)
+            if (price > 0 && price < 0.000001) {
+                console.warn(`[BOT] LPPP price suspiciously low ($${price}). Treating as invalid.`);
+                return 0;
+            }
+            return price;
         } catch (e) {
             console.warn("[BOT] Failed to fetch LPPP price:", e);
             return 0;
@@ -262,6 +268,8 @@ export class BotManager {
                             const tokenPriceLppp = result.priceUsd / lpppPrice;
                             targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
                             SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
+                        } else {
+                            SocketManager.emitLog(`[AUTO-PRICE] LPPP price unavailable. Using manual fallback: ${this.settings.lpppAmount} LPPP.`, "warning");
                         }
                     } else if (!this.settings.autoSyncPrice && this.settings.manualPrice > 0) {
                         targetLpppAmount = (tokenUiAmountChecked * this.settings.manualPrice);
@@ -485,10 +493,19 @@ export class BotManager {
                     SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
 
                     if (status.success && status.price > 0) {
-                        const normalizedPrice = status.price;
+                        // Normalize price direction: initialPrice is always LPPP/Token.
+                        // If LPPP is mintA, pool price = reserveA/reserveB = LPPP/Token (correct).
+                        // If LPPP is mintB, pool price = reserveA/reserveB = Token/LPPP (need to invert).
+                        const lpppIsMintA = LPPP_MINT_ADDR === mintA;
+                        const normalizedPrice = lpppIsMintA ? status.price : (1 / status.price);
                         const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
                         const roiString = `${roiVal.toFixed(2)}%`;
 
+                        // Sanity check: extreme negative ROI on first check likely means price inversion issue
+                        if (roiVal < -50 && pool.roi === "0%") {
+                            SocketManager.emitLog(`[MONITOR WARN] ${pool.token} ROI is ${roiString} on first check — possible price inversion. Skipping action.`, "warning");
+                            continue;
+                        }
                         if (roiString !== pool.roi) {
                             await this.updatePoolROI(pool.poolId, roiString, false);
                             SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });

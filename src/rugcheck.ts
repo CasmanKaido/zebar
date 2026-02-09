@@ -94,7 +94,7 @@ export class RugChecker {
             if (error.response?.status === 404) {
                 return { safe: true, reason: "New Token (No Report)", score: 0 };
             }
-            return { safe: true, reason: "Check Failed (Defaulting to Safe)", score: 0 };
+            return { safe: false, reason: "Check Failed (API Unreachable — Defaulting to Unsafe)", score: 0 };
         }
     }
 }
