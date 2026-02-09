@@ -31,6 +31,8 @@ export class MarketScanner {
     private jupiterTokens: Map<string, any> = new Map(); // mint -> metadata
     private lastJupiterSync = 0;
     private JUPITER_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
+    private jupiterSyncFailed = false;
+    private jupiterFailCooldown = 0; // timestamp when we can retry after failure
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>) {
         this.criteria = criteria;
@@ -54,9 +56,11 @@ export class MarketScanner {
 
     private async syncJupiterTokens() {
         if (Date.now() - this.lastJupiterSync < this.JUPITER_SYNC_INTERVAL) return;
+        // If we failed recently, don't retry for 10 minutes
+        if (this.jupiterSyncFailed && Date.now() < this.jupiterFailCooldown) return;
 
         let attempts = 0;
-        const maxAttempts = 5;
+        const maxAttempts = 2; // Reduced from 5: don't waste sweep time
 
         while (attempts < maxAttempts) {
             try {
@@ -77,11 +81,13 @@ export class MarketScanner {
                 const errMsg = isDnsError ? "DNS lookup failed (network glitch?)" : e.message;
 
                 if (attempts < maxAttempts) {
-                    const delay = attempts * 5000; // Exponential-ish: 5s, 10s, 15s, 20s
+                    const delay = attempts * 3000; // 3s, 6s
                     console.warn(`[JUPITER WARN] Sync attempt ${attempts} failed: ${errMsg}. Retrying in ${delay / 1000}s...`);
                     await new Promise(r => setTimeout(r, delay));
                 } else {
-                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}. Will use on-chain fallback for metadata.`);
+                    this.jupiterSyncFailed = true;
+                    this.jupiterFailCooldown = Date.now() + (10 * 60 * 1000); // 10 min cooldown
+                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}. Cooling down for 10 mins. On-chain fallback active.`);
                 }
             }
         }
@@ -97,8 +103,8 @@ export class MarketScanner {
                     SocketManager.emitLog("[HEARTBEAT] LPPP BOT is actively scanning the market. All systems operational.", "success");
                 }
 
-                // Periodic Jupiter sync
-                await this.syncJupiterTokens();
+                // Fire-and-forget Jupiter sync (don't block the sweep)
+                this.syncJupiterTokens().catch(() => { });
 
                 await this.performMarketSweep();
             } catch (error: any) {
