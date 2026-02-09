@@ -217,9 +217,25 @@ export class BotManager {
                 if (success) {
                     SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
 
-                    // 2. Create LP (Dynamic Fee & Price)
+                    // 2. Refresh Balance & Create LP (Dynamic Fee & Price)
                     const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
-                    const tokenAmount = BigInt(amount.toString());
+
+                    // Wait 1.5s for chain to reflect balance
+                    await new Promise(r => setTimeout(r, 1500));
+
+                    // Fetch ACTUAL balance instead of relying on swap output
+                    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint });
+                    const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+                    const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+
+                    if (actualAmountRaw === 0n) {
+                        SocketManager.emitLog(`[LP ERROR] No token balance found for ${result.symbol} after swap. Skipping pool creation.`, "error");
+                        return;
+                    }
+
+                    // Use 99% of balance to avoid "Custom: 0" (Insufficient Balance)
+                    const tokenAmount = (actualAmountRaw * 99n) / 100n;
+                    const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
 
                     let targetLpppAmount = this.settings.lpppAmount;
 
@@ -228,13 +244,11 @@ export class BotManager {
                         const lpppPrice = await this.getLpppPrice();
                         if (lpppPrice > 0) {
                             const tokenPriceLppp = result.priceUsd / lpppPrice;
-                            const tokenAmtFloat = uiAmount;
-                            targetLpppAmount = tokenAmtFloat * tokenPriceLppp;
+                            targetLpppAmount = tokenUiAmountChecked * tokenPriceLppp;
                             SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                         }
                     } else if (!this.settings.autoSyncPrice && this.settings.manualPrice > 0) {
-                        const tokenAmtFloat = uiAmount;
-                        targetLpppAmount = tokenAmtFloat * this.settings.manualPrice;
+                        targetLpppAmount = tokenUiAmountChecked * this.settings.manualPrice;
                         SocketManager.emitLog(`[MANUAL-PRICE] Context: ${this.settings.manualPrice} LPPP/Token | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                     }
 
@@ -253,14 +267,13 @@ export class BotManager {
                                 created: new Date().toISOString()
                             };
 
-                            const tokenAmtFloat = uiAmount;
-                            const initialPrice = tokenAmtFloat > 0 ? targetLpppAmount / tokenAmtFloat : 0;
+                            const initialPrice = tokenUiAmountChecked > 0 ? targetLpppAmount / tokenUiAmountChecked : 0;
 
                             const fullPoolData: PoolData = {
                                 ...poolEvent,
                                 mint: result.mint.toBase58(),
                                 initialPrice,
-                                initialTokenAmount: tokenAmtFloat,
+                                initialTokenAmount: tokenUiAmountChecked,
                                 initialLpppAmount: targetLpppAmount,
                                 exited: false,
                                 positionId: poolInfo.positionAddress,

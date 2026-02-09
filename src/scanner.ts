@@ -131,6 +131,8 @@ export class MarketScanner {
                 } catch (e: any) {
                     console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
+                // Rate limit protection: Sleep 1.5s between pages
+                if (page < 5) await new Promise(r => setTimeout(r, 1500));
             }
 
             // 2. Add Broad DexScreener Search (Meteora specifically)
@@ -149,7 +151,12 @@ export class MarketScanner {
                     allPairs = [...allPairs, ...latestPairsRes.data.pairs];
                 }
             } catch (e: any) {
-                console.error(`[DEXSCREENER ERROR] Latest pairs failed: ${e.message}`);
+                // Treat as non-critical. API might be down or changed.
+                if (e.response?.status === 404) {
+                    console.warn(`[DEXSCREENER WARNING] Latest pairs endpoint returned 404. Skipping...`);
+                } else {
+                    console.error(`[DEXSCREENER ERROR] Latest pairs failed: ${e.message}`);
+                }
             }
 
             // 4. NEW: DexScreener Boosted Tokens

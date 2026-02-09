@@ -12,6 +12,9 @@ export class JitoExecutor {
         "https://tokyo.mainnet.block-engine.jito.wtf/api/v1",
     ];
 
+    private static FAILED_ENDPOINTS = new Map<string, number>(); // endpoint -> cooldown_timestamp
+    private static COOLDOWN_DURATION = 5 * 60 * 1000; // 5 minute cooldown for 429s
+
     // Known Jito Tip Accounts (Randomly select one to avoid contention)
     private static TIP_ACCOUNTS = [
         "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
@@ -39,10 +42,19 @@ export class JitoExecutor {
     static async sendBundle(transactions: string[], description: string = "Bundle") {
         console.log(`[JITO] Sending ${description} Bundle to Jito Block Engine...`);
 
-        // Shuffle endpoints for load distribution
-        const endpoints = [...this.BLOCK_ENGINE_URLS].sort(() => Math.random() - 0.5);
+        // Filter out endpoints on cooldown
+        const now = Date.now();
+        const availableEndpoints = this.BLOCK_ENGINE_URLS.filter(url => {
+            const cooldownUntil = this.FAILED_ENDPOINTS.get(url) || 0;
+            return now >= cooldownUntil;
+        });
 
-        for (const endpoint of endpoints) {
+        // Use all if everyone is on cooldown (last resort)
+        const endpointsToTry = availableEndpoints.length > 0
+            ? [...availableEndpoints].sort(() => Math.random() - 0.5)
+            : [...this.BLOCK_ENGINE_URLS].sort(() => Math.random() - 0.5);
+
+        for (const endpoint of endpointsToTry) {
             try {
                 // console.log(`[JITO DEBUG] Trying Endpoint: ${endpoint}`);
                 const response = await axios.post(`${endpoint}/bundles`, {
@@ -64,7 +76,8 @@ export class JitoExecutor {
             } catch (e: any) {
                 const status = e.response?.status;
                 if (status === 429) {
-                    console.warn(`[JITO RATE LIMIT] 429 from ${endpoint}. Switching...`);
+                    console.warn(`[JITO RATE LIMIT] 429 from ${endpoint}. Adding to 5m cooldown.`);
+                    this.FAILED_ENDPOINTS.set(endpoint, Date.now() + this.COOLDOWN_DURATION);
                 } else {
                     console.warn(`[JITO ERROR] Request Failed on ${endpoint}:`, e.message);
                 }
@@ -86,10 +99,12 @@ export class JitoExecutor {
         payer: Keypair,
         tipAmountLamports: number
     ): Promise<VersionedTransaction | Transaction> {
-        const tipAccount = this.getRandomTipAccount();
+        // Strict Sanitization: Ensure payer and tip account are valid PublicKeys
+        const payerPubkey = new PublicKey(payer.publicKey.toBase58());
+        const tipAccount = new PublicKey(this.getRandomTipAccount().toBase58());
 
         const instruction = SystemProgram.transfer({
-            fromPubkey: payer.publicKey,
+            fromPubkey: payerPubkey,
             toPubkey: tipAccount,
             lamports: tipAmountLamports,
         });

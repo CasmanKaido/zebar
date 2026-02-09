@@ -884,6 +884,10 @@ export class StrategyManager {
 
         } catch (e: any) {
             console.error(`[METEORA] Pool Creation Failed:`, e);
+            if (e.logs) {
+                console.error(`[METEORA ERROR LOGS]`, e.logs);
+                SocketManager.emitLog(`[LP ERROR] Transaction Logs: ${e.logs.join(' | ').slice(0, 500)}...`, "error");
+            }
             return { success: false, error: e.message };
         }
     }
