@@ -830,6 +830,7 @@ export class StrategyManager {
 
         console.log(`[STRATEGY] Removing ${percent}% liquidity from pool: ${poolAddress}`);
         try {
+            const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
             const cpAmm = new CpAmm(this.connection);
             const poolPubkey = new PublicKey(poolAddress);
             const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
@@ -858,8 +859,8 @@ export class StrategyManager {
                 tokenBMint: poolState.tokenBMint,
                 tokenAVault: poolState.tokenAVault,
                 tokenBVault: poolState.tokenBVault,
-                tokenAProgram: poolState.tokenAProgram,
-                tokenBProgram: poolState.tokenBProgram,
+                tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                tokenBProgram: getTokenProgram(poolState.tokenBFlag),
                 tokenAAmountThreshold: new BN(0),
                 tokenBAmountThreshold: new BN(0),
                 vestings: [],
@@ -884,7 +885,7 @@ export class StrategyManager {
      * Increases liquidity in a Meteora CP-AMM pool.
      */
     async addMeteoraLiquidity(poolAddress: string, amountSol: number): Promise<{ success: boolean; txSig?: string; error?: string }> {
-        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const { PublicKey, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require("@solana/web3.js");
         const BN = require("bn.js");
 
@@ -938,8 +939,8 @@ export class StrategyManager {
                 tokenBMint: poolState.tokenBMint,
                 tokenAVault: poolState.tokenAVault,
                 tokenBVault: poolState.tokenBVault,
-                tokenAProgram: poolState.tokenAProgram,
-                tokenBProgram: poolState.tokenBProgram,
+                tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                tokenBProgram: getTokenProgram(poolState.tokenBFlag),
             });
 
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
@@ -1021,7 +1022,7 @@ export class StrategyManager {
      * Claims accumulated fees from a Meteora position.
      */
     async claimMeteoraFees(poolAddress: string): Promise<{ success: boolean; txSig?: string; error?: string }> {
-        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const { PublicKey, sendAndConfirmTransaction } = require("@solana/web3.js");
 
         console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}`);
@@ -1053,8 +1054,8 @@ export class StrategyManager {
                 tokenBMint: poolState.tokenBMint,
                 tokenAVault: poolState.tokenAVault,
                 tokenBVault: poolState.tokenBVault,
-                tokenAProgram: poolState.tokenAProgram,
-                tokenBProgram: poolState.tokenBProgram
+                tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                tokenBProgram: getTokenProgram(poolState.tokenBFlag)
             });
 
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
