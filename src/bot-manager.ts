@@ -19,6 +19,7 @@ interface PoolData {
     initialTokenAmount: number;
     initialLpppAmount: number;
     exited: boolean;
+    takeProfitDone?: boolean; // Flag for the 8x TP strategy
     positionId?: string; // Meteora Position PDA
     unclaimedFees?: { sol: string; token: string };
 }
@@ -100,7 +101,7 @@ export class BotManager {
     }
 
     // Update ROI in JSON file without appending
-    private async updatePoolROI(poolId: string, newRoi: string, exited: boolean) {
+    private async updatePoolROI(poolId: string, newRoi: string, exited: boolean, takeProfitDone?: boolean) {
         try {
             let history: PoolData[] = [];
             try {
@@ -116,9 +117,16 @@ export class BotManager {
             if (index !== -1) {
                 history[index].roi = newRoi;
                 history[index].exited = exited;
+                if (takeProfitDone !== undefined) {
+                    history[index].takeProfitDone = takeProfitDone;
+                }
 
                 // Emit update to frontend so it can remove/archive the pool
-                SocketManager.emitPoolUpdate({ poolId: poolId, roi: newRoi, exited: exited });
+                SocketManager.emitPoolUpdate({
+                    poolId: poolId,
+                    roi: newRoi,
+                    exited: exited
+                });
 
                 // Ensure directory exists
                 await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
@@ -397,19 +405,24 @@ export class BotManager {
                             SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
                         }
 
-                        // Take Profit Logic (80% ROI)
-                        if (roiVal >= 80) {
-                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit +80%! Auto-closing and liquidating to SOL...`, "success");
-                            const result = await this.withdrawLiquidity(pool.poolId, 100);
+                        // 1. Take Profit Logic (8x = +700% ROI)
+                        if (roiVal >= 700 && !pool.takeProfitDone) {
+                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit 8x! Withdrawing 80% (Moonbag Strategy)...`, "success");
+
+                            const result = await this.withdrawLiquidity(pool.poolId, 80);
                             if (result.success) {
+                                // Convert the 80% withdrawn tokens to SOL
                                 await this.liquidatePoolToSol(pool.mint);
+
+                                // Update state to "TP Taken" but keep pool active (exited: false)
+                                pool.takeProfitDone = true;
+                                await this.updatePoolROI(pool.poolId, roiString, false, true);
                             }
-                            await this.updatePoolROI(pool.poolId, roiString, true);
                         }
 
-                        // Stop Loss Logic (-20% ROI)
+                        // 2. Stop Loss Logic (-20% ROI)
                         if (roiVal <= -20) {
-                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Auto-closing and liquidating to SOL...`, "error");
+                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Full Close and liquidating to SOL...`, "error");
                             const result = await this.withdrawLiquidity(pool.poolId, 100);
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
