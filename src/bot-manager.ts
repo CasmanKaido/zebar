@@ -255,12 +255,53 @@ export class BotManager {
 
                     // Apply the same 99% buffer to LPPP side to preserve ratio
                     const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e6));
-                    const finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
-                    const finalLpppUiAmount = (targetLpppAmount * 99) / 100;
+                    let finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
+                    let finalLpppUiAmount = (targetLpppAmount * 99) / 100;
+
+                    // ═══ CRITICAL: Pre-Flight LPPP Balance Check (Batch 2.1) ═══
+                    // The LPPP token is Token-2022, which has transfer fees.
+                    // We MUST verify the wallet has enough LPPP before creating the pool.
+                    const LPPP_DECIMALS = 6;
+                    try {
+                        const lpppAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
+                        const lpppBalanceRaw = lpppAccounts.value.reduce(
+                            (acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n
+                        );
+                        const lpppBalanceUi = Number(lpppBalanceRaw) / (10 ** LPPP_DECIMALS);
+
+                        // Apply 5% buffer for Token-2022 transfer fees
+                        const maxUsableLppp = (lpppBalanceRaw * 95n) / 100n;
+                        const maxUsableLpppUi = lpppBalanceUi * 0.95;
+
+                        if (lpppBalanceRaw < 100n * BigInt(10 ** LPPP_DECIMALS)) {
+                            SocketManager.emitLog(`[LP ERROR] LPPP balance too low (${lpppBalanceUi.toFixed(2)} LPPP). Need at least 100 LPPP to seed pool. Skipping.`, "error");
+                            return;
+                        }
+
+                        if (finalLpppAmountBase > maxUsableLppp) {
+                            SocketManager.emitLog(`[LP WARN] Required LPPP (${finalLpppUiAmount.toFixed(2)}) exceeds wallet balance (${lpppBalanceUi.toFixed(2)}). Capping to ${maxUsableLpppUi.toFixed(2)} LPPP.`, "warning");
+                            finalLpppAmountBase = maxUsableLppp;
+                            finalLpppUiAmount = maxUsableLpppUi;
+
+                            // Recalculate token amount to maintain price ratio
+                            if (targetLpppAmount > 0) {
+                                const ratio = maxUsableLpppUi / targetLpppAmount;
+                                const adjustedTokenRaw = BigInt(Math.floor(Number(tokenAmount) * ratio));
+                                // Use the smaller of the two to be safe
+                                const cappedTokenAmount = adjustedTokenRaw < tokenAmount ? adjustedTokenRaw : tokenAmount;
+                                // Override tokenAmount for pool creation
+                                Object.defineProperty(result, '_cappedTokenAmount', { value: cappedTokenAmount, writable: true });
+                            }
+                        }
+                    } catch (balErr: any) {
+                        SocketManager.emitLog(`[LP WARN] Could not verify LPPP balance: ${balErr.message}. Proceeding with calculated amount.`, "warning");
+                    }
+
+                    const effectiveTokenAmount = (result as any)._cappedTokenAmount || tokenAmount;
 
                     // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
                     try {
-                        const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
+                        const poolInfo = await this.strategy.createMeteoraPool(result.mint, effectiveTokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
 
                         if (poolInfo.success) {
                             SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
