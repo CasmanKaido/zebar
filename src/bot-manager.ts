@@ -475,7 +475,7 @@ export class BotManager {
 
                         if (roiVal >= 700 && !pool.takeProfitDone) {
                             SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit 8x! Withdrawing 80%...`, "success");
-                            const result = await this.withdrawLiquidity(pool.poolId, 80);
+                            const result = await this.withdrawLiquidity(pool.poolId, 80, "TAKE PROFIT");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
                                 pool.takeProfitDone = true;
@@ -485,7 +485,7 @@ export class BotManager {
 
                         if (roiVal <= -20) {
                             SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Full Close...`, "error");
-                            const result = await this.withdrawLiquidity(pool.poolId, 100);
+                            const result = await this.withdrawLiquidity(pool.poolId, 100, "STOP LOSS");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
                             }
@@ -499,8 +499,8 @@ export class BotManager {
         }, 30000);
     }
 
-    async withdrawLiquidity(poolId: string, percent: number = 80) {
-        SocketManager.emitLog(`[MANUAL] Withdrawing ${percent}% liquidity from ${poolId.slice(0, 8)}...`, "warning");
+    async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {
+        SocketManager.emitLog(`[${source}] Withdrawing ${percent}% liquidity from ${poolId.slice(0, 8)}...`, "warning");
         const result = await this.strategy.removeMeteoraLiquidity(poolId, percent);
         if (result.success) {
             SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
@@ -536,8 +536,9 @@ export class BotManager {
     }
 
     private async liquidatePoolToSol(tokenMint: string) {
-        const LPPP_MINT_ADDR = "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV";
-
+        // Only sell the sniped token back to SOL.
+        // IMPORTANT: Do NOT sell LPPP here. LPPP is a reserve asset used to seed
+        // future pools. Selling it would drain the entire wallet balance.
         const getRawBalance = async (mintStr: string) => {
             try {
                 const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mintStr) });
@@ -549,12 +550,8 @@ export class BotManager {
         if (tokenBal > 0n) {
             SocketManager.emitLog(`[LIQUIDATE] Closing $${tokenMint.slice(0, 6)} and converting to SOL...`, "warning");
             await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
-        }
-
-        const lpppBal = await getRawBalance(LPPP_MINT_ADDR);
-        if (lpppBal > 0n) {
-            SocketManager.emitLog(`[LIQUIDATE] Closing LPPP and converting to SOL...`, "warning");
-            await this.strategy.sellToken(new PublicKey(LPPP_MINT_ADDR), lpppBal);
+        } else {
+            SocketManager.emitLog(`[LIQUIDATE] No ${tokenMint.slice(0, 6)} balance to sell.`, "info");
         }
     }
 
