@@ -651,7 +651,7 @@ function App() {
                                 <Droplets size={16} className="text-muted-foreground" />
                             </div>
                             <div className="text-3xl font-bold mt-3 font-mono">
-                                {pools.length}
+                                {pools.filter(p => !p.exited).length}
                             </div>
                         </div>
 
