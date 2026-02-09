@@ -131,6 +131,6 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 3001;
 
 httpServer.listen(PORT, () => {
-    console.log(`ZEBAR Unified Server running on port ${PORT}`);
-    console.log(`ZEBAR Version: v1.4.0 (Jupiter Only + Jito)`);
+    console.log(`LPPP BOT Unified Server running on port ${PORT}`);
+    console.log(`LPPP BOT Version: v1.4.0 (Jupiter Only + Jito)`);
 });

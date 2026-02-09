@@ -2,7 +2,7 @@
 import { BotManager } from "./bot-manager";
 
 async function main() {
-    console.log("ZEBAR CLI Runner Initializing...");
+    console.log("LPPP BOT CLI Runner Initializing...");
 
     const botManager = new BotManager();
 
@@ -12,7 +12,7 @@ async function main() {
 
     // Handle process signals for graceful shutdown
     process.on('SIGINT', () => {
-        console.log("\nShutting down ZEBAR...");
+        console.log("\nShutting down LPPP BOT...");
         botManager.stop();
         process.exit(0);
     });

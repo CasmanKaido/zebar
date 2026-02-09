@@ -38,7 +38,7 @@ export class MarketScanner {
         if (this.isRunning) return;
         this.isRunning = true;
 
-        const startMsg = "ZEBAR Sweeper Active: Scanning the Solana Market for top-performing tokens...";
+        const startMsg = "LPPP BOT Sweeper Active: Scanning the Solana Market for top-performing tokens...";
         console.log(startMsg);
         SocketManager.emitLog(startMsg, "success");
 
@@ -53,7 +53,7 @@ export class MarketScanner {
                 sweepCount++;
                 // Log a heartbeat every 20 sweeps (~10 minutes)
                 if (sweepCount % 20 === 0) {
-                    SocketManager.emitLog("[HEARTBEAT] ZEBAR is actively scanning the market. All systems operational.", "success");
+                    SocketManager.emitLog("[HEARTBEAT] LPPP BOT is actively scanning the market. All systems operational.", "success");
                 }
                 await this.performMarketSweep();
             } catch (error: any) {
@@ -221,7 +221,7 @@ export class MarketScanner {
 
     stop() {
         this.isRunning = false;
-        console.log("ZEBAR Sweeper Service Stopped.");
+        console.log("LPPP BOT Sweeper Service Stopped.");
     }
 }
 

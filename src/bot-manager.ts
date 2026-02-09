@@ -173,7 +173,7 @@ export class BotManager {
 
         this.isRunning = true;
         SocketManager.emitStatus(true);
-        SocketManager.emitLog(`ZEBAR Streamer Active (Vol5m > $${this.settings.minVolume5m}, Vol1h > $${this.settings.minVolume1h}, Vol24h > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
+        SocketManager.emitLog(`LPPP BOT Streamer Active (Vol5m > $${this.settings.minVolume5m}, Vol1h > $${this.settings.minVolume1h}, Vol24h > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
 
         const criteria: ScannerCriteria = {
             minVolume5m: this.settings.minVolume5m,
@@ -306,7 +306,7 @@ export class BotManager {
             this.scanner.stop();
         }
         SocketManager.emitStatus(false);
-        SocketManager.emitLog("ZEBAR Scanning Service Stopped.", "warning");
+        SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
     }
 
     async getWalletBalance() {

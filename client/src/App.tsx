@@ -312,7 +312,7 @@ function App() {
             inputPlaceholder: "Password",
             onCancel: closeModal,
             onConfirm: async (pass) => {
-                if (pass !== "zebar-admin") {
+                if (pass !== "lppp-admin") {
                     showModal({
                         title: "Access Denied",
                         message: "The password you entered is incorrect.",
@@ -444,12 +444,19 @@ function App() {
             <header className="p-6 border-b border-border bg-card">
                 <div className="max-w-[1440px] mx-auto flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 flex items-center justify-center bg-primary/10 rounded-md">
-                            <Zap size={20} className="text-primary" />
+                        <div className="w-12 h-12 flex items-center justify-center bg-pink-500/20 rounded-full border-2 border-white overflow-hidden shadow-[0_0_15px_rgba(236,72,153,0.3)] relative group">
+                            <img
+                                src="/logo.jpg"
+                                alt="LPPP Logo"
+                                className="w-full h-full object-cover transform transition-transform group-hover:scale-110"
+                                onError={(e) => {
+                                    (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=LPPP&background=ec4899&color=fff';
+                                }}
+                            />
                         </div>
                         <div>
-                            <h1 className="text-2xl font-bold glow-text leading-none tracking-wider">ZEBAR</h1>
-                            <span className="text-[12px] text-muted-foreground block mt-1">Auto-LP Command Center</span>
+                            <h1 className="text-2xl font-bold glow-text leading-none tracking-wider text-pink-500">LPPP BOT</h1>
+                            <span className="text-[12px] text-muted-foreground block mt-1">Pool Party Liquidity Master</span>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -624,7 +631,7 @@ function App() {
                         <div>
                             <h3 className="text-sm font-semibold mb-1">System Status</h3>
                             <span className="text-[12px] text-muted-foreground">
-                                {running ? "ZEBAR Is Active" : "Ready to initialize"}
+                                {running ? "LPPP BOT Is Active" : "Ready to initialize"}
                             </span>
                         </div>
                         <button
@@ -636,7 +643,7 @@ function App() {
                                 }`}
                         >
                             <Power size={16} />
-                            {running ? 'STOP SCANNER' : 'LAUNCH ZEBAR'}
+                            {running ? 'STOP SCANNER' : 'LAUNCH LPPP BOT'}
                         </button>
                     </div>
 
@@ -847,7 +854,7 @@ function App() {
                             <div className="col-span-full py-8 text-center text-muted-foreground bg-secondary/50 rounded-md border border-dashed border-border flex flex-col items-center gap-2">
                                 <Search size={24} className="opacity-20" />
                                 <div className="text-sm">No active pools tracking...</div>
-                                <p className="text-[11px] opacity-50">Start ZEBAR to begin auto-deployment</p>
+                                <p className="text-[11px] opacity-50">Start LPPP BOT to begin auto-deployment</p>
                             </div>
                         )}
                     </div>
