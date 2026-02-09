@@ -14,7 +14,9 @@ export interface ScanResult {
 }
 
 export interface ScannerCriteria {
+    minVolume5m: number;
     minVolume1h: number;
+    minVolume24h: number;
     minLiquidity: number;
     minMcap: number;
 }
@@ -87,7 +89,11 @@ export class MarketScanner {
                                 address: p.relationships.quote_token.data.id.split("_")[1]
                             },
                             priceUsd: p.attributes.base_token_price_usd,
-                            volume: { h1: Number(p.attributes.volume_usd.h1) },
+                            volume: {
+                                m5: Number(p.attributes.volume_usd.m5),
+                                h1: Number(p.attributes.volume_usd.h1),
+                                h24: Number(p.attributes.volume_usd.h24)
+                            },
                             liquidity: { usd: Number(p.attributes.reserve_in_usd) },
                             marketCap: Number(p.attributes.fdv_usd) || 0
                         }));
@@ -158,19 +164,23 @@ export class MarketScanner {
                 if (IGNORED_MINTS.includes(targetToken.address)) continue;
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
 
+                const volume5m = pair.volume?.m5 || 0;
                 const volume1h = pair.volume?.h1 || 0;
+                const volume24h = pair.volume?.h24 || 0;
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
                 // Check Criteria
-                const meetsVolume = Number(volume1h) >= Number(this.criteria.minVolume1h);
+                const meetsVol5m = Number(volume5m) >= Number(this.criteria.minVolume5m);
+                const meetsVol1h = Number(volume1h) >= Number(this.criteria.minVolume1h);
+                const meetsVol24h = Number(volume24h) >= Number(this.criteria.minVolume24h);
                 const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
                 const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
 
                 // Testing bypass
                 const isTesting = this.criteria.minVolume1h <= 100 && this.criteria.minMcap <= 100;
 
-                if (meetsVolume && meetsLiquidity && meetsMcap || isTesting) {
+                if ((meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) || isTesting) {
                     const matchMsg = isTesting
                         ? `[ECOSYSTEM MATCH] Test: ${targetToken.symbol}`
                         : `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics!`;

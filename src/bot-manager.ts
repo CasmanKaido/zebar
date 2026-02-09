@@ -34,7 +34,9 @@ export interface BotSettings {
     manualPrice: number; // Manual price context (Tokens per LPPP)
     maxPools: number; // Max pools to create before auto-stop
     slippage: number; // in % (e.g. 10)
+    minVolume5m: number;
     minVolume1h: number;
+    minVolume24h: number;
     minLiquidity: number;
     minMcap: number;
 }
@@ -52,7 +54,9 @@ export class BotManager {
         manualPrice: 0, // Default 0 (disabled)
         maxPools: 5, // Default 5 pools
         slippage: 10,
+        minVolume5m: 10000, // Default 10k
         minVolume1h: 100000,
+        minVolume24h: 1000000, // Default 1M
         minLiquidity: 60000,
         minMcap: 60000
     };
@@ -158,10 +162,12 @@ export class BotManager {
 
         this.isRunning = true;
         SocketManager.emitStatus(true);
-        SocketManager.emitLog(`ZEBAR Streamer Active (Vol1h > $${this.settings.minVolume1h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
+        SocketManager.emitLog(`ZEBAR Streamer Active (Vol5m > $${this.settings.minVolume5m}, Vol1h > $${this.settings.minVolume1h}, Vol24h > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
 
         const criteria: ScannerCriteria = {
+            minVolume5m: this.settings.minVolume5m,
             minVolume1h: this.settings.minVolume1h,
+            minVolume24h: this.settings.minVolume24h,
             minLiquidity: this.settings.minLiquidity,
             minMcap: this.settings.minMcap
         };

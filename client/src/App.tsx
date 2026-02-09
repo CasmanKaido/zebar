@@ -90,7 +90,9 @@ function App() {
     const [slippage, setSlippage] = useState(10); // Default 10%
 
     const [lpppAmount, setLpppAmount] = useState(1000);
+    const [minVolume5m, setMinVolume5m] = useState(10000);
     const [minVolume, setMinVolume] = useState(100000);
+    const [minVolume24h, setMinVolume24h] = useState(1000000);
     const [minLiquidity, setMinLiquidity] = useState(60000);
     const [minMcap, setMinMcap] = useState(60000);
 
@@ -241,7 +243,9 @@ function App() {
                 manualPrice: autoSyncPrice ? 0 : Number(manualPrice),
                 maxPools,
                 slippage,
+                minVolume5m,
                 minVolume1h: minVolume,
+                minVolume24h,
                 minLiquidity,
                 minMcap
             })
@@ -505,7 +509,9 @@ function App() {
                         <div className="mt-4 pt-4 border-t border-border space-y-4">
                             <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Scanner Criteria</p>
                             <SettingInput label="Slippage (%)" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
+                            <SettingInput label="Min 5m Vol ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
                             <SettingInput label="Min 1h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
+                            <SettingInput label="Min 24h Vol ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
                             <SettingInput label="Min Liquidity ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
                             <SettingInput label="Min Mcap ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
                             <SettingInput label="Session Limit (Pools)" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
