@@ -53,33 +53,61 @@ interface SettingInputProps {
     subtext?: string;
 }
 
-const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext }: SettingInputProps) => (
-    <div className="flex flex-col gap-1.5 last:mb-0">
-        <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider truncate">{label}</label>
-        <div className="relative">
-            {prefix && (
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-[10px]">{prefix}</span>
-            )}
-            <input
-                type="number"
-                value={value}
-                onChange={(e) => onChange(Number(e.target.value))}
-                onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                onKeyDown={(e) => {
-                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
-                }}
-                disabled={disabled}
-                className={`w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-6' : ''} ${unit ? 'pr-9' : ''}`}
-            />
-            {unit && (
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-primary/60">{unit}</span>
+const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext }: SettingInputProps) => {
+    const [displayValue, setDisplayValue] = useState<string>(value.toString());
+
+    // Sync display value when external prop changes (e.g. unit toggle or reset)
+    useEffect(() => {
+        if (value !== Number(displayValue)) {
+            setDisplayValue(value.toString());
+        }
+    }, [value]);
+
+    return (
+        <div className="flex flex-col gap-1.5 last:mb-0">
+            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider truncate">{label}</label>
+            <div className="relative">
+                {prefix && (
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-[10px]">{prefix}</span>
+                )}
+                <input
+                    type="text"
+                    inputMode="decimal"
+                    value={displayValue}
+                    onChange={(e) => {
+                        const val = e.target.value;
+                        // Allow only numbers and decimals
+                        if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                            setDisplayValue(val);
+                            if (val !== "" && val !== ".") {
+                                onChange(Number(val));
+                            }
+                        }
+                    }}
+                    onBlur={() => {
+                        // Reset to 0 if empty on blur
+                        if (displayValue === "" || displayValue === ".") {
+                            setDisplayValue("0");
+                            onChange(0);
+                        }
+                    }}
+                    onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                    onKeyDown={(e) => {
+                        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
+                    }}
+                    disabled={disabled}
+                    className={`w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-6' : ''} ${unit ? 'pr-9' : ''}`}
+                />
+                {unit && (
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-primary/60">{unit}</span>
+                )}
+            </div>
+            {subtext && (
+                <span className="text-[9px] text-muted-foreground/60 italic truncate">{subtext}</span>
             )}
         </div>
-        {subtext && (
-            <span className="text-[9px] text-muted-foreground/60 italic truncate">{subtext}</span>
-        )}
-    </div>
-);
+    );
+};
 
 function App() {
     const [running, setRunning] = useState(false);
@@ -564,10 +592,15 @@ function App() {
                                     <p className="text-[10px] text-amber-500/80 font-bold mb-1.5 uppercase tracking-tighter">Manual Price Context</p>
                                     <div className="flex items-center gap-2">
                                         <input
-                                            type="number"
-                                            step="0.000001"
-                                            value={manualPrice}
-                                            onChange={(e) => setManualPrice(Number(e.target.value))}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={manualPrice === 0 ? "" : manualPrice}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                                                    setManualPrice(val === "" ? 0 : Number(val));
+                                                }
+                                            }}
                                             onWheel={(e) => (e.target as HTMLInputElement).blur()}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
