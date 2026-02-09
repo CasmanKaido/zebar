@@ -15,6 +15,7 @@ import {
     Wallet
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Modal } from './Modal';
 // Use environment variable or default to empty string for unified same-host deployment
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 const socket = io(BACKEND_URL);
@@ -98,6 +99,30 @@ function App() {
     const [autoSyncPrice, setAutoSyncPrice] = useState(true);
     const [manualPrice, setManualPrice] = useState(0.0001); // Default context
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
+
+    // Modal State
+    const [modalConfig, setModalConfig] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        type: 'info' | 'success' | 'error' | 'warning';
+        showInput?: boolean;
+        inputPlaceholder?: string;
+        defaultValue?: string;
+        onConfirm?: (val?: string) => void;
+        onCancel?: () => void;
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        type: 'info'
+    });
+
+    const showModal = (config: Omit<typeof modalConfig, 'isOpen'>) => {
+        setModalConfig({ ...config, isOpen: true });
+    };
+
+    const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
     // Unit States
     const [isBuyUsd, setIsBuyUsd] = useState(false);
@@ -224,11 +249,18 @@ function App() {
     };
 
     const withdrawLiquidity = async (poolId: string) => {
-        if (!confirm("Confirm 80% Liquidity Withdrawal?")) return;
-        await fetch(`${BACKEND_URL}/api/pool/withdraw`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId, percent: 80 })
+        showModal({
+            title: "Confirm Withdrawal",
+            message: "Are you sure you want to withdraw 80% of the liquidity from this pool?",
+            type: 'warning',
+            onCancel: closeModal,
+            onConfirm: async () => {
+                await fetch(`${BACKEND_URL}/api/pool/withdraw`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ poolId, percent: 80 })
+                });
+            }
         });
     };
 
@@ -241,33 +273,75 @@ function App() {
     };
 
     const increaseLiquidity = async (poolId: string) => {
-        const amount = prompt("Enter SOL amount to add:", "0.1");
-        if (!amount || isNaN(Number(amount))) return;
-        await fetch(`${BACKEND_URL}/api/pool/increase`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ poolId, amountSol: Number(amount) })
+        showModal({
+            title: "Increase Liquidity",
+            message: "How much SOL would you like to add to this pool?",
+            type: 'info',
+            showInput: true,
+            inputPlaceholder: "0.1",
+            defaultValue: "0.1",
+            onCancel: closeModal,
+            onConfirm: async (amount) => {
+                if (!amount || isNaN(Number(amount))) return;
+                await fetch(`${BACKEND_URL}/api/pool/increase`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ poolId, amountSol: Number(amount) })
+                });
+            }
         });
     };
 
     const updatePrivateKey = async () => {
-        const pass = prompt("Enter admin password to update key:");
-        if (pass !== "zebar-admin") return alert("Unauthorized"); // Simple safety
+        showModal({
+            title: "Security Check",
+            message: "Please enter the admin password to update the wallet configuration.",
+            type: 'warning',
+            showInput: true,
+            inputPlaceholder: "Password",
+            onCancel: closeModal,
+            onConfirm: async (pass) => {
+                if (pass !== "zebar-admin") {
+                    showModal({
+                        title: "Access Denied",
+                        message: "The password you entered is incorrect.",
+                        type: 'error'
+                    });
+                    return;
+                }
 
-        const newKey = prompt("Paste new base58 Private Key:");
-        if (!newKey) return;
-
-        const res = await fetch(`${BACKEND_URL}/api/config/key`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ privateKey: newKey })
+                showModal({
+                    title: "Update Private Key",
+                    message: "Paste your new base58 Private Key below. This will update the bot's runtime wallet.",
+                    type: 'info',
+                    showInput: true,
+                    inputPlaceholder: "base58 Private Key",
+                    onCancel: closeModal,
+                    onConfirm: async (newKey) => {
+                        if (!newKey) return;
+                        const res = await fetch(`${BACKEND_URL}/api/config/key`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ privateKey: newKey })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            showModal({
+                                title: "Wallet Updated",
+                                message: `Successfully updated the wallet! New Public Key: ${data.publicKey}`,
+                                type: 'success'
+                            });
+                        } else {
+                            showModal({
+                                title: "Update Failed",
+                                message: `Failed to update the wallet: ${data.error}`,
+                                type: 'error'
+                            });
+                        }
+                    }
+                });
+            }
         });
-        const data = await res.json();
-        if (data.success) {
-            alert(`Wallet Updated! New address: ${data.publicKey}`);
-        } else {
-            alert(`Error: ${data.error}`);
-        }
     };
 
     const clearLogs = () => setLogs([]);
@@ -754,6 +828,19 @@ function App() {
                     </div>
                 </div>
             </main>
+
+            <Modal
+                isOpen={modalConfig.isOpen}
+                onClose={closeModal}
+                title={modalConfig.title}
+                message={modalConfig.message}
+                type={modalConfig.type}
+                showInput={modalConfig.showInput}
+                inputPlaceholder={modalConfig.inputPlaceholder}
+                defaultValue={modalConfig.defaultValue}
+                onConfirm={modalConfig.onConfirm}
+                onCancel={modalConfig.onCancel}
+            />
         </div>
     );
 }

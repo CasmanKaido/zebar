@@ -646,7 +646,7 @@ export class StrategyManager {
 
         try {
             // 1. Load SDK & Constants
-            const { CpAmm, deriveConfigAddress, MIN_SQRT_PRICE, MAX_SQRT_PRICE, getFeeTimeSchedulerParams, FEE_PADDING } = require("@meteora-ag/cp-amm-sdk");
+            const { CpAmm, deriveConfigAddress, MIN_SQRT_PRICE, MAX_SQRT_PRICE, getFeeTimeSchedulerParams, getDynamicFeeParams, FEE_PADDING } = require("@meteora-ag/cp-amm-sdk");
             const { METEORA_POOL_FEE_BPS } = require("./config");
 
             // 2. Sort Tokens (A < B)
@@ -768,8 +768,8 @@ export class StrategyManager {
                 console.log(`[METEORA] Creating Custom Pool with ${targetBps} bps fee tier...`);
                 // Use Customizable Pool to set specific fee (e.g. 2% = 200 bps)
                 const poolFees = {
-                    baseFee: getFeeTimeSchedulerParams(targetBps, targetBps, 0, 0, 0), // Static fee
-                    dynamicFee: null,
+                    baseFee: getFeeTimeSchedulerParams(targetBps, targetBps, 0, 0, 0), // Static floor fee
+                    dynamicFee: getDynamicFeeParams(targetBps), // Enable volatility-based bonus fee
                     padding: FEE_PADDING
                 };
 
