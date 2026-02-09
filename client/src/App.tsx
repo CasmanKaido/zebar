@@ -12,7 +12,8 @@ import {
     BarChart3,
     LineChart,
     Search,
-    Wallet
+    Wallet,
+    ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Modal } from './Modal';
@@ -788,7 +789,15 @@ function App() {
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
-                                        <p className="font-mono text-[13px] text-primary">{pool.poolId.slice(0, 12)}...</p>
+                                        <a
+                                            href={`https://solscan.io/account/${pool.poolId}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="font-mono text-[13px] text-primary hover:text-primary/80 hover:underline flex items-center gap-1.5 transition-colors"
+                                        >
+                                            {pool.poolId.slice(0, 12)}...
+                                            <ExternalLink size={10} className="opacity-50" />
+                                        </a>
                                         <div className="flex items-center gap-2 mt-2">
                                             <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] rounded font-bold">{pool.token}</span>
                                             <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
