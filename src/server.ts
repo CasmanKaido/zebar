@@ -10,6 +10,27 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ═══ API Authentication Middleware ═══
+// Protects all /api/* routes (except webhooks) with an API key.
+// Set API_SECRET in .env. If not set, access is allowed with a warning.
+const API_SECRET = process.env.API_SECRET;
+if (!API_SECRET) {
+    console.warn("[SECURITY WARNING] API_SECRET is not set in .env. API endpoints are UNPROTECTED. Set API_SECRET to enable authentication.");
+}
+
+app.use("/api", (req, res, next) => {
+    // Skip auth for webhook endpoints (they use their own auth)
+    if (req.path.startsWith("/webhooks")) return next();
+    // Skip auth if no API_SECRET is configured (backward compatible)
+    if (!API_SECRET) return next();
+
+    const providedKey = req.headers["x-api-key"];
+    if (providedKey !== API_SECRET) {
+        return res.status(401).json({ error: "Unauthorized. Provide valid x-api-key header." });
+    }
+    next();
+});
+
 // Serve static frontend in production
 const clientPath = path.join(__dirname, "../client/dist");
 app.use(express.static(clientPath));
@@ -124,33 +145,11 @@ app.post("/api/config/key", async (req, res) => {
 });
 
 // Helius Webhook Endpoint for Real-Time Discovery
+// NOTE: Currently disabled. The payload parsing was a heuristic that extracted
+// wrong addresses. Re-enable after testing with actual Helius webhook payloads.
 app.post("/api/webhooks/helius", async (req, res) => {
-    try {
-        const events = req.body;
-        if (!Array.isArray(events)) {
-            return res.status(400).json({ error: "Invalid webhook payload" });
-        }
-
-        for (const event of events) {
-            // Helius "Enhanced" events parsing
-            // Check for Meteora CP-AMM Program ID: CAMMCzo5YL8w4VFF8KVHrM5qHsc86KAt5wUGrEnf9V
-            const isMeteora = event.instructions?.some((i: any) => i.programId === "CAMMCzo5YL8w4VFF8KVHrM5qHsc86KAt5wUGrEnf9V");
-
-            if (isMeteora) {
-                // Try to find a mint address in the account array
-                // Usually the first few accounts in a "Pool Created" instruction
-                const mint = event.accountData?.[0]?.account; // This is a heuristic, needs actual testing with real payload
-                if (mint) {
-                    SocketManager.emitLog(`[WEBHOOK] Real-time Meteora Discovery: ${mint}`, "success");
-                    botManager.evaluateDiscovery(mint, "Meteora Webhook");
-                }
-            }
-        }
-        res.status(200).send("OK");
-    } catch (error) {
-        console.error("Webhook Error:", error);
-        res.status(500).json({ error: "Webhook processing failed" });
-    }
+    console.log("[WEBHOOK] Received Helius webhook event. Handler is currently disabled.");
+    res.status(200).json({ status: "received", note: "Webhook processing is disabled. Enable after testing with real payloads." });
 });
 
 // Catch-all to serve React's index.html

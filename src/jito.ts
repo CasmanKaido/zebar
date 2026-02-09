@@ -97,7 +97,8 @@ export class JitoExecutor {
     static async createTipTransaction(
         connection: Connection,
         payer: Keypair,
-        tipAmountLamports: number
+        tipAmountLamports: number,
+        recentBlockhash?: string
     ): Promise<VersionedTransaction | Transaction> {
         // Strict Sanitization: Ensure payer and tip account are valid PublicKeys
         const payerPubkey = new PublicKey(payer.publicKey.toBase58());
@@ -112,7 +113,8 @@ export class JitoExecutor {
         // Use legacy transaction for simplicity of tip, or Versioned if needed.
         // Legacy is fine for simple transfers.
         const transaction = new Transaction().add(instruction);
-        transaction.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+        // Use the provided blockhash (matches the main tx) or fetch a fresh one
+        transaction.recentBlockhash = recentBlockhash || (await connection.getLatestBlockhash()).blockhash;
         transaction.feePayer = payer.publicKey;
 
         transaction.sign(payer);

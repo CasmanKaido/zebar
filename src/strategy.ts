@@ -107,7 +107,9 @@ export class StrategyManager {
 
             try {
                 const JITO_TIP_LAMPORTS = 100000; // 0.0001 SOL Tip
-                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS);
+                // Use the same blockhash as the main swap tx for bundle consistency
+                const swapBlockhash = transaction.message.recentBlockhash;
+                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS, swapBlockhash);
 
                 // Main Swap Tx is already signed by `transaction.sign([this.wallet])` above
                 // Jito expects base58 encoded transactions
@@ -236,7 +238,9 @@ export class StrategyManager {
             console.log(`[JITO] Executing Sell Bundle...`);
             try {
                 const JITO_TIP = 100000;
-                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP);
+                // Use the same blockhash as the main swap tx for bundle consistency
+                const swapBlockhash = transaction.message.recentBlockhash;
+                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP, swapBlockhash);
                 const result = await JitoExecutor.sendBundle([
                     bs58.encode(transaction.serialize()),
                     bs58.encode(tipTx.serialize() as Uint8Array)
