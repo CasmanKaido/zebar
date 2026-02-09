@@ -28,6 +28,9 @@ export class MarketScanner {
     private seenPairs: Map<string, number> = new Map(); // pairAddress -> timestamp
     private SEEN_COOLDOWN = 5 * 60 * 1000; // 5 minute cooldown
     private scanInterval: NodeJS.Timeout | null = null;
+    private jupiterTokens: Map<string, any> = new Map(); // mint -> metadata
+    private lastJupiterSync = 0;
+    private JUPITER_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>) {
         this.criteria = criteria;
@@ -42,8 +45,30 @@ export class MarketScanner {
         console.log(startMsg);
         SocketManager.emitLog(startMsg, "success");
 
+        // Initial Jupiter Sync
+        await this.syncJupiterTokens();
+
         // Start the sweeping loop
         this.runSweeper();
+    }
+
+    private async syncJupiterTokens() {
+        if (Date.now() - this.lastJupiterSync < this.JUPITER_SYNC_INTERVAL) return;
+
+        try {
+            SocketManager.emitLog("[JUPITER] Refreshing global token list...", "info");
+            const res = await axios.get("https://token.jup.ag/all", { timeout: 15000 });
+            if (Array.isArray(res.data)) {
+                this.jupiterTokens.clear();
+                res.data.forEach((t: any) => {
+                    this.jupiterTokens.set(t.address, t);
+                });
+                this.lastJupiterSync = Date.now();
+                SocketManager.emitLog(`[JUPITER] Synced ${res.data.length} tokens for validation.`, "success");
+            }
+        } catch (e: any) {
+            console.error(`[JUPITER ERROR] Sync failed: ${e.message}`);
+        }
     }
 
     private async runSweeper() {
@@ -55,6 +80,10 @@ export class MarketScanner {
                 if (sweepCount % 20 === 0) {
                     SocketManager.emitLog("[HEARTBEAT] LPPP BOT is actively scanning the market. All systems operational.", "success");
                 }
+
+                // Periodic Jupiter sync
+                await this.syncJupiterTokens();
+
                 await this.performMarketSweep();
             } catch (error: any) {
                 console.error(`[SWEEPER ERROR] ${error.message}`);
@@ -113,12 +142,59 @@ export class MarketScanner {
                 } catch (e) { }
             }
 
+            // 3. NEW: DexScreener Latest Pairs (Global Discovery)
+            try {
+                const latestPairsRes = await axios.get("https://api.dexscreener.com/latest/dex/pairs/solana", { timeout: 8000 });
+                if (latestPairsRes.data.pairs) {
+                    allPairs = [...allPairs, ...latestPairsRes.data.pairs];
+                }
+            } catch (e: any) {
+                console.error(`[DEXSCREENER ERROR] Latest pairs failed: ${e.message}`);
+            }
+
+            // 4. NEW: DexScreener Boosted Tokens
+            try {
+                const boostedRes = await axios.get("https://api.dexscreener.com/latest/dex/tokens/boosted/solana", { timeout: 5000 });
+                if (Array.isArray(boostedRes.data)) {
+                    // Extract pairs from boosted tokens and mark them as high-priority
+                    const boostedPairs = boostedRes.data.map((t: any) => ({ ...t, isBoosted: true }));
+                    allPairs = [...allPairs, ...boostedPairs];
+                }
+            } catch (e: any) {
+                // Not all endpoints are always stable, ignore failures
+            }
+
             // Deduplicate pairs by address and FILTER FOR METEORA ONLY
             const uniquePairsMap = new Map();
             allPairs.forEach(p => {
-                const isMeteora = (p.dexId || p.relationships?.dex?.data?.id || "").toLowerCase().includes("meteora");
-                if (isMeteora && p.chainId === "solana" && !uniquePairsMap.has(p.pairAddress)) {
-                    uniquePairsMap.set(p.pairAddress, p);
+                // Handle different response formats between Gecko and DexScreener
+                const dexId = (p.dexId || p.relationships?.dex?.data?.id || "").toLowerCase();
+                const chainId = (p.chainId || "solana").toLowerCase();
+                const address = p.pairAddress || p.attributes?.address;
+
+                const isMeteora = dexId.includes("meteora");
+                if (isMeteora && chainId === "solana" && address && !uniquePairsMap.has(address)) {
+                    // Normalize standard format for internal loop
+                    uniquePairsMap.set(address, {
+                        pairAddress: address,
+                        dexId: dexId,
+                        baseToken: p.baseToken || {
+                            address: p.relationships?.base_token?.data?.id?.split("_")[1],
+                            symbol: p.attributes?.name?.split(" / ")[0]
+                        },
+                        quoteToken: p.quoteToken || {
+                            address: p.relationships?.quote_token?.data?.id?.split("_")[1],
+                            symbol: p.attributes?.name?.split(" / ")[1]
+                        },
+                        priceUsd: p.priceUsd || p.attributes?.base_token_price_usd,
+                        volume: p.volume || {
+                            m5: Number(p.attributes?.volume_usd?.m5 || 0),
+                            h1: Number(p.attributes?.volume_usd?.h1 || 0),
+                            h24: Number(p.attributes?.volume_usd?.h24 || 0)
+                        },
+                        liquidity: p.liquidity || { usd: Number(p.attributes?.reserve_in_usd || 0) },
+                        marketCap: p.marketCap || p.fdv || p.attributes?.fdv_usd || 0
+                    });
                 }
             });
 
@@ -218,6 +294,21 @@ export class MarketScanner {
         }
     }
 
+
+    /**
+     * External trigger for token evaluation (e.g. from Webhooks)
+     */
+    async evaluateToken(result: ScanResult) {
+        if (!this.isRunning) return;
+
+        // Check cooldown
+        const lastSeen = this.seenPairs.get(result.pairAddress);
+        if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return;
+
+        SocketManager.emitLog(`[EVALUATOR] High-Priority Evaluation for ${result.symbol}...`, "info");
+        this.seenPairs.set(result.pairAddress, Date.now());
+        await this.callback(result);
+    }
 
     stop() {
         this.isRunning = false;

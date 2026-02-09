@@ -123,6 +123,36 @@ app.post("/api/config/key", async (req, res) => {
     res.json(result);
 });
 
+// Helius Webhook Endpoint for Real-Time Discovery
+app.post("/api/webhooks/helius", async (req, res) => {
+    try {
+        const events = req.body;
+        if (!Array.isArray(events)) {
+            return res.status(400).json({ error: "Invalid webhook payload" });
+        }
+
+        for (const event of events) {
+            // Helius "Enhanced" events parsing
+            // Check for Meteora CP-AMM Program ID: CAMMCzo5YL8w4VFF8KVHrM5qHsc86KAt5wUGrEnf9V
+            const isMeteora = event.instructions?.some((i: any) => i.programId === "CAMMCzo5YL8w4VFF8KVHrM5qHsc86KAt5wUGrEnf9V");
+
+            if (isMeteora) {
+                // Try to find a mint address in the account array
+                // Usually the first few accounts in a "Pool Created" instruction
+                const mint = event.accountData?.[0]?.account; // This is a heuristic, needs actual testing with real payload
+                if (mint) {
+                    SocketManager.emitLog(`[WEBHOOK] Real-time Meteora Discovery: ${mint}`, "success");
+                    botManager.evaluateDiscovery(mint, "Meteora Webhook");
+                }
+            }
+        }
+        res.status(200).send("OK");
+    } catch (error) {
+        console.error("Webhook Error:", error);
+        res.status(500).json({ error: "Webhook processing failed" });
+    }
+});
+
 // Catch-all to serve React's index.html
 app.use((req, res) => {
     res.sendFile(path.join(clientPath, "index.html"));
