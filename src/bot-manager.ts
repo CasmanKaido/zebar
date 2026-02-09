@@ -117,6 +117,9 @@ export class BotManager {
                 history[index].roi = newRoi;
                 history[index].exited = exited;
 
+                // Emit update to frontend so it can remove/archive the pool
+                SocketManager.emitPoolUpdate({ poolId: poolId, roi: newRoi, exited: exited });
+
                 // Ensure directory exists
                 await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
 
@@ -344,15 +347,20 @@ export class BotManager {
                     const fees = await this.strategy.getMeteoraFees(pool.poolId);
 
                     // Meteora sorts mints: A < B. Align fees.
-                    const SOL_MINT = "So11111111111111111111111111111111111111112";
-                    const [mintA, mintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(SOL_MINT).toBuffer()) < 0
-                        ? [pool.mint, SOL_MINT]
-                        : [SOL_MINT, pool.mint];
+                    const [mintA, mintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(LPPP_MINT_ADDR).toBuffer()) < 0
+                        ? [pool.mint, LPPP_MINT_ADDR]
+                        : [LPPP_MINT_ADDR, pool.mint];
 
-                    const feeToken = pool.mint === mintA ? fees.feeA.toString() : fees.feeB.toString();
-                    const feeSol = SOL_MINT === mintA ? fees.feeA.toString() : fees.feeB.toString();
+                    const feeTokenRaw = pool.mint === mintA ? fees.feeA : fees.feeB;
+                    const feeLpppRaw = LPPP_MINT_ADDR === mintA ? fees.feeA : fees.feeB;
 
-                    pool.unclaimedFees = { sol: feeSol, token: feeToken };
+                    // Scale LPPP (6 decimals) up by 1000 for UI (which divides by 1e9)
+                    const adjustedLpppFee = (feeLpppRaw * 1000n).toString();
+
+                    // Most sniped tokens are 6 decimals (pumpfun), scale up for UI accuracy
+                    const adjustedTokenFee = (feeTokenRaw * 1000n).toString();
+
+                    pool.unclaimedFees = { sol: adjustedLpppFee, token: adjustedTokenFee };
                     SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
 
 

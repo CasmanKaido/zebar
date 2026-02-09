@@ -32,12 +32,14 @@ interface Pool {
     roi: string;
     created: string;
     unclaimedFees?: { sol: string; token: string };
+    exited?: boolean;
 }
 
 interface PoolUpdate {
     poolId: string;
     roi?: string;
     unclaimedFees?: { sol: string; token: string };
+    exited?: boolean;
 }
 
 interface SettingInputProps {
@@ -148,7 +150,8 @@ function App() {
             setPools(prev => prev.map(p => p.poolId === update.poolId ? {
                 ...p,
                 roi: update.roi || p.roi,
-                unclaimedFees: update.unclaimedFees || p.unclaimedFees
+                unclaimedFees: update.unclaimedFees || p.unclaimedFees,
+                exited: update.exited !== undefined ? update.exited : p.exited
             } : p));
         });
         socket.on('pool', (pool: Pool) => {
@@ -780,7 +783,7 @@ function App() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {pools.map(pool => (
+                        {pools.filter(p => !p.exited).map(pool => (
                             <div key={pool.poolId} className="bg-secondary border border-border p-4 rounded-md flex flex-col gap-4 group hover:border-primary/50 transition-colors">
                                 <div className="flex justify-between items-start">
                                     <div>
