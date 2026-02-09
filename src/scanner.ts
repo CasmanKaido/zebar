@@ -107,6 +107,14 @@ export class MarketScanner {
                 this.syncJupiterTokens().catch(() => { });
 
                 await this.performMarketSweep();
+
+                // Prune expired seenPairs to prevent memory leak
+                const now = Date.now();
+                for (const [key, timestamp] of this.seenPairs) {
+                    if (now - timestamp > this.SEEN_COOLDOWN) {
+                        this.seenPairs.delete(key);
+                    }
+                }
             } catch (error: any) {
                 console.error(`[SWEEPER ERROR] ${error.message}`);
             }

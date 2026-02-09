@@ -46,6 +46,8 @@ export class BotManager {
     private scanner: MarketScanner | null = null;
     private strategy: StrategyManager;
     private sessionPoolCount: number = 0;
+    private monitorInterval: NodeJS.Timeout | null = null;
+    private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
@@ -64,7 +66,6 @@ export class BotManager {
     constructor() {
         this.strategy = new StrategyManager(connection, wallet);
         this.loadPools();
-        this.monitorPositions(); // Start monitoring loop
     }
 
     private async loadPools() {
@@ -160,6 +161,12 @@ export class BotManager {
         }
 
         this.sessionPoolCount = 0; // Reset session counter
+        this.pendingMints.clear(); // Reset pending buys
+
+        // Start position monitor (only if not already running)
+        if (!this.monitorInterval) {
+            this.monitorPositions();
+        }
 
         // Check Balance
         const balance = await connection.getBalance(wallet.publicKey);
@@ -184,12 +191,20 @@ export class BotManager {
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
             if (!this.isRunning) return;
 
+            const mintAddress = result.mint.toBase58();
+
+            // Guard: Skip if already being processed (prevents race condition duplicate buys)
+            if (this.pendingMints.has(mintAddress)) return;
+
             // Exclusion Logic: Don't buy if already active in portfolio
             const activePools: PoolData[] = await this.getPortfolio();
-            if (activePools.some((p: PoolData) => p.mint === result.mint.toBase58() && !p.exited)) {
+            if (activePools.some((p: PoolData) => p.mint === mintAddress && !p.exited)) {
                 // Silently skip to keep logs clean
                 return;
             }
+
+            // Lock this mint to prevent duplicate buys during processing
+            this.pendingMints.add(mintAddress);
 
             SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
             SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
@@ -348,6 +363,9 @@ export class BotManager {
             } catch (swapError: any) {
                 console.error("[BOT] Swap Execution Failure:", swapError);
                 SocketManager.emitLog(`[ERROR] Swap execution failed: ${swapError.message}`, "error");
+            } finally {
+                // Release the mint lock so it can be re-evaluated in future sweeps
+                this.pendingMints.delete(mintAddress);
             }
         });
 
@@ -406,6 +424,12 @@ export class BotManager {
         if (this.scanner) {
             this.scanner.stop();
         }
+        // Stop the position monitor to prevent ghost intervals
+        if (this.monitorInterval) {
+            clearInterval(this.monitorInterval);
+            this.monitorInterval = null;
+        }
+        this.pendingMints.clear();
         SocketManager.emitStatus(false);
         SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
     }
@@ -436,7 +460,7 @@ export class BotManager {
     private async monitorPositions() {
         const LPPP_MINT_ADDR = "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV";
 
-        setInterval(async () => {
+        this.monitorInterval = setInterval(async () => {
             try {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
                 const pools: PoolData[] = JSON.parse(data);
