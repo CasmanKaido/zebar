@@ -64,6 +64,10 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
                 type="number"
                 value={value}
                 onChange={(e) => onChange(Number(e.target.value))}
+                onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                onKeyDown={(e) => {
+                    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
+                }}
                 disabled={disabled}
                 className={`w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-6' : ''} ${unit ? 'pr-9' : ''}`}
             />
@@ -564,6 +568,10 @@ function App() {
                                             step="0.000001"
                                             value={manualPrice}
                                             onChange={(e) => setManualPrice(Number(e.target.value))}
+                                            onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
+                                            }}
                                             disabled={running}
                                             className="flex-1 bg-input border border-border rounded px-2 py-1 text-[12px] font-mono text-primary outline-none focus:border-amber-500/50 transition-colors"
                                         />
