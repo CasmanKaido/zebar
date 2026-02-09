@@ -170,15 +170,16 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // Check Criteria
-                const meetsVol5m = Number(volume5m) >= Number(this.criteria.minVolume5m);
-                const meetsVol1h = Number(volume1h) >= Number(this.criteria.minVolume1h);
-                const meetsVol24h = Number(volume24h) >= Number(this.criteria.minVolume24h);
-                const meetsLiquidity = Number(liquidity) >= Number(this.criteria.minLiquidity);
-                const meetsMcap = Number(mcap) >= Number(this.criteria.minMcap);
+                // Check Criteria (Zero means disabled/bypassed)
+                const meetsVol5m = Number(this.criteria.minVolume5m) === 0 || Number(volume5m) >= Number(this.criteria.minVolume5m);
+                const meetsVol1h = Number(this.criteria.minVolume1h) === 0 || Number(volume1h) >= Number(this.criteria.minVolume1h);
+                const meetsVol24h = Number(this.criteria.minVolume24h) === 0 || Number(volume24h) >= Number(this.criteria.minVolume24h);
+                const meetsLiquidity = Number(this.criteria.minLiquidity) === 0 || Number(liquidity) >= Number(this.criteria.minLiquidity);
+                const meetsMcap = Number(this.criteria.minMcap) === 0 || Number(mcap) >= Number(this.criteria.minMcap);
 
-                // Testing bypass
-                const isTesting = this.criteria.minVolume1h <= 100 && this.criteria.minMcap <= 100;
+                // Testing bypass (Low values threshold)
+                const isTesting = this.criteria.minVolume1h > 0 && this.criteria.minVolume1h <= 100 &&
+                    this.criteria.minMcap > 0 && this.criteria.minMcap <= 100;
 
                 if ((meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) || isTesting) {
                     const matchMsg = isTesting
