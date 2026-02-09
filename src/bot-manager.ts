@@ -261,6 +261,7 @@ export class BotManager {
                     // ═══ CRITICAL: Pre-Flight LPPP Balance Check (Batch 2.1) ═══
                     // The LPPP token is Token-2022, which has transfer fees.
                     // We MUST verify the wallet has enough LPPP before creating the pool.
+                    let effectiveTokenAmount = tokenAmount;
                     const LPPP_DECIMALS = 6;
                     try {
                         const lpppAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
@@ -288,16 +289,12 @@ export class BotManager {
                                 const ratio = maxUsableLpppUi / targetLpppAmount;
                                 const adjustedTokenRaw = BigInt(Math.floor(Number(tokenAmount) * ratio));
                                 // Use the smaller of the two to be safe
-                                const cappedTokenAmount = adjustedTokenRaw < tokenAmount ? adjustedTokenRaw : tokenAmount;
-                                // Override tokenAmount for pool creation
-                                Object.defineProperty(result, '_cappedTokenAmount', { value: cappedTokenAmount, writable: true });
+                                effectiveTokenAmount = adjustedTokenRaw < tokenAmount ? adjustedTokenRaw : tokenAmount;
                             }
                         }
                     } catch (balErr: any) {
                         SocketManager.emitLog(`[LP WARN] Could not verify LPPP balance: ${balErr.message}. Proceeding with calculated amount.`, "warning");
                     }
-
-                    const effectiveTokenAmount = (result as any)._cappedTokenAmount || tokenAmount;
 
                     // ═══ DIAGNOSTIC LOGGING ═══
                     SocketManager.emitLog(`[POOL DIAG] LPPP Sending: ${finalLpppUiAmount.toFixed(2)} | Token Sending: ${Number(effectiveTokenAmount)} raw | Ratio: ${(finalLpppUiAmount / tokenUiAmountChecked).toFixed(4)} LPPP/Token`, "info");

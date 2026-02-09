@@ -200,6 +200,12 @@ export class StrategyManager {
         if (amountUnits === BigInt(0)) return { success: false, amountSol: 0, error: "Amount is zero" };
 
         try {
+            // Pre-sell SOL balance check
+            let preSolBalance = 0;
+            try {
+                preSolBalance = await this.connection.getBalance(this.wallet.publicKey);
+            } catch (e) { /* ignore */ }
+
             const headers = { 'x-api-key': JUPITER_API_KEY || '' };
 
             // Ultra V1: GET /ultra/v1/order
@@ -218,6 +224,15 @@ export class StrategyManager {
             const transaction = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
             transaction.sign([this.wallet]);
 
+            // Helper to calculate SOL received
+            const getSolReceived = async (): Promise<number> => {
+                try {
+                    const postSolBalance = await this.connection.getBalance(this.wallet.publicKey);
+                    const diff = (postSolBalance - preSolBalance) / LAMPORTS_PER_SOL;
+                    return diff > 0 ? diff : 0;
+                } catch (e) { return 0; }
+            };
+
             console.log(`[JITO] Executing Sell Bundle...`);
             try {
                 const JITO_TIP = 100000;
@@ -231,12 +246,16 @@ export class StrategyManager {
                 const signature = bs58.encode(transaction.signatures[0]);
                 await this.connection.confirmTransaction(signature, "confirmed");
                 console.log(`[STRATEGY] Sell Success: https://solscan.io/tx/${signature}`);
-                return { success: true, amountSol: 0 };
+                const solReceived = await getSolReceived();
+                console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
+                return { success: true, amountSol: solReceived };
             } catch (err) {
                 // Fallback
                 const txid = await this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
                 await this.connection.confirmTransaction(txid);
-                return { success: true, amountSol: 0 };
+                const solReceived = await getSolReceived();
+                console.log(`[STRATEGY] Sell Success (RPC Fallback). Proceeds: ${solReceived.toFixed(6)} SOL`);
+                return { success: true, amountSol: solReceived };
             }
         } catch (error: any) {
             console.error(`[STRATEGY] Sell failed:`, error.message);

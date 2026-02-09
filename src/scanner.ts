@@ -170,20 +170,6 @@ export class MarketScanner {
                 } catch (e) { }
             }
 
-            // 3. NEW: DexScreener Latest Pairs (Global Discovery)
-            try {
-                const latestPairsRes = await axios.get("https://api.dexscreener.com/latest/dex/pairs/solana", { timeout: 8000 });
-                if (latestPairsRes.data.pairs) {
-                    allPairs = [...allPairs, ...latestPairsRes.data.pairs];
-                }
-            } catch (e: any) {
-                // Treat as non-critical. API might be down or changed.
-                if (e.response?.status === 404) {
-                    console.warn(`[DEXSCREENER WARNING] Latest pairs endpoint returned 404. Skipping...`);
-                } else {
-                    console.error(`[DEXSCREENER ERROR] Latest pairs failed: ${e.message}`);
-                }
-            }
 
             // 4. NEW: DexScreener Boosted Tokens
             try {
@@ -322,7 +308,7 @@ export class MarketScanner {
                         mint: new PublicKey(targetToken.address),
                         pairAddress: pair.pairAddress,
                         dexId: pair.dexId || 'unknown',
-                        volume24h: Number(volume1h),
+                        volume24h: Number(volume24h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
                         symbol: targetToken.symbol,
