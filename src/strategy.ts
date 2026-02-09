@@ -1,5 +1,5 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram } from "@solana/web3.js";
-import { wallet, connection, JUPITER_API_KEY } from "./config";
+import { wallet, connection, JUPITER_API_KEY, DRY_RUN } from "./config";
 import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
@@ -34,7 +34,7 @@ export class StrategyManager {
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; uiAmount: number; error?: string }> {
-        const { DRY_RUN } = require("./config");
+
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%) ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
         if (DRY_RUN) {
@@ -942,14 +942,12 @@ export class StrategyManager {
     /**
      * Removes a percentage of liquidity from a Meteora CP-AMM pool.
      */
-    async removeMeteoraLiquidity(poolAddress: string, percent: number = 80): Promise<{ success: boolean; txSig?: string; error?: string }> {
-        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
-        const { PublicKey, sendAndConfirmTransaction } = require("@solana/web3.js");
+    async removeMeteoraLiquidity(poolAddress: string, percent: number = 80, positionId?: string): Promise<{ success: boolean; txSig?: string; error?: string }> {
+        const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const BN = require("bn.js");
 
-        console.log(`[STRATEGY] Removing ${percent}% liquidity from pool: ${poolAddress}`);
+        console.log(`[STRATEGY] Removing ${percent}% liquidity from pool: ${poolAddress}${positionId ? ` (position: ${positionId.slice(0, 8)}...)` : ''}`);
         try {
-            const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
             const cpAmm = new CpAmm(this.connection);
             const poolPubkey = new PublicKey(poolAddress);
             const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
@@ -958,7 +956,16 @@ export class StrategyManager {
                 return { success: false, error: "No active position found for this pool/wallet." };
             }
 
-            const pos = userPositions[0];
+            // Use stored positionId to find the correct position, or fall back to first
+            let pos = userPositions[0];
+            if (positionId) {
+                const match = userPositions.find((p: any) => p.position.toBase58() === positionId);
+                if (match) {
+                    pos = match;
+                } else {
+                    console.warn(`[STRATEGY] Stored positionId ${positionId.slice(0, 8)} not found. Using first position.`);
+                }
+            }
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
             let tx;

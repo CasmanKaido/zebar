@@ -539,7 +539,14 @@ export class BotManager {
 
     async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {
         SocketManager.emitLog(`[${source}] Withdrawing ${percent}% liquidity from ${poolId.slice(0, 8)}...`, "warning");
-        const result = await this.strategy.removeMeteoraLiquidity(poolId, percent);
+        // Look up stored positionId for this pool
+        let positionId: string | undefined;
+        try {
+            const pools: PoolData[] = await this.getPortfolio();
+            const pool = pools.find(p => p.poolId === poolId);
+            positionId = pool?.positionId;
+        } catch (e) { /* proceed without positionId */ }
+        const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
         if (result.success) {
             SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
             if (percent >= 100) {
