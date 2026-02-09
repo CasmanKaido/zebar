@@ -864,7 +864,7 @@ export class StrategyManager {
                 tokenBAmountThreshold: new BN(0),
                 vestings: [],
                 currentPoint: new BN(0)
-            }).build();
+            });
 
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                 skipPreflight: true,
@@ -940,7 +940,7 @@ export class StrategyManager {
                 tokenBVault: poolState.tokenBVault,
                 tokenAProgram: poolState.tokenAProgram,
                 tokenBProgram: poolState.tokenBProgram,
-            }).build();
+            });
 
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                 skipPreflight: true,
@@ -1055,7 +1055,7 @@ export class StrategyManager {
                 tokenBVault: poolState.tokenBVault,
                 tokenAProgram: poolState.tokenAProgram,
                 tokenBProgram: poolState.tokenBProgram
-            }).build();
+            });
 
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                 skipPreflight: true,
