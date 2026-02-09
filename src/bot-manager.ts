@@ -397,11 +397,17 @@ export class BotManager {
                             SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
                         }
 
-                        // Take Profit Logic (8x = 800% ROI)
-                        if (roiVal >= 800) {
-                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit 8x! Withdrawing Liquidity...`, "success");
-                            await this.withdrawLiquidity(pool.poolId, 80); // Withdraw 80% automatically
-                            // Mark as exited to stop monitoring
+                        // Take Profit Logic (80% ROI)
+                        if (roiVal >= 80) {
+                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit +80%! Auto-closing position...`, "success");
+                            await this.withdrawLiquidity(pool.poolId, 100);
+                            await this.updatePoolROI(pool.poolId, roiString, true);
+                        }
+
+                        // Stop Loss Logic (-20% ROI)
+                        if (roiVal <= -20) {
+                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Auto-closing position...`, "error");
+                            await this.withdrawLiquidity(pool.poolId, 100);
                             await this.updatePoolROI(pool.poolId, roiString, true);
                         }
                     }

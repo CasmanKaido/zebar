@@ -834,20 +834,12 @@ function App() {
                                             <Droplets size={10} /> ADD LIQ
                                         </button>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-2 mt-2">
-                                        <button
-                                            onClick={() => withdrawLiquidity(pool.poolId, 80)}
-                                            className="py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-[9px] font-black rounded border border-red-500/20 transition-all"
-                                        >
-                                            REMOVE 80%
-                                        </button>
-                                        <button
-                                            onClick={() => withdrawLiquidity(pool.poolId, 100)}
-                                            className="py-1.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-black rounded shadow-lg transition-all"
-                                        >
-                                            FULL CLOSE
-                                        </button>
-                                    </div>
+                                    <button
+                                        onClick={() => withdrawLiquidity(pool.poolId, 100)}
+                                        className="w-full mt-2 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black rounded shadow-lg transition-all"
+                                    >
+                                        FULL CLOSE
+                                    </button>
                                 </div>
                             </div>
                         ))}
