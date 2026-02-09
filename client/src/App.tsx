@@ -252,17 +252,20 @@ function App() {
         });
     };
 
-    const withdrawLiquidity = async (poolId: string) => {
+    const withdrawLiquidity = async (poolId: string, percent: number) => {
+        const isFull = percent >= 100;
         showModal({
-            title: "Confirm Withdrawal",
-            message: "Are you sure you want to withdraw 80% of the liquidity from this pool?",
+            title: isFull ? "Confirm Full Close" : "Confirm Withdrawal",
+            message: isFull
+                ? "Are you sure you want to withdraw ALL liquidity and CLOSE this position?"
+                : `Are you sure you want to withdraw ${percent}% of the liquidity from this pool?`,
             type: 'warning',
             onCancel: closeModal,
             onConfirm: async () => {
                 await fetch(`${BACKEND_URL}/api/pool/withdraw`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ poolId, percent: 80 })
+                    body: JSON.stringify({ poolId, percent })
                 });
             }
         });
@@ -819,12 +822,20 @@ function App() {
                                             <Droplets size={10} /> ADD LIQ
                                         </button>
                                     </div>
-                                    <button
-                                        onClick={() => withdrawLiquidity(pool.poolId)}
-                                        className="w-full py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-[10px] font-black rounded border border-red-500/20 transition-all"
-                                    >
-                                        CLOSE (80%)
-                                    </button>
+                                    <div className="grid grid-cols-2 gap-2 mt-2">
+                                        <button
+                                            onClick={() => withdrawLiquidity(pool.poolId, 80)}
+                                            className="py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-[9px] font-black rounded border border-red-500/20 transition-all"
+                                        >
+                                            REMOVE 80%
+                                        </button>
+                                        <button
+                                            onClick={() => withdrawLiquidity(pool.poolId, 100)}
+                                            className="py-1.5 bg-red-600 hover:bg-red-700 text-white text-[9px] font-black rounded shadow-lg transition-all"
+                                        >
+                                            FULL CLOSE
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         ))}

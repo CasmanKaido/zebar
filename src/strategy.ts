@@ -840,39 +840,55 @@ export class StrategyManager {
             }
 
             const pos = userPositions[0];
-            const currentLiquidity = new BN(pos.positionState.unlockedLiquidity.toString());
-            const liquidityDelta = currentLiquidity.mul(new BN(percent)).div(new BN(100));
-
-            if (liquidityDelta.isZero()) {
-                return { success: false, error: "Liquidity delta is zero (maybe position is empty?)" };
-            }
-
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
-            const tx = await cpAmm.removeLiquidity({
-                owner: this.wallet.publicKey,
-                pool: poolPubkey,
-                position: pos.position,
-                positionNftAccount: pos.positionNftAccount,
-                liquidityDelta,
-                tokenAMint: poolState.tokenAMint,
-                tokenBMint: poolState.tokenBMint,
-                tokenAVault: poolState.tokenAVault,
-                tokenBVault: poolState.tokenBVault,
-                tokenAProgram: getTokenProgram(poolState.tokenAFlag),
-                tokenBProgram: getTokenProgram(poolState.tokenBFlag),
-                tokenAAmountThreshold: new BN(0),
-                tokenBAmountThreshold: new BN(0),
-                vestings: [],
-                currentPoint: new BN(0)
-            });
+            let tx;
+            if (percent >= 100) {
+                console.log(`[STRATEGY] Withdrawal percent ${percent}% >= 100%. Executing FULL REMOVAL and closing position.`);
+                tx = await cpAmm.removeAllLiquidityAndClosePosition({
+                    owner: this.wallet.publicKey,
+                    poolState,
+                    positionState: pos.positionState,
+                    position: pos.position,
+                    positionNftAccount: pos.positionNftAccount,
+                    tokenAAmountThreshold: new BN(0),
+                    tokenBAmountThreshold: new BN(0),
+                    vestings: [],
+                    currentPoint: new BN(0)
+                });
+            } else {
+                const currentLiquidity = new BN(pos.positionState.unlockedLiquidity.toString());
+                const liquidityDelta = currentLiquidity.mul(new BN(percent)).div(new BN(100));
+
+                if (liquidityDelta.isZero()) {
+                    return { success: false, error: "Liquidity delta is zero (maybe position is empty?)" };
+                }
+
+                tx = await cpAmm.removeLiquidity({
+                    owner: this.wallet.publicKey,
+                    pool: poolPubkey,
+                    position: pos.position,
+                    positionNftAccount: pos.positionNftAccount,
+                    liquidityDelta,
+                    tokenAMint: poolState.tokenAMint,
+                    tokenBMint: poolState.tokenBMint,
+                    tokenAVault: poolState.tokenAVault,
+                    tokenBVault: poolState.tokenBVault,
+                    tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                    tokenBProgram: getTokenProgram(poolState.tokenBFlag),
+                    tokenAAmountThreshold: new BN(0),
+                    tokenBAmountThreshold: new BN(0),
+                    vestings: [],
+                    currentPoint: new BN(0)
+                });
+            }
 
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                 skipPreflight: true,
                 commitment: "confirmed"
             });
 
-            console.log(`[METEORA] Liquidity Removed: https://solscan.io/tx/${txSig}`);
+            console.log(`[METEORA] Liquidity Removed (Full: ${percent >= 100}): https://solscan.io/tx/${txSig}`);
             return { success: true, txSig };
 
         } catch (error: any) {
