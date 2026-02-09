@@ -56,7 +56,7 @@ export class MarketScanner {
         if (Date.now() - this.lastJupiterSync < this.JUPITER_SYNC_INTERVAL) return;
 
         let attempts = 0;
-        const maxAttempts = 3;
+        const maxAttempts = 5;
 
         while (attempts < maxAttempts) {
             try {
@@ -77,10 +77,11 @@ export class MarketScanner {
                 const errMsg = isDnsError ? "DNS lookup failed (network glitch?)" : e.message;
 
                 if (attempts < maxAttempts) {
-                    console.warn(`[JUPITER WARN] Sync attempt ${attempts} failed: ${errMsg}. Retrying in 2s...`);
-                    await new Promise(r => setTimeout(r, 2000));
+                    const delay = attempts * 5000; // Exponential-ish: 5s, 10s, 15s, 20s
+                    console.warn(`[JUPITER WARN] Sync attempt ${attempts} failed: ${errMsg}. Retrying in ${delay / 1000}s...`);
+                    await new Promise(r => setTimeout(r, delay));
                 } else {
-                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}`);
+                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}. Will use on-chain fallback for metadata.`);
                 }
             }
         }
@@ -144,10 +145,14 @@ export class MarketScanner {
                         allPairs = [...allPairs, ...pagePairs];
                     }
                 } catch (e: any) {
+                    if (e.response?.status === 429) {
+                        console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. Halting sweep to protect IP.`);
+                        break; // Stop fetching more pages
+                    }
                     console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
-                // Rate limit protection: Sleep 2.5s between pages
-                if (page < 3) await new Promise(r => setTimeout(r, 2500));
+                // Rate limit protection: Slow 5.0s between pages
+                if (page < 3) await new Promise(r => setTimeout(r, 5000));
             }
 
             // 2. Add Broad DexScreener Search (Meteora specifically)
@@ -261,6 +266,24 @@ export class MarketScanner {
 
                 if (IGNORED_MINTS.includes(targetToken.address)) continue;
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
+
+                // metadata Check / Fallback (Batch 2.0)
+                let tokenInfo = this.jupiterTokens.get(targetToken.address);
+                if (!tokenInfo) {
+                    try {
+                        const { connection } = require("./config");
+                        const mintPubkey = new PublicKey(targetToken.address);
+                        const info = await connection.getParsedAccountInfo(mintPubkey);
+                        if (info.value && (info.value.data as any).parsed) {
+                            const parsed = (info.value.data as any).parsed.info;
+                            tokenInfo = {
+                                symbol: targetToken.symbol || "Unknown",
+                                decimals: parsed.decimals || 9,
+                                name: "Discovery Token"
+                            };
+                        }
+                    } catch (e) { }
+                }
 
                 const volume5m = pair.volume?.m5 || 0;
                 const volume1h = pair.volume?.h1 || 0;
