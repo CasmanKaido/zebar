@@ -33,7 +33,7 @@ export class StrategyManager {
     /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
-    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; error?: string }> {
+    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; uiAmount: number; error?: string }> {
         const { DRY_RUN } = require("./config");
         console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%) ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
@@ -41,8 +41,9 @@ export class StrategyManager {
             console.log(`[DRY RUN] Simulating Jupiter Swap...`);
             console.log(`[DRY RUN] Would send ${amountSol} SOL to Jupiter.`);
             const simulatedAmount = BigInt(Math.floor((amountSol * 1e9) * 100)); // Fake 100x price
-            console.log(`[DRY RUN] Success! Received fake ${simulatedAmount} tokens.`);
-            return { success: true, amount: simulatedAmount };
+            const simulatedUi = (amountSol * 100);
+            console.log(`[DRY RUN] Success! Received fake ${simulatedAmount} tokens (${simulatedUi} UI).`);
+            return { success: true, amount: simulatedAmount, uiAmount: simulatedUi };
         }
 
         try {
@@ -52,9 +53,11 @@ export class StrategyManager {
             // 0. Pre-Swap Balance Check (To calculate actual received amount)
             const ata = await getAssociatedTokenAddress(mint, this.wallet.publicKey);
             let preBalance = BigInt(0);
+            let preUiAmount = 0;
             try {
                 const acc = await this.connection.getTokenAccountBalance(ata);
                 preBalance = BigInt(acc.value.amount);
+                preUiAmount = acc.value.uiAmount || 0;
             } catch (ignore) { /* Account likely doesn't exist yet */ }
 
             // 1. Request Ultra Order (Directly - No separate quote step needed for Ultra)
@@ -127,15 +130,18 @@ export class StrategyManager {
 
                 // Capture actual amount
                 let postBalance = BigInt(0);
+                let postUiAmount = 0;
                 try {
                     const acc = await this.connection.getTokenAccountBalance(ata);
                     postBalance = BigInt(acc.value.amount);
+                    postUiAmount = acc.value.uiAmount || 0;
                 } catch (e) { console.warn(`[STRATEGY] Failed to fetch post-balance: ${e}`); }
 
                 const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
-                console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens.`);
+                const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
+                console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens (${outUiAmount} UI).`);
 
-                return { success: true, amount: outAmount };
+                return { success: true, amount: outAmount, uiAmount: outUiAmount };
 
             } catch (jitoError: any) {
                 console.warn(`[JITO] Execution Failed (${jitoError.message}). Falling back to Standard RPC...`);
@@ -151,13 +157,16 @@ export class StrategyManager {
 
                 // Capture actual amount
                 let postBalance = BigInt(0);
+                let postUiAmount = 0;
                 try {
                     const acc = await this.connection.getTokenAccountBalance(ata);
                     postBalance = BigInt(acc.value.amount);
+                    postUiAmount = acc.value.uiAmount || 0;
                 } catch (e) { console.warn(`[STRATEGY] Failed to fetch post-balance: ${e}`); }
 
                 const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
-                return { success: true, amount: outAmount };
+                const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
+                return { success: true, amount: outAmount, uiAmount: outUiAmount };
             }
 
         } catch (error: any) {
@@ -171,7 +180,7 @@ export class StrategyManager {
             console.warn(`[STRATEGY] Jupiter Failed. Fallbacks are DISABLED (Jupiter Only Mode).`);
             SocketManager.emitLog("[STRATEGY] Jupiter Failed. Retrying next cycle...", "warning");
 
-            return { success: false, amount: BigInt(0), error: `Jupiter Only Mode: ${errMsg}` };
+            return { success: false, amount: BigInt(0), uiAmount: 0, error: `Jupiter Only Mode: ${errMsg}` };
         }
     }
 

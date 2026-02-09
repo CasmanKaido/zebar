@@ -213,7 +213,7 @@ export class BotManager {
 
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
-            const { success, amount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
+            const { success, amount, uiAmount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
 
             if (success) {
                 SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
@@ -229,12 +229,12 @@ export class BotManager {
                     const lpppPrice = await this.getLpppPrice();
                     if (lpppPrice > 0) {
                         const tokenPriceLppp = result.priceUsd / lpppPrice;
-                        const tokenAmtFloat = Number(amount) / 1e9;
+                        const tokenAmtFloat = uiAmount;
                         targetLpppAmount = tokenAmtFloat * tokenPriceLppp;
                         SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                     }
                 } else if (!this.settings.autoSyncPrice && this.settings.manualPrice > 0) {
-                    const tokenAmtFloat = Number(amount) / 1e9;
+                    const tokenAmtFloat = uiAmount;
                     targetLpppAmount = tokenAmtFloat * this.settings.manualPrice;
                     SocketManager.emitLog(`[MANUAL-PRICE] Context: ${this.settings.manualPrice} LPPP/Token | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                 }
@@ -256,7 +256,7 @@ export class BotManager {
                             created: new Date().toISOString()
                         };
 
-                        const tokenAmtFloat = Number(amount) / 1e9;
+                        const tokenAmtFloat = uiAmount;
                         const initialPrice = tokenAmtFloat > 0 ? targetLpppAmount / tokenAmtFloat : 0;
 
                         const fullPoolData: PoolData = {
@@ -385,23 +385,8 @@ export class BotManager {
                         // Initial Price was LPPP per Token.
                         // ROI = (Current / Initial) * 100
 
-                        // Check if order was flipped in strategy?
-                        // Strategy sorts mints.
-                        // getPoolStatus returns price as `amountB / amountA`.
-                        // If `pool.mint` < `LPPP`, then A=Token, B=LPPP. Price = LPPP/Token. Correct.
-                        // If `pool.mint` > `LPPP`, then A=LPPP, B=Token. Price = Token/LPPP.
-
-                        // We need to Normalize price to always be LPPP per Token.
-                        let normalizedPrice = status.price;
-                        const mintBN = new PublicKey(pool.mint).toBuffer(); // simple compare via string
-                        const lpppBN = new PublicKey(LPPP_MINT_ADDR).toBuffer();
-
-                        if (pool.mint > LPPP_MINT_ADDR) {
-                            // Token is B. LPPP is A.
-                            // Status Price = Token / LPPP.
-                            // We want LPPP / Token => 1 / Price.
-                            if (status.price !== 0) normalizedPrice = 1 / status.price;
-                        }
+                        // Normalized Price is already LPPP per Token from getPoolStatus
+                        const normalizedPrice = status.price;
 
                         const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
                         const roiString = `${roiVal.toFixed(2)}%`;
