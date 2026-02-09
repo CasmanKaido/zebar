@@ -51,25 +51,25 @@ interface SettingInputProps {
 }
 
 const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext }: SettingInputProps) => (
-    <div className="flex flex-col gap-1.5 mb-4 last:mb-0">
-        <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{label}</label>
+    <div className="flex flex-col gap-1.5 last:mb-0">
+        <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider truncate">{label}</label>
         <div className="relative">
             {prefix && (
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">{prefix}</span>
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-[10px]">{prefix}</span>
             )}
             <input
                 type="number"
                 value={value}
                 onChange={(e) => onChange(Number(e.target.value))}
                 disabled={disabled}
-                className={`w-full bg-input border border-border text-foreground px-3 py-2 rounded-md font-mono text-sm focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-7' : ''} ${unit ? 'pr-12' : ''}`}
+                className={`w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-6' : ''} ${unit ? 'pr-9' : ''}`}
             />
             {unit && (
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-primary/60">{unit}</span>
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-primary/60">{unit}</span>
             )}
         </div>
         {subtext && (
-            <span className="text-[10px] text-muted-foreground/60 italic">{subtext}</span>
+            <span className="text-[9px] text-muted-foreground/60 italic truncate">{subtext}</span>
         )}
     </div>
 );
@@ -506,15 +506,19 @@ function App() {
                             />
                         </div>
 
-                        <div className="mt-4 pt-4 border-t border-border space-y-4">
-                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Scanner Criteria</p>
-                            <SettingInput label="Slippage (%)" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
-                            <SettingInput label="Min 5m Vol ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
-                            <SettingInput label="Min 1h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
-                            <SettingInput label="Min 24h Vol ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
-                            <SettingInput label="Min Liquidity ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
-                            <SettingInput label="Min Mcap ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
-                            <SettingInput label="Session Limit (Pools)" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
+                        <div className="mt-4 pt-4 border-t border-border">
+                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-4">Scanner Criteria</p>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-5">
+                                <SettingInput label="Slippage" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
+                                <SettingInput label="5m Vol ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
+                                <SettingInput label="1h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
+                                <SettingInput label="24h Vol ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
+                                <SettingInput label="Liquidity ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
+                                <SettingInput label="Mcap ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
+                                <div className="col-span-2">
+                                    <SettingInput label="Session Limit (Pools)" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
+                                </div>
+                            </div>
                         </div>
 
                         {/* Meteora Specific UI */}
