@@ -186,6 +186,13 @@ export class BotManager {
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
             if (!this.isRunning) return;
 
+            // Exclusion Logic: Don't buy if already active in portfolio
+            const activePools: PoolData[] = await this.getPortfolio();
+            if (activePools.some((p: PoolData) => p.mint === result.mint.toBase58() && !p.exited)) {
+                // Silently skip to keep logs clean
+                return;
+            }
+
             SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
             SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
             SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");

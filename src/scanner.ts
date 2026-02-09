@@ -26,7 +26,7 @@ export class MarketScanner {
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
     private seenPairs: Map<string, number> = new Map(); // pairAddress -> timestamp
-    private SEEN_COOLDOWN = 60 * 60 * 1000; // 1 hour cooldown
+    private SEEN_COOLDOWN = 5 * 60 * 1000; // 5 minute cooldown
     private scanInterval: NodeJS.Timeout | null = null;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>) {
