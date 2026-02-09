@@ -7,7 +7,7 @@ import { RugChecker } from "./rugcheck";
 import * as fs from "fs/promises";
 import * as path from "path";
 
-const POOL_DATA_FILE = path.join(__dirname, "../data/pools.json");
+const POOL_DATA_FILE = path.join(process.cwd(), "data/pools.json");
 
 interface PoolData {
     poolId: string;

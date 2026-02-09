@@ -515,24 +515,18 @@ export class StrategyManager {
             const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
 
             // 1. Fetch Pool Instance
-            const cpAmm = await CpAmm.create(this.connection, new PublicKey(pairAddress));
+            const cpAmm = new CpAmm(this.connection);
+            const poolPubkey = new PublicKey(pairAddress);
+            const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
-            // 2. Identify Input/Output
+            // 2. Identify Input Token (SOL)
             const SOL_MINT = "So11111111111111111111111111111111111111112";
-            let inputToken = cpAmm.tokenMintA;
-            // Unused outputToken - keeping commented if needed for debug
-            // let outputToken = cpAmm.tokenMintB;
+            let inputToken = poolState.tokenAMint;
 
-            // We are Swapping SOL -> Token
-            if (inputToken.toBase58() === SOL_MINT) {
-                // Correct: A is SOL, B is Token
-                inputToken = cpAmm.tokenMintA;
-            } else if (cpAmm.tokenMintB.toBase58() === SOL_MINT) {
-                // Swap: B is SOL, A is Token
-                inputToken = cpAmm.tokenMintB;
-            } else {
-                // USDC or other base pair? Assume input is whatever matches our wallet balance logic?
-                // For now, assume SOL is involved. If not, default to A->B.
+            if (poolState.tokenAMint.toBase58() === SOL_MINT) {
+                inputToken = poolState.tokenAMint;
+            } else if (poolState.tokenBMint.toBase58() === SOL_MINT) {
+                inputToken = poolState.tokenBMint;
             }
 
             const amountIn = new BN(amountSol * LAMPORTS_PER_SOL);
@@ -836,8 +830,9 @@ export class StrategyManager {
 
         console.log(`[STRATEGY] Removing ${percent}% liquidity from pool: ${poolAddress}`);
         try {
-            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
-            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+            const cpAmm = new CpAmm(this.connection);
+            const poolPubkey = new PublicKey(poolAddress);
+            const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
 
             if (userPositions.length === 0) {
                 return { success: false, error: "No active position found for this pool/wallet." };
@@ -851,11 +846,11 @@ export class StrategyManager {
                 return { success: false, error: "Liquidity delta is zero (maybe position is empty?)" };
             }
 
-            const poolState = await cpAmm.getPoolState();
+            const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
             const tx = await cpAmm.removeLiquidity({
                 owner: this.wallet.publicKey,
-                pool: new PublicKey(poolAddress),
+                pool: poolPubkey,
                 position: pos.position,
                 positionNftAccount: pos.positionNftAccount,
                 liquidityDelta,
@@ -895,8 +890,9 @@ export class StrategyManager {
 
         console.log(`[STRATEGY] Increasing liquidity by ${amountSol} SOL in pool: ${poolAddress}`);
         try {
-            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
-            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+            const cpAmm = new CpAmm(this.connection);
+            const poolPubkey = new PublicKey(poolAddress);
+            const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
 
             if (userPositions.length === 0) {
                 return { success: false, error: "No active position found. Use createPosition first." };
@@ -905,7 +901,7 @@ export class StrategyManager {
             const pos = userPositions[0];
             const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
 
-            const poolState = await cpAmm.getPoolState();
+            const poolState = await cpAmm.fetchPoolState(poolPubkey);
             const isTokenASOL = poolState.tokenAMint.equals(new PublicKey("So11111111111111111111111111111111111111112"));
 
             const depositQuote = cpAmm.getDepositQuote({
@@ -1001,15 +997,12 @@ export class StrategyManager {
         }
     }
 
-    /**
-     * Fetches unclaimed fees for a Meteora position.
-     */
     async getMeteoraFees(poolAddress: string): Promise<{ feeA: bigint; feeB: bigint }> {
         const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
         const { PublicKey } = require("@solana/web3.js");
 
         try {
-            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
+            const cpAmm = new CpAmm(this.connection);
             const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
 
             if (userPositions.length === 0) return { feeA: 0n, feeB: 0n };
@@ -1033,20 +1026,28 @@ export class StrategyManager {
 
         console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}`);
         try {
-            const cpAmm = await CpAmm.create(this.connection, new PublicKey(poolAddress));
-            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
+            const cpAmm = new CpAmm(this.connection);
+            const poolPubkey = new PublicKey(poolAddress);
+            const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
 
             if (userPositions.length === 0) {
                 return { success: false, error: "No active position found." };
             }
 
             const pos = userPositions[0];
-            const poolState = await cpAmm.getPoolState();
+
+            // Safety check: Don't claim if fees are 0
+            if (pos.positionState.feeAPending.isZero() && pos.positionState.feeBPending.isZero()) {
+                console.log(`[METEORA] Skipping claim: No pending fees found.`);
+                return { success: false, error: "No pending fees to claim." };
+            }
+
+            const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
             const tx = await cpAmm.claimPositionFee({
                 owner: this.wallet.publicKey,
                 position: pos.position,
-                pool: new PublicKey(poolAddress),
+                pool: poolPubkey,
                 positionNftAccount: pos.positionNftAccount,
                 tokenAMint: poolState.tokenAMint,
                 tokenBMint: poolState.tokenBMint,
