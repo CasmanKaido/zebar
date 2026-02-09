@@ -55,19 +55,34 @@ export class MarketScanner {
     private async syncJupiterTokens() {
         if (Date.now() - this.lastJupiterSync < this.JUPITER_SYNC_INTERVAL) return;
 
-        try {
-            SocketManager.emitLog("[JUPITER] Refreshing global token list...", "info");
-            const res = await axios.get("https://token.jup.ag/all", { timeout: 15000 });
-            if (Array.isArray(res.data)) {
-                this.jupiterTokens.clear();
-                res.data.forEach((t: any) => {
-                    this.jupiterTokens.set(t.address, t);
-                });
-                this.lastJupiterSync = Date.now();
-                SocketManager.emitLog(`[JUPITER] Synced ${res.data.length} tokens for validation.`, "success");
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+            try {
+                SocketManager.emitLog(`[JUPITER] Refreshing global token list (Attempt ${attempts + 1}/${maxAttempts})...`, "info");
+                const res = await axios.get("https://token.jup.ag/all", { timeout: 15000 });
+                if (Array.isArray(res.data)) {
+                    this.jupiterTokens.clear();
+                    res.data.forEach((t: any) => {
+                        this.jupiterTokens.set(t.address, t);
+                    });
+                    this.lastJupiterSync = Date.now();
+                    SocketManager.emitLog(`[JUPITER] Synced ${res.data.length} tokens for validation.`, "success");
+                    return; // Success
+                }
+            } catch (e: any) {
+                attempts++;
+                const isDnsError = e.code === 'ENOTFOUND' || e.message.includes('getaddrinfo');
+                const errMsg = isDnsError ? "DNS lookup failed (network glitch?)" : e.message;
+
+                if (attempts < maxAttempts) {
+                    console.warn(`[JUPITER WARN] Sync attempt ${attempts} failed: ${errMsg}. Retrying in 2s...`);
+                    await new Promise(r => setTimeout(r, 2000));
+                } else {
+                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}`);
+                }
             }
-        } catch (e: any) {
-            console.error(`[JUPITER ERROR] Sync failed: ${e.message}`);
         }
     }
 
@@ -101,7 +116,7 @@ export class MarketScanner {
 
             // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Pools (Paginated)
             // This hits Raydium, Meteora, Orca, etc. and finds EVERYTHING with volume
-            for (let page = 1; page <= 5; page++) {
+            for (let page = 1; page <= 3; page++) { // Capped at 3 pages for rate limit safety
                 try {
                     const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
                     if (geckoRes.data.data) {
@@ -131,8 +146,8 @@ export class MarketScanner {
                 } catch (e: any) {
                     console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
-                // Rate limit protection: Sleep 1.5s between pages
-                if (page < 5) await new Promise(r => setTimeout(r, 1500));
+                // Rate limit protection: Sleep 2.5s between pages
+                if (page < 3) await new Promise(r => setTimeout(r, 2500));
             }
 
             // 2. Add Broad DexScreener Search (Meteora specifically)

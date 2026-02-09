@@ -234,6 +234,7 @@ export class BotManager {
                     }
 
                     // Use 99% of balance to avoid "Custom: 0" (Insufficient Balance)
+                    // CRITICAL: We scale BOTH sides to 99% to maintain the exact PRICE RATIO.
                     const tokenAmount = (actualAmountRaw * 99n) / 100n;
                     const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
 
@@ -244,19 +245,22 @@ export class BotManager {
                         const lpppPrice = await this.getLpppPrice();
                         if (lpppPrice > 0) {
                             const tokenPriceLppp = result.priceUsd / lpppPrice;
-                            targetLpppAmount = tokenUiAmountChecked * tokenPriceLppp;
+                            targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
                             SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                         }
                     } else if (!this.settings.autoSyncPrice && this.settings.manualPrice > 0) {
-                        targetLpppAmount = tokenUiAmountChecked * this.settings.manualPrice;
+                        targetLpppAmount = (tokenUiAmountChecked * this.settings.manualPrice);
                         SocketManager.emitLog(`[MANUAL-PRICE] Context: ${this.settings.manualPrice} LPPP/Token | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                     }
 
+                    // Apply the same 99% buffer to LPPP side to preserve ratio
                     const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e6));
+                    const finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
+                    const finalLpppUiAmount = (targetLpppAmount * 99) / 100;
 
                     // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
                     try {
-                        const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
+                        const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
 
                         if (poolInfo.success) {
                             SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
@@ -267,14 +271,14 @@ export class BotManager {
                                 created: new Date().toISOString()
                             };
 
-                            const initialPrice = tokenUiAmountChecked > 0 ? targetLpppAmount / tokenUiAmountChecked : 0;
+                            const initialPrice = tokenUiAmountChecked > 0 ? finalLpppUiAmount / tokenUiAmountChecked : 0;
 
                             const fullPoolData: PoolData = {
                                 ...poolEvent,
                                 mint: result.mint.toBase58(),
                                 initialPrice,
                                 initialTokenAmount: tokenUiAmountChecked,
-                                initialLpppAmount: targetLpppAmount,
+                                initialLpppAmount: finalLpppUiAmount,
                                 exited: false,
                                 positionId: poolInfo.positionAddress,
                                 unclaimedFees: { sol: "0", token: "0" }
