@@ -868,12 +868,14 @@ export class StrategyManager {
             }
 
             console.log(`[METEORA] SDK Transaction Instructions: ${transaction instanceof Transaction ? transaction.instructions.length : (transaction as any).instructions.length}`);
+            console.log(`[METEORA] Amounts -> A: ${bnAmountA.toString()} raw | B: ${bnAmountB.toString()} raw`);
+            console.log(`[METEORA] LiquidityDelta: ${poolParams.liquidityDelta.toString()}`);
 
             // 9. Send & Confirm (MUST SIGN WITH POSITION NFT MINT)
             const txSig = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet, positionNftMint], {
-                skipPreflight: true,
+                skipPreflight: false, // Enable preflight to get error logs
                 commitment: "confirmed",
-                maxRetries: 5
+                maxRetries: 3
             });
 
             console.log(`[METEORA] DAMM V2 Pool Created: https://solscan.io/tx/${txSig}`);
@@ -883,10 +885,32 @@ export class StrategyManager {
             return { success: true, poolAddress: poolAddress.toBase58(), positionAddress: positionAddress.toBase58() };
 
         } catch (e: any) {
-            console.error(`[METEORA] Pool Creation Failed:`, e);
-            if (e.logs) {
-                console.error(`[METEORA ERROR LOGS]`, e.logs);
-                SocketManager.emitLog(`[LP ERROR] Transaction Logs: ${e.logs.join(' | ').slice(0, 500)}...`, "error");
+            console.error(`[METEORA] Pool Creation Failed:`, e.message);
+
+            // Try to get logs from the error object
+            let logs = e.logs;
+
+            // If no logs on error, try getLogs() method
+            if (!logs && typeof e.getLogs === 'function') {
+                try { logs = await e.getLogs(); } catch (_) { }
+            }
+
+            // If still no logs, try fetching from the transaction signature
+            if (!logs && e.signature) {
+                try {
+                    const txResult = await this.connection.getTransaction(e.signature, {
+                        commitment: 'confirmed',
+                        maxSupportedTransactionVersion: 0
+                    });
+                    logs = txResult?.meta?.logMessages;
+                } catch (_) { }
+            }
+
+            if (logs && logs.length > 0) {
+                console.error(`[METEORA ERROR LOGS]`, logs);
+                SocketManager.emitLog(`[LP ERROR] Logs: ${logs.join(' | ').slice(0, 500)}`, "error");
+            } else {
+                SocketManager.emitLog(`[LP ERROR] No on-chain logs available. Error: ${e.message?.slice(0, 200)}`, "error");
             }
             return { success: false, error: e.message };
         }

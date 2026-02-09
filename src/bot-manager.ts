@@ -299,6 +299,9 @@ export class BotManager {
 
                     const effectiveTokenAmount = (result as any)._cappedTokenAmount || tokenAmount;
 
+                    // ═══ DIAGNOSTIC LOGGING ═══
+                    SocketManager.emitLog(`[POOL DIAG] LPPP Sending: ${finalLpppUiAmount.toFixed(2)} | Token Sending: ${Number(effectiveTokenAmount)} raw | Ratio: ${(finalLpppUiAmount / tokenUiAmountChecked).toFixed(4)} LPPP/Token`, "info");
+
                     // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
                     try {
                         const poolInfo = await this.strategy.createMeteoraPool(result.mint, effectiveTokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
