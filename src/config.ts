@@ -15,6 +15,10 @@ export const JUPITER_API_URL = "https://api.jup.ag/ultra/v1/order";
 // Birdeye API Key
 export const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || "";
 
+// Paths
+import * as path from "path";
+export const POOL_DATA_FILE = path.join(process.cwd(), "data/pools.json");
+
 // DRY RUN MODE: Simulate transactions without spending SOL
 export const DRY_RUN = process.env.DRY_RUN === 'true';
 

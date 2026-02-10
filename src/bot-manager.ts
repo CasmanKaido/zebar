@@ -1,4 +1,4 @@
-import { connection, wallet } from "./config";
+import { connection, wallet, POOL_DATA_FILE } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -8,8 +8,6 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { GeckoService } from "./gecko-service";
 import axios from "axios";
-
-const POOL_DATA_FILE = path.join(process.cwd(), "data/pools.json");
 
 interface PoolData {
     poolId: string;
@@ -91,52 +89,49 @@ export class BotManager {
             history.push(newPool);
 
             // Ensure directory exists
-            await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
+            const dataDir = path.dirname(POOL_DATA_FILE);
+            await fs.mkdir(dataDir, { recursive: true });
 
-            await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
+            // Atomic Write: Write to temp file then rename
+            const tempPath = `${POOL_DATA_FILE}.tmp`;
+            await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
+            await fs.rename(tempPath, POOL_DATA_FILE);
         } catch (e) {
             console.error("[BOT] Failed to save pool history:", e);
         }
     }
 
-    // Update ROI in JSON file without appending
-    private async updatePoolROI(poolId: string, newRoi: string, exited: boolean, takeProfitDone?: boolean, tp1Done?: boolean, stopLossDone?: boolean) {
+    async updatePoolROI(poolId: string, roi: string, exited: boolean, unclaimedFees?: any, flags?: { tp1Done?: boolean, takeProfitDone?: boolean, stopLossDone?: boolean }) {
+        if (this.activeTpSlActions.has(poolId)) return;
+
         try {
             let history: PoolData[] = [];
             try {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
                 history = JSON.parse(data);
-            } catch (e) {
-                return;
-            }
+            } catch (e) { return; }
 
             const index = history.findIndex(p => p.poolId === poolId);
-
             if (index !== -1) {
-                history[index].roi = newRoi;
+                if (roi) history[index].roi = roi;
                 history[index].exited = exited;
-                if (takeProfitDone !== undefined) {
-                    history[index].takeProfitDone = takeProfitDone;
-                }
-                if (tp1Done !== undefined) {
-                    history[index].tp1Done = tp1Done;
-                }
-                if (stopLossDone !== undefined) {
-                    history[index].stopLossDone = stopLossDone;
+                if (unclaimedFees) history[index].unclaimedFees = unclaimedFees;
+
+                // Merge flags
+                if (flags) {
+                    if (flags.tp1Done !== undefined) history[index].tp1Done = flags.tp1Done;
+                    if (flags.takeProfitDone !== undefined) history[index].takeProfitDone = flags.takeProfitDone;
+                    if (flags.stopLossDone !== undefined) history[index].stopLossDone = flags.stopLossDone;
                 }
 
-                SocketManager.emitPoolUpdate({
-                    poolId: poolId,
-                    roi: newRoi,
-                    exited: exited
-                });
+                // Atomic Write
+                const tempPath = `${POOL_DATA_FILE}.tmp`;
+                await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
+                await fs.rename(tempPath, POOL_DATA_FILE);
 
-                await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
-                await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
+                SocketManager.emitPoolUpdate({ poolId, roi, exited, unclaimedFees });
             }
-        } catch (e) {
-            console.error("[BOT] Failed to update pool ROI:", e);
-        }
+        } catch (e) { }
     }
 
     private async getLpppPrice(): Promise<number> {
@@ -524,7 +519,7 @@ export class BotManager {
                             const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, true, undefined);
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
                             }
                             this.activeTpSlActions.delete(pool.poolId);
                         }
@@ -536,7 +531,7 @@ export class BotManager {
                             const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
-                                await this.updatePoolROI(pool.poolId, roiString, false, true);
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
                             }
                             this.activeTpSlActions.delete(pool.poolId);
                         }
@@ -548,7 +543,7 @@ export class BotManager {
                             const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, undefined, true);
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
                             }
                             this.activeTpSlActions.delete(pool.poolId);
                         }

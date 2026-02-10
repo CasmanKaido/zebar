@@ -62,7 +62,7 @@ export class BirdeyeService {
 
                     scanResults.push({
                         mint: new PublicKey(t.address),
-                        pairAddress: t.address,
+                        pairAddress: t.address, // Note: Birdeye often returns mint as address. Scanner handles this.
                         dexId: "birdeye",
                         volume24h: t.volume_24h_usd || 0,
                         liquidity: t.liquidity || 0,

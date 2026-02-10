@@ -198,29 +198,6 @@ function App() {
 
     // Fetch Prices (SOL + LPPP)
     useEffect(() => {
-        const fetchPrice = async () => {
-            try {
-                // Fetch from OUR backend proxy (Reliable & CORS-free)
-                const res = await fetch(`${BACKEND_URL}/api/price`);
-                const data = await res.json();
-
-                if (data && data.price) {
-                    setSolPrice(Number(data.price));
-                } else {
-                    console.warn("Backend returned no price");
-                }
-            } catch (e) {
-                console.error("Price fetch error:", e);
-            }
-        };
-
-        fetchPrice();
-        const interval = setInterval(fetchPrice, 30000); // Check every 30s
-        return () => clearInterval(interval);
-    }, []);
-
-    // Fetch Prices (SOL + LPPP) - NEW
-    useEffect(() => {
         const fetchPrices = async () => {
             try {
                 // Fetch from OUR backend proxy (Reliable & CORS-free)
@@ -230,6 +207,8 @@ function App() {
                 if (data) {
                     if (data.sol) setSolPrice(Number(data.sol));
                     if (data.lppp) setLpppPrice(Number(data.lppp));
+                    // Fallback for legacy 
+                    if (data.price && !data.sol) setSolPrice(Number(data.price));
                 }
             } catch (e) {
                 console.error("Price fetch error:", e);

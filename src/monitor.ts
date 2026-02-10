@@ -13,7 +13,7 @@ export interface NewTokenEvent {
 export class PumpFunMonitor {
     private connection: Connection;
     private isRunning: boolean = false;
-    private isProcessing: boolean = false;
+    private processingMints: Set<string> = new Set();
     private callback: (event: NewTokenEvent) => Promise<void> | void;
 
     constructor(connection: Connection, callback: (event: NewTokenEvent) => Promise<void> | void) {
@@ -32,14 +32,13 @@ export class PumpFunMonitor {
                 if (!this.isRunning) return;
                 if (logs.err) return;
 
-                // 1. Strict Lock: If already busy with a token, ignore this one to save RPC credits
-                if (this.isProcessing) return;
+                // 1. Check if token is already being handled
+                // We'll extract mint later, but we check logs first for speed
 
                 // 2. Check for Create (Standard log for Pump.fun creation)
                 const isCreate = logs.logs.some(log => log.includes("Instruction: Create"));
 
                 if (isCreate) {
-                    this.isProcessing = true;
                     console.log("Potential NEW TOKEN detected:", logs.signature);
 
                     try {
@@ -51,10 +50,7 @@ export class PumpFunMonitor {
                             commitment: "confirmed"
                         });
 
-                        if (!tx || !tx.meta) {
-                            this.isProcessing = false;
-                            return;
-                        }
+                        if (!tx || !tx.meta) return;
 
                         // Extract Mint Address
                         const feePayer = tx.transaction.message.accountKeys[0].pubkey;
@@ -64,6 +60,10 @@ export class PumpFunMonitor {
                         const mintSigner = signers.find(s => s.pubkey.toBase58() !== feePayer.toBase58());
 
                         if (mintSigner) {
+                            const mintAddr = mintSigner.pubkey.toBase58();
+                            if (this.processingMints.has(mintAddr)) return;
+                            this.processingMints.add(mintAddr);
+
                             const event: NewTokenEvent = {
                                 signature: logs.signature,
                                 mint: mintSigner.pubkey,
@@ -72,12 +72,15 @@ export class PumpFunMonitor {
                                 timestamp: Date.now()
                             };
 
-                            // Execute Strategy
-                            await this.callback(event);
-
-                            // Cooldown after a successful ape to let pending transactions settle
-                            console.log("Cooling down for 10s...");
-                            await new Promise(r => setTimeout(r, 10000));
+                            try {
+                                // Execute Strategy
+                                await this.callback(event);
+                                // Cooldown per mint to let pending transactions settle
+                                console.log(`Cooling down ${mintAddr.slice(0, 8)} for 10s...`);
+                                await new Promise(r => setTimeout(r, 10000));
+                            } finally {
+                                this.processingMints.delete(mintAddr);
+                            }
                         } else {
                             console.log("Could not identify mint signer in transaction.");
                         }
@@ -88,8 +91,6 @@ export class PumpFunMonitor {
                         } else {
                             console.error("Error processing transaction:", err.message);
                         }
-                    } finally {
-                        this.isProcessing = false;
                     }
                 }
             },
