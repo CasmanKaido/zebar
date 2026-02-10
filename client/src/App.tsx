@@ -562,7 +562,7 @@ function App() {
                                     ))}
                                 </div>
                                 <span className="text-[9px] text-muted-foreground/60 italic">
-                                    {meteoraFeeBps / 100}% LP fee for {autoSyncPrice ? 'optimized' : 'static'} routing
+                                    {meteoraFeeBps / 100}% LP fee for optimized routing
                                 </span>
                             </div>
                         </div>
