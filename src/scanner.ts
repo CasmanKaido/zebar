@@ -180,7 +180,7 @@ export class MarketScanner {
 
             // 3. NEW: Birdeye High-Volume Tokens
             try {
-                const birdeyeResults = await BirdeyeService.fetchHighVolumeTokens(this.criteria.minVolume24h);
+                const birdeyeResults = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
                 if (birdeyeResults.length > 0) {
                     allPairs = [...allPairs, ...birdeyeResults];
                 }
