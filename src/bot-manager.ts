@@ -3,7 +3,7 @@ import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
-import { RugChecker } from "./rugcheck";
+
 import * as fs from "fs/promises";
 import * as path from "path";
 import { GeckoService } from "./gecko-service";
@@ -215,20 +215,6 @@ export class BotManager {
             SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
             SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
             SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
-
-            // 0. Safety Check (RugCheck)
-            try {
-                const safety = await RugChecker.checkToken(result.mint.toBase58());
-                if (!safety.safe && safety.reason !== "New Token (No Report)") {
-                    SocketManager.emitLog(`[RUGCHECK] Skipped: ${safety.reason}`, "error");
-                    return;
-                }
-                if (safety.score > 0) {
-                    SocketManager.emitLog(`[RUGCHECK] Passed Risk Score: ${safety.score}`, "success");
-                }
-            } catch (rcError) {
-                console.warn("[RUGCHECK] Error:", rcError);
-            }
 
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
