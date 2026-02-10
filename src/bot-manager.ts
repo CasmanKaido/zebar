@@ -21,7 +21,9 @@ interface PoolData {
     initialTokenAmount: number;
     initialLpppAmount: number;
     exited: boolean;
-    takeProfitDone?: boolean; // Flag for the 8x TP strategy
+    tp1Done?: boolean;       // Flag: TP Stage 1 (3x) completed
+    takeProfitDone?: boolean; // Flag: TP Stage 2 (6x) completed
+    stopLossDone?: boolean;  // Flag: Stop Loss (-30%) completed
     positionId?: string; // Meteora Position PDA
     unclaimedFees?: { sol: string; token: string };
 }
@@ -101,14 +103,13 @@ export class BotManager {
     }
 
     // Update ROI in JSON file without appending
-    private async updatePoolROI(poolId: string, newRoi: string, exited: boolean, takeProfitDone?: boolean) {
+    private async updatePoolROI(poolId: string, newRoi: string, exited: boolean, takeProfitDone?: boolean, tp1Done?: boolean, stopLossDone?: boolean) {
         try {
             let history: PoolData[] = [];
             try {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
                 history = JSON.parse(data);
             } catch (e) {
-                // Should not update if no history exists, but handle gracefully
                 return;
             }
 
@@ -120,17 +121,20 @@ export class BotManager {
                 if (takeProfitDone !== undefined) {
                     history[index].takeProfitDone = takeProfitDone;
                 }
+                if (tp1Done !== undefined) {
+                    history[index].tp1Done = tp1Done;
+                }
+                if (stopLossDone !== undefined) {
+                    history[index].stopLossDone = stopLossDone;
+                }
 
-                // Emit update to frontend so it can remove/archive the pool
                 SocketManager.emitPoolUpdate({
                     poolId: poolId,
                     roi: newRoi,
                     exited: exited
                 });
 
-                // Ensure directory exists
                 await fs.mkdir(path.dirname(POOL_DATA_FILE), { recursive: true });
-
                 await fs.writeFile(POOL_DATA_FILE, JSON.stringify(history, null, 2));
             }
         } catch (e) {
@@ -510,9 +514,21 @@ export class BotManager {
                             SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
                         }
 
-                        if (roiVal >= 700 && !pool.takeProfitDone) {
-                            SocketManager.emitLog(`[TAKE PROFIT] ${pool.token} hit 8x! Withdrawing 80%...`, "success");
-                            const result = await this.withdrawLiquidity(pool.poolId, 80, "TAKE PROFIT");
+                        // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
+                        if (roiVal >= 300 && !pool.tp1Done) {
+                            SocketManager.emitLog(`[TP1] ${pool.token} hit 3x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                            const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
+                            if (result.success) {
+                                await this.liquidatePoolToSol(pool.mint);
+                                pool.tp1Done = true;
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, true, undefined);
+                            }
+                        }
+
+                        // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
+                        if (roiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
+                            SocketManager.emitLog(`[TP2] ${pool.token} hit 6x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                            const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
                                 pool.takeProfitDone = true;
@@ -520,13 +536,15 @@ export class BotManager {
                             }
                         }
 
-                        if (roiVal <= -20) {
-                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit -20%! Full Close...`, "error");
-                            const result = await this.withdrawLiquidity(pool.poolId, 100, "STOP LOSS");
+                        // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
+                        if (roiVal <= -30 && !pool.stopLossDone) {
+                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${roiVal.toFixed(0)}%! Withdrawing 80%...`, "error");
+                            const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
+                                pool.stopLossDone = true;
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, undefined, true);
                             }
-                            await this.updatePoolROI(pool.poolId, roiString, true);
                         }
                     }
                 }
