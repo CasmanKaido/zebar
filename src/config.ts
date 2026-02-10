@@ -12,6 +12,9 @@ export const WSS_URL = process.env.WSS_URL || "wss://api.mainnet-beta.solana.com
 export const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
 export const JUPITER_API_URL = "https://api.jup.ag/ultra/v1/order";
 
+// Birdeye API Key
+export const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || "";
+
 // DRY RUN MODE: Simulate transactions without spending SOL
 export const DRY_RUN = process.env.DRY_RUN === 'true';
 

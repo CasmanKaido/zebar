@@ -1,7 +1,7 @@
 import axios from "axios";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
-
+import { BirdeyeService } from "./birdeye-service";
 export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
@@ -178,6 +178,17 @@ export class MarketScanner {
                 } catch (e) { }
             }
 
+            // 3. NEW: Birdeye High-Volume Tokens
+            try {
+                const birdeyeResults = await BirdeyeService.fetchHighVolumeTokens(this.criteria.minVolume24h);
+                if (birdeyeResults.length > 0) {
+                    allPairs = [...allPairs, ...birdeyeResults];
+                }
+            } catch (e) {
+                console.warn(`[BIRDEYE] Error: ${e}`);
+            }
+
+
 
             // 4. NEW: DexScreener Boosted Tokens
             try {
@@ -218,6 +229,7 @@ export class MarketScanner {
                             h1: Number(p.attributes?.volume_usd?.h1 || 0),
                             h24: Number(p.attributes?.volume_usd?.h24 || 0)
                         },
+                        volume24h: p.volume24h, // Allow direct volume24h passing (Birdeye)
                         liquidity: p.liquidity || { usd: Number(p.attributes?.reserve_in_usd || 0) },
                         marketCap: p.marketCap || p.fdv || p.attributes?.fdv_usd || 0
                     });
