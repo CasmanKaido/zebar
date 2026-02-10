@@ -3,7 +3,7 @@ import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
-
+import { OnChainSafetyChecker } from "./rugcheck";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { GeckoService } from "./gecko-service";
@@ -215,6 +215,19 @@ export class BotManager {
             SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
             SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
             SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
+
+            // 0. On-Chain Safety Check (Mint/Freeze Authority + LP Lock)
+            try {
+                const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress);
+                if (!safety.safe) {
+                    SocketManager.emitLog(`[SAFETY] ❌ Skipped ${result.symbol}: ${safety.reason}`, "error");
+                    return;
+                }
+            } catch (safetyErr: any) {
+                console.warn("[SAFETY] Check failed:", safetyErr.message);
+                SocketManager.emitLog(`[SAFETY] ⚠️ Could not verify ${result.symbol} — skipping for safety`, "warning");
+                return;
+            }
 
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");

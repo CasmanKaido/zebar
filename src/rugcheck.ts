@@ -1,100 +1,146 @@
-import axios from 'axios';
+import { Connection, PublicKey } from "@solana/web3.js";
+import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { SocketManager } from "./socket";
 
-// Basic interface for the response (expand as needed)
-interface Risk {
-    name: string;
-    value: string;
-    level: string;
-    score: number;
+/**
+ * On-chain token safety checker.
+ * Replaces the external RugCheck API with direct Solana RPC calls.
+ * Checks: Mint Authority, Freeze Authority, and Liquidity Lock status.
+ */
+
+// Known LP locker program IDs on Solana
+const KNOWN_LOCKERS = new Set([
+    "2r5VekMNiWPzi1pWwvJczrdPaZnJG59u91unSrTunwJg", // Uncx Network
+    "Lock7kBijGCQLEFAmXcengzXKA88iDNQPriQ7TbgJFj",  // Team.Finance / Fluxbeam Locker
+    "FLockVVhmdNhRDHH48LoGadGSxPSABYh5hE8UGRjpVGT", // Streamflow Vesting/Lock
+    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",  // Metaplex (burn destination)
+    "1BWutmTvYPwDtmw9abTkS4Ssr8no61spGAvW1X6NDix",  // Raydium LP Lock
+]);
+
+// Burn address (tokens sent here = permanently locked)
+const BURN_ADDRESS = "1111111111111111111111111111111111111111111";
+
+export interface SafetyResult {
+    safe: boolean;
+    reason: string;
+    checks: {
+        mintAuthority: "disabled" | "enabled" | "unknown";
+        freezeAuthority: "disabled" | "enabled" | "unknown";
+        liquidityLocked: "locked" | "unlocked" | "unknown";
+    };
 }
-interface RugCheckReport {
-    score: number;
-    risks: Risk[];
-    tokenProgram: string;
-    topHolders: { pct: number }[];
-    markets?: { lp: { lpLocked: number, lpLockedPct: number, lpBurnedPct: number } }[];
-    totalMarketLiquidity?: number;
-}
 
-export class RugChecker {
-    private static BASE_URL = 'https://api.rugcheck.xyz/v1/tokens';
-
+export class OnChainSafetyChecker {
     /**
-     * Checks if a token is safe to buy.
-     * @param mint Token Mint Address
-     * @param maxScore Max allowed risk score (default 1000)
-     * @returns { safe: boolean, reason?: string, score: number }
+     * Performs on-chain safety checks for a token.
+     * 1. Mint Authority — Can more tokens be minted?
+     * 2. Freeze Authority — Can token accounts be frozen?
+     * 3. Liquidity Lock — Are LP tokens locked/burned?
      */
-    static async checkToken(mint: string, maxScore: number = 2000): Promise<{ safe: boolean; reason?: string; score: number }> {
+    static async checkToken(
+        connection: Connection,
+        mintAddress: string
+    ): Promise<SafetyResult> {
+        const mint = new PublicKey(mintAddress);
+        const result: SafetyResult = {
+            safe: true,
+            reason: "All checks passed",
+            checks: {
+                mintAuthority: "unknown",
+                freezeAuthority: "unknown",
+                liquidityLocked: "unknown",
+            },
+        };
+
+        // ═══ 1. Mint Authority Check ═══
         try {
-            console.log(`[RUGCHECK] Analyzing ${mint}...`);
-            const response = await axios.get(`${this.BASE_URL}/${mint}/report/summary`);
-
-            const report = response.data;
-            const score = report.score || 0;
-
-            console.log(`[RUGCHECK] Score: ${score} / ${maxScore}`);
-
-            if (score > maxScore) {
-                return {
-                    safe: false,
-                    reason: `Risk Score too high (${score} > ${maxScore})`,
-                    score
-                };
+            // Try standard SPL Token first, then Token-2022
+            let mintInfo;
+            try {
+                mintInfo = await getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID);
+            } catch {
+                mintInfo = await getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID);
             }
 
-            // 1. Authority Checks
-            const risks = report.risks || [];
-            const hasMintAuth = risks.some((r: any) => r.name === 'Mint Authority still enabled');
-            const hasFreezeAuth = risks.some((r: any) => r.name === 'Freeze Authority still enabled');
-            const isMutable = risks.some((r: any) => r.name === 'Mutable metadata');
-
-            if (hasMintAuth) {
-                return { safe: false, reason: "Mint Authority is Enabled", score };
+            if (mintInfo.mintAuthority !== null) {
+                result.safe = false;
+                result.reason = "Mint Authority is ENABLED — dev can print unlimited tokens";
+                result.checks.mintAuthority = "enabled";
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "error");
+                return result;
             }
-            if (hasFreezeAuth) {
-                return { safe: false, reason: "Freeze Authority is Enabled", score };
+            result.checks.mintAuthority = "disabled";
+            SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
+
+            // ═══ 2. Freeze Authority Check ═══
+            if (mintInfo.freezeAuthority !== null) {
+                result.safe = false;
+                result.reason = "Freeze Authority is ENABLED — dev can freeze your tokens";
+                result.checks.freezeAuthority = "enabled";
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED`, "error");
+                return result;
             }
-            // Optional: User didn't explicitly ask for mutable check, but it's good practice. Leaving out for now to strictly follow request.
-
-            // 2. Supply Distribution (Top 10 > 30%)
-            // RugCheck often provides `topHolders` array. Sum up top 10.
-            let top10Pct = 0;
-            if (report.topHolders && Array.isArray(report.topHolders)) {
-                top10Pct = report.topHolders.slice(0, 10).reduce((acc: number, h: any) => acc + (h.pct || 0), 0);
-            }
-
-            console.log(`[RUGCHECK] Top 10 Holders Own: ${(top10Pct * 100).toFixed(2)}%`);
-
-            if (top10Pct > 0.30) { // 30%
-                return { safe: false, reason: `Top 10 Holders Own > 30% (${(top10Pct * 100).toFixed(1)}%)`, score };
-            }
-
-            // 3. Liquidity Lock Check
-            // This is tricky as RugCheck response varies.
-            // Often under `markets` or `risks` ("High amount of LP Unlocked").
-            const lpUnlockedRisk = risks.find((r: any) => r.name === 'High amount of LP Unlocked');
-            const lpLowLiquidity = risks.find((r: any) => r.name === 'Low Liquidity');
-
-            if (lpUnlockedRisk) {
-                return { safe: false, reason: "Liquidity is Unlocked / Not Burned", score };
-            }
-
-            // Check specific lock percentage if available (fallback)
-            // Some reports have `markets[0].lp.lpLockedPct`
-            // Let's rely on the Risk Tag first as it aggregates this logic.
-
-            return { safe: true, score };
-
-        } catch (error: any) {
-            console.warn(`[RUGCHECK] Failed to fetch report: ${error.message}`);
-            // If RugCheck is down or 404s (new token), we might want to proceed with caution or fail.
-            // For a "Launcher" bot, new tokens might not have reports yet.
-            // But user asked for "Rugcheck" specifically.
-            if (error.response?.status === 404) {
-                return { safe: true, reason: "New Token (No Report)", score: 0 };
-            }
-            return { safe: false, reason: "Check Failed (API Unreachable — Defaulting to Unsafe)", score: 0 };
+            result.checks.freezeAuthority = "disabled";
+            SocketManager.emitLog(`[SAFETY] ✅ Freeze Authority disabled`, "success");
+        } catch (err: any) {
+            console.warn(`[SAFETY] Failed to fetch mint info: ${err.message}`);
+            result.safe = false;
+            result.reason = "Could not verify mint info (defaulting to unsafe)";
+            return result;
         }
+
+        // ═══ 3. Liquidity Lock Check ═══
+        // Strategy: Find the largest token accounts for this mint.
+        // If the top holders are known locker programs or burn addresses,
+        // we consider liquidity locked.
+        try {
+            const largestAccounts = await connection.getTokenLargestAccounts(mint);
+            const topAccounts = largestAccounts.value.slice(0, 5); // Check top 5 holders
+
+            if (topAccounts.length === 0) {
+                result.checks.liquidityLocked = "unknown";
+                SocketManager.emitLog(`[SAFETY] ⚠️ No token accounts found for LP lock check`, "warning");
+            } else {
+                // Get owner info for the top accounts
+                const accountInfos = await connection.getMultipleAccountsInfo(
+                    topAccounts.map(a => a.address)
+                );
+
+                let lockedAmount = 0;
+                let totalSupplyChecked = 0;
+
+                for (let i = 0; i < topAccounts.length; i++) {
+                    const account = topAccounts[i];
+                    const info = accountInfos[i];
+                    const amount = Number(account.uiAmount || 0);
+                    totalSupplyChecked += amount;
+
+                    if (info?.owner) {
+                        const ownerStr = info.owner.toBase58();
+                        // Check if the owner is a known locker or the token is burned
+                        if (KNOWN_LOCKERS.has(ownerStr) || account.address.toBase58() === BURN_ADDRESS) {
+                            lockedAmount += amount;
+                        }
+                    }
+                }
+
+                // We consider it "locked" if we can't determine (most tokens don't lock LP this way)
+                // For non-LP tokens, this check is informational rather than blocking
+                if (lockedAmount > 0) {
+                    result.checks.liquidityLocked = "locked";
+                    SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned`, "success");
+                } else {
+                    result.checks.liquidityLocked = "unlocked";
+                    // Log warning but don't block — many legitimate tokens don't use lockers
+                    SocketManager.emitLog(`[SAFETY] ⚠️ No locked LP detected (not blocking)`, "warning");
+                }
+            }
+        } catch (err: any) {
+            console.warn(`[SAFETY] LP lock check failed: ${err.message}`);
+            result.checks.liquidityLocked = "unknown";
+            // Don't fail the entire check for LP lock issues
+        }
+
+        return result;
     }
 }
