@@ -199,16 +199,15 @@ function App() {
     // Fetch Prices (SOL + LPPP)
     useEffect(() => {
         const fetchPrices = async () => {
+            // Skip if tab is hidden to save API/CPU (Issue 31)
+            if (document.visibilityState !== 'visible') return;
+
             try {
-                // Fetch from OUR backend proxy (Reliable & CORS-free)
                 const res = await fetch(`${BACKEND_URL}/api/price`);
                 const data = await res.json();
-
                 if (data) {
                     if (data.sol) setSolPrice(Number(data.sol));
                     if (data.lppp) setLpppPrice(Number(data.lppp));
-                    // Fallback for legacy 
-                    if (data.price && !data.sol) setSolPrice(Number(data.price));
                 }
             } catch (e) {
                 console.error("Price fetch error:", e);
@@ -216,9 +215,10 @@ function App() {
         };
 
         fetchPrices();
-        const interval = setInterval(fetchPrices, 30000); // Check every 30s
+        const intervalTime = running ? 30000 : 90000; // 30s active, 90s idle
+        const interval = setInterval(fetchPrices, intervalTime);
         return () => clearInterval(interval);
-    }, []);
+    }, [running]); // Re-run effect when 'running' state changes
 
     // Fetch Portfolio
     useEffect(() => {

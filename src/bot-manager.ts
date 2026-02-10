@@ -8,6 +8,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { GeckoService } from "./gecko-service";
 import axios from "axios";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 
 interface PoolData {
     poolId: string;
@@ -24,6 +25,7 @@ interface PoolData {
     stopLossDone?: boolean;  // Flag: Stop Loss (-30%) completed
     positionId?: string; // Meteora Position PDA
     unclaimedFees?: { sol: string; token: string };
+    withdrawalPending?: boolean; // Flag for atomicity (Issue 30)
 }
 
 export interface BotSettings {
@@ -71,8 +73,80 @@ export class BotManager {
             const history = JSON.parse(data);
             history.forEach((p: PoolData) => SocketManager.emitPool(p)); // Load into Socket History
             console.log(`[BOT] Loaded ${history.length} pools from history.`);
+
+            // Reconcile any crashes mid-withdrawal (Issue 30)
+            await this.reconcilePendingWithdrawals(history);
         } catch (e) {
             console.log("[BOT] No existing pool history found.");
+        }
+    }
+
+    /**
+     * Reconciles pools that were left in a 'withdrawalPending' state due to a crash (Issue 30).
+     */
+    private async reconcilePendingWithdrawals(pools: PoolData[]) {
+        const pending = pools.filter(p => p.withdrawalPending && !p.exited);
+        if (pending.length === 0) return;
+
+        SocketManager.emitLog(`[RECOVERY] Found ${pending.length} pending withdrawals. Reconciling with chain...`, "warning");
+
+        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        const cpAmm = new CpAmm(connection);
+
+        for (const pool of pending) {
+            try {
+                const poolPubkey = new PublicKey(pool.poolId);
+                const positions = await cpAmm.getUserPositionByPool(poolPubkey, wallet.publicKey);
+
+                if (positions.length === 0) {
+                    SocketManager.emitLog(`[RECOVERY] Pool ${pool.poolId.slice(0, 8)}... position is gone. Marking as exited.`, "success");
+                    await this.updatePoolROI(pool.poolId, "CLOSED", true, undefined, { withdrawalPending: false });
+                } else {
+                    SocketManager.emitLog(`[RECOVERY] Pool ${pool.poolId.slice(0, 8)}... position still exists. Clearing pending flag.`, "info");
+                    // Just clear the flag so it can be re-tried manually if needed
+                    await this.updatePoolROI(pool.poolId, pool.roi, false, undefined, { withdrawalPending: false });
+                }
+            } catch (err) {
+                console.error(`[RECOVERY] Failed to reconcile pool ${pool.poolId}:`, err);
+            }
+        }
+    }
+
+    /**
+     * Scans the wallet for tokens purchased by the bot but never pooled (Issue 28).
+     */
+    private async checkOrphanTokens() {
+        SocketManager.emitLog("[ORPHAN-CHECK] Scanning wallet for un-pooled tokens...", "info");
+        try {
+            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
+            const pools: PoolData[] = JSON.parse(data);
+            const pooledMints = new Set(pools.map(p => p.mint));
+
+            // Get all token accounts with balance > 0
+            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+                programId: TOKEN_PROGRAM_ID
+            });
+            const accounts2022 = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+                programId: TOKEN_2022_PROGRAM_ID
+            });
+
+            const allAccounts = [...accounts.value, ...accounts2022.value];
+
+            for (const acc of allAccounts) {
+                const info = acc.account.data.parsed.info;
+                const mint = info.mint;
+                const balance = info.tokenAmount.uiAmount || 0;
+
+                // Skip LPPP and SOL
+                if (mint === "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV" || mint === "So11111111111111111111111111111111111111112") continue;
+
+                if (balance > 0 && !pooledMints.has(mint)) {
+                    SocketManager.emitLog(`[ORPHAN] Detected un-pooled tokens: ${balance.toFixed(2)} units of ${mint.slice(0, 8)}...`, "warning");
+                    SocketManager.emitLog(`[RECOVERY] Tip: You can manually swap these to SOL or wait for future auto-recovery.`, "info");
+                }
+            }
+        } catch (e) {
+            console.warn("[ORPHAN-CHECK] Skip: No pool data file yet.");
         }
     }
 
@@ -101,7 +175,7 @@ export class BotManager {
         }
     }
 
-    async updatePoolROI(poolId: string, roi: string, exited: boolean, unclaimedFees?: any, flags?: { tp1Done?: boolean, takeProfitDone?: boolean, stopLossDone?: boolean }) {
+    async updatePoolROI(poolId: string, roi: string, exited: boolean, unclaimedFees?: any, flags?: { tp1Done?: boolean, takeProfitDone?: boolean, stopLossDone?: boolean, withdrawalPending?: boolean }) {
         if (this.activeTpSlActions.has(poolId)) return;
 
         try {
@@ -122,6 +196,7 @@ export class BotManager {
                     if (flags.tp1Done !== undefined) history[index].tp1Done = flags.tp1Done;
                     if (flags.takeProfitDone !== undefined) history[index].takeProfitDone = flags.takeProfitDone;
                     if (flags.stopLossDone !== undefined) history[index].stopLossDone = flags.stopLossDone;
+                    if (flags.withdrawalPending !== undefined) history[index].withdrawalPending = flags.withdrawalPending;
                 }
 
                 // Atomic Write
@@ -163,6 +238,9 @@ export class BotManager {
                 SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
             }
         }
+
+        // Run Stabilization Guards (Issue 28 & 30)
+        await this.checkOrphanTokens();
 
         this.sessionPoolCount = 0; // Reset session counter
         this.pendingMints.clear(); // Reset pending buys
@@ -477,6 +555,7 @@ export class BotManager {
 
                 for (const pool of pools) {
                     if (pool.exited) continue;
+                    if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
                     if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
 
                     // Sort mints to match Meteora's on-chain vault derivation order
@@ -562,23 +641,47 @@ export class BotManager {
 
     async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {
         SocketManager.emitLog(`[${source}] Withdrawing ${percent}% liquidity from ${poolId.slice(0, 8)}...`, "warning");
+
+        // 1. Mark as Pending (Issue 30 - Atomicity)
+        await this.updatePoolROI(poolId, "PENDING...", false, undefined, { withdrawalPending: true });
+
         // Look up stored positionId for this pool
         let positionId: string | undefined;
         try {
             const pools: PoolData[] = await this.getPortfolio();
-            const pool = pools.find(p => p.poolId === poolId);
+            const pool = pools.find((p: PoolData) => p.poolId === poolId);
             positionId = pool?.positionId;
         } catch (e) { /* proceed without positionId */ }
-        const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
-        if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
-            if (percent >= 100) {
-                await this.updatePoolROI(poolId, "CLOSED", true);
+
+        try {
+            const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
+            if (result.success) {
+                SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
+
+                // 2. Clear pending and update state
+                const isFull = percent >= 100;
+                await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", isFull, undefined, { withdrawalPending: false });
+
+                if (isFull) {
+                    // Try to liquidate remnants if any
+                    try {
+                        const pools = await this.getPortfolio();
+                        const pool = pools.find(p => p.poolId === poolId);
+                        if (pool) await this.liquidatePoolToSol(pool.mint);
+                    } catch (_) { }
+                }
+                return result;
+            } else {
+                SocketManager.emitLog(`[ERROR] Withdrawal failed: ${result.error}`, "error");
+                // Clear pending flag so it can be re-tried
+                await this.updatePoolROI(poolId, "FAILED", false, undefined, { withdrawalPending: false });
+                return result;
             }
-        } else {
-            SocketManager.emitLog(`[ERROR] Withdrawal failed: ${result.error}`, "error");
+        } catch (err: any) {
+            console.error("[WITHDRAW] Critical Error:", err);
+            await this.updatePoolROI(poolId, "ERROR", false, undefined, { withdrawalPending: false });
+            return { success: false, error: err.message };
         }
-        return result;
     }
 
     async increaseLiquidity(poolId: string, amountSol: number) {
@@ -623,7 +726,7 @@ export class BotManager {
         }
     }
 
-    async getPortfolio() {
+    async getPortfolio(): Promise<PoolData[]> {
         try {
             const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
             return JSON.parse(data);
