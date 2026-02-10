@@ -1123,7 +1123,10 @@ export class StrategyManager {
             const amountA = balanceA.value.uiAmount || 0;
             const amountB = balanceB.value.uiAmount || 0;
 
-            if (amountA === 0) return { price: 0, tokenAmount: 0, baseAmount: 0, success: false };
+            if (amountA === 0) {
+                // All of token A sold out — price is effectively infinite (extreme moon)
+                return { price: amountB > 0 ? Infinity : 0, tokenAmount: 0, baseAmount: amountB, success: amountB > 0 };
+            }
 
             // 4. Calculate Price (B per A) -> Assuming B is Quote (LPPP)
             const price = amountB / amountA;

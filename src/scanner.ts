@@ -192,10 +192,11 @@ export class MarketScanner {
 
             // 4. NEW: DexScreener Boosted Tokens
             try {
-                const boostedRes = await axios.get("https://api.dexscreener.com/latest/dex/tokens/boosted/solana", { timeout: 5000 });
+                const boostedRes = await axios.get("https://api.dexscreener.com/token-boosts/latest/v1", { timeout: 5000 });
                 if (Array.isArray(boostedRes.data)) {
-                    // Extract pairs from boosted tokens and mark them as high-priority
-                    const boostedPairs = boostedRes.data.map((t: any) => ({ ...t, isBoosted: true }));
+                    // Filter for Solana tokens only and mark as high-priority
+                    const solanaBoosted = boostedRes.data.filter((t: any) => t.chainId === "solana");
+                    const boostedPairs = solanaBoosted.map((t: any) => ({ ...t, isBoosted: true }));
                     allPairs = [...allPairs, ...boostedPairs];
                 }
             } catch (e: any) {

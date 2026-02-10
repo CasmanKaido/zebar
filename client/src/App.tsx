@@ -267,10 +267,8 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 buyAmount: finalBuy,
-                lpppAmount: 0, // Auto-calculated by backend via autoSyncPrice
+                lpppAmount: 0, // Auto-calculated by backend from market price
                 meteoraFeeBps,
-                autoSyncPrice: true, // Always auto-sync — LPPP is computed from SOL
-                manualPrice: 0,
                 maxPools,
                 slippage,
                 minVolume5m,

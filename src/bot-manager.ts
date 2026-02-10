@@ -30,10 +30,8 @@ interface PoolData {
 
 export interface BotSettings {
     buyAmount: number; // in SOL
-    lpppAmount: number; // in units
+    lpppAmount: number; // in units (fallback only)
     meteoraFeeBps: number; // in Basis Points (e.g. 200 = 2%)
-    autoSyncPrice: boolean; // Sync pairing amount with market price
-    manualPrice: number; // Manual price context (Tokens per LPPP)
     maxPools: number; // Max pools to create before auto-stop
     slippage: number; // in % (e.g. 10)
     minVolume5m: number;
@@ -50,12 +48,11 @@ export class BotManager {
     private sessionPoolCount: number = 0;
     private monitorInterval: NodeJS.Timeout | null = null;
     private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
+    private activeTpSlActions: Set<string> = new Set(); // Guards against double TP/SL
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
         meteoraFeeBps: 200, // Default 2%
-        autoSyncPrice: true, // Default ON
-        manualPrice: 0, // Default 0 (disabled)
         maxPools: 5, // Default 5 pools
         slippage: 10,
         minVolume5m: 10000, // Default 10k
@@ -147,11 +144,8 @@ export class BotManager {
             const res = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
             const data: any = await res.json();
             const price = parseFloat(data?.pairs?.[0]?.priceUsd || "0");
-            // Reject suspiciously low prices (likely garbage data)
-            if (price > 0 && price < 0.000001) {
-                console.warn(`[BOT] LPPP price suspiciously low ($${price}). Treating as invalid.`);
-                return 0;
-            }
+            // No floor check — LPPP is a micro-cap token that can legitimately trade at very low prices.
+            // parseFloat already returns 0 for invalid data, which is the only case we reject.
             return price;
         } catch (e) {
             console.warn("[BOT] Failed to fetch LPPP price:", e);
@@ -264,19 +258,23 @@ export class BotManager {
 
                     let targetLpppAmount = this.settings.lpppAmount;
 
-                    // Dynamic Price Calculation
-                    if (this.settings.autoSyncPrice && result.priceUsd > 0) {
+                    // Dynamic Price Calculation (always auto-sync)
+                    if (result.priceUsd > 0) {
                         const lpppPrice = await this.getLpppPrice();
                         if (lpppPrice > 0) {
                             const tokenPriceLppp = result.priceUsd / lpppPrice;
                             targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
                             SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
                         } else {
-                            SocketManager.emitLog(`[AUTO-PRICE] LPPP price unavailable. Using manual fallback: ${this.settings.lpppAmount} LPPP.`, "warning");
+                            SocketManager.emitLog(`[AUTO-PRICE] LPPP price unavailable. Cannot create pool.`, "error");
+                            return;
                         }
-                    } else if (!this.settings.autoSyncPrice && this.settings.manualPrice > 0) {
-                        targetLpppAmount = (tokenUiAmountChecked * this.settings.manualPrice);
-                        SocketManager.emitLog(`[MANUAL-PRICE] Context: ${this.settings.manualPrice} LPPP/Token | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
+                    }
+
+                    // Final guard: never create a pool with 0 LPPP
+                    if (targetLpppAmount <= 0) {
+                        SocketManager.emitLog(`[LP ERROR] Cannot seed pool: LPPP amount is 0. Aborting.`, "error");
+                        return;
                     }
 
                     // Apply the same 99% buffer to LPPP side to preserve ratio
@@ -441,6 +439,7 @@ export class BotManager {
             this.monitorInterval = null;
         }
         this.pendingMints.clear();
+        this.activeTpSlActions.clear();
         SocketManager.emitStatus(false);
         SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
     }
@@ -478,19 +477,22 @@ export class BotManager {
 
                 for (const pool of pools) {
                     if (pool.exited) continue;
+                    if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
 
-                    const status = await this.strategy.getPoolStatus(pool.poolId, pool.mint, LPPP_MINT_ADDR);
-                    const fees = await this.strategy.getMeteoraFees(pool.poolId);
-
-                    const [mintA, mintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(LPPP_MINT_ADDR).toBuffer()) < 0
+                    // Sort mints to match Meteora's on-chain vault derivation order
+                    const [sortedMintA, sortedMintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(LPPP_MINT_ADDR).toBuffer()) < 0
                         ? [pool.mint, LPPP_MINT_ADDR]
                         : [LPPP_MINT_ADDR, pool.mint];
 
-                    const feeTokenRaw = pool.mint === mintA ? fees.feeA : fees.feeB;
-                    const feeLpppRaw = LPPP_MINT_ADDR === mintA ? fees.feeA : fees.feeB;
+                    const status = await this.strategy.getPoolStatus(pool.poolId, sortedMintA, sortedMintB);
+                    const fees = await this.strategy.getMeteoraFees(pool.poolId);
 
-                    const adjustedLpppFee = (feeLpppRaw * 1000n).toString();
-                    const adjustedTokenFee = (feeTokenRaw * 1000n).toString();
+                    const feeTokenRaw = pool.mint === sortedMintA ? fees.feeA : fees.feeB;
+                    const feeLpppRaw = LPPP_MINT_ADDR === sortedMintA ? fees.feeA : fees.feeB;
+
+                    // Display raw fee amounts (no scaling needed — SDK returns atomic units)
+                    const adjustedLpppFee = feeLpppRaw.toString();
+                    const adjustedTokenFee = feeTokenRaw.toString();
 
                     pool.unclaimedFees = { sol: adjustedLpppFee, token: adjustedTokenFee };
                     SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
@@ -499,7 +501,7 @@ export class BotManager {
                         // Normalize price direction: initialPrice is always LPPP/Token.
                         // If LPPP is mintA, pool price = reserveA/reserveB = LPPP/Token (correct).
                         // If LPPP is mintB, pool price = reserveA/reserveB = Token/LPPP (need to invert).
-                        const lpppIsMintA = LPPP_MINT_ADDR === mintA;
+                        const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
                         const normalizedPrice = lpppIsMintA ? status.price : (1 / status.price);
                         const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
                         const roiString = `${roiVal.toFixed(2)}%`;
@@ -516,35 +518,38 @@ export class BotManager {
 
                         // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
                         if (roiVal >= 300 && !pool.tp1Done) {
+                            this.activeTpSlActions.add(pool.poolId);
                             SocketManager.emitLog(`[TP1] ${pool.token} hit 3x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
                             const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
-                                pool.tp1Done = true;
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, true, undefined);
                             }
+                            this.activeTpSlActions.delete(pool.poolId);
                         }
 
                         // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
                         if (roiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
+                            this.activeTpSlActions.add(pool.poolId);
                             SocketManager.emitLog(`[TP2] ${pool.token} hit 6x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
                             const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
-                                pool.takeProfitDone = true;
                                 await this.updatePoolROI(pool.poolId, roiString, false, true);
                             }
+                            this.activeTpSlActions.delete(pool.poolId);
                         }
 
                         // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
                         if (roiVal <= -30 && !pool.stopLossDone) {
+                            this.activeTpSlActions.add(pool.poolId);
                             SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${roiVal.toFixed(0)}%! Withdrawing 80%...`, "error");
                             const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                             if (result.success) {
                                 await this.liquidatePoolToSol(pool.mint);
-                                pool.stopLossDone = true;
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, undefined, true);
                             }
+                            this.activeTpSlActions.delete(pool.poolId);
                         }
                     }
                 }

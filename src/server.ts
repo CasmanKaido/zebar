@@ -54,8 +54,13 @@ app.get("/api/status", (req, res) => {
 });
 
 app.post("/api/start", async (req, res) => {
-    await botManager.start(req.body);
-    res.json({ success: true, running: true });
+    try {
+        await botManager.start(req.body);
+        res.json({ success: true, running: true });
+    } catch (error: any) {
+        console.error("[API] Start failed:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 app.post("/api/stop", (req, res) => {
@@ -64,7 +69,15 @@ app.post("/api/stop", (req, res) => {
 });
 
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
+// Price cache to prevent CoinGecko rate limiting (15s TTL)
+let priceCache: { sol: number; lppp: number } | null = null;
+let priceCacheTime = 0;
+const PRICE_CACHE_TTL = 15000; // 15 seconds
+
 app.get("/api/price", async (req, res) => {
+    if (priceCache && Date.now() - priceCacheTime < PRICE_CACHE_TTL) {
+        return res.json(priceCache);
+    }
     const prices = { sol: 0, lppp: 0 };
 
     try {
@@ -101,6 +114,8 @@ app.get("/api/price", async (req, res) => {
             console.error("LPPP Price fetch failed:", e);
         }
 
+        priceCache = prices;
+        priceCacheTime = Date.now();
         return res.json(prices);
     } catch (error) {
         console.error("Price Proxy Critical Error:", error);
