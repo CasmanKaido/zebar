@@ -124,7 +124,6 @@ function App() {
     const [buyAmount, setBuyAmount] = useState(0.1);
     const [slippage, setSlippage] = useState(10); // Default 10%
 
-    const [lpppAmount, setLpppAmount] = useState(1000);
     const [minVolume5m, setMinVolume5m] = useState(10000);
     const [minVolume, setMinVolume] = useState(100000);
     const [minVolume24h, setMinVolume24h] = useState(1000000);
@@ -133,8 +132,6 @@ function App() {
 
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
-    const [autoSyncPrice, setAutoSyncPrice] = useState(true);
-    const [manualPrice, setManualPrice] = useState(0.0001); // Default context
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
 
     // Modal State
@@ -161,9 +158,7 @@ function App() {
 
     const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
-    // Unit States
     const [isBuyUsd, setIsBuyUsd] = useState(false);
-    const [isLpUsd, setIsLpUsd] = useState(false);
 
     const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -265,7 +260,6 @@ function App() {
 
     const toggleBot = async () => {
         const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
-        const finalLppp = isLpUsd && lpppPrice ? lpppAmount / lpppPrice : lpppAmount;
 
         const endpoint = running ? '/api/stop' : '/api/start';
         await fetch(`${BACKEND_URL}${endpoint}`, {
@@ -273,10 +267,10 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 buyAmount: finalBuy,
-                lpppAmount: finalLppp,
+                lpppAmount: 0, // Auto-calculated by backend via autoSyncPrice
                 meteoraFeeBps,
-                autoSyncPrice,
-                manualPrice: autoSyncPrice ? 0 : Number(manualPrice),
+                autoSyncPrice: true, // Always auto-sync — LPPP is computed from SOL
+                manualPrice: 0,
                 maxPools,
                 slippage,
                 minVolume5m,
@@ -446,29 +440,6 @@ function App() {
         setIsBuyUsd(!currentIsUsd);
     };
 
-    const toggleLpUnit = () => {
-        if (!lpppPrice || lpppPrice <= 0) {
-            console.warn("LPPP Price not ready yet");
-            setIsLpUsd(!isLpUsd);
-            return;
-        }
-
-        const currentIsUsd = isLpUsd;
-        let newAmount = lpppAmount;
-
-        if (currentIsUsd) {
-            // USD -> LPPP
-            newAmount = lpppAmount / lpppPrice;
-            newAmount = Math.round(newAmount * 10) / 10;
-        } else {
-            // LPPP -> USD
-            newAmount = lpppAmount * lpppPrice;
-            newAmount = Math.round(newAmount * 100) / 100;
-        }
-
-        setLpppAmount(newAmount);
-        setIsLpUsd(!currentIsUsd);
-    };
 
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
@@ -538,18 +509,20 @@ function App() {
                         </div>
 
                         <div className="mb-4">
-                            <button onClick={toggleLpUnit} className="text-[9px] font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-1 bg-primary/5 px-2 py-1 rounded border border-primary/20 mb-2">
-                                <Zap size={8} /> SWITCH TO {isLpUsd ? 'LPPP' : 'USD'}
-                            </button>
-                            <SettingInput
-                                label={`LP Size (${isLpUsd ? 'USD' : 'LPPP'})`}
-                                value={lpppAmount}
-                                onChange={setLpppAmount}
-                                disabled={running}
-                                prefix={isLpUsd ? "$" : ""}
-                                unit={isLpUsd ? "USD" : "LPPP"}
-                                subtext={!isLpUsd && lpppPrice ? `≈ $${(lpppAmount * lpppPrice).toFixed(2)}` : (isLpUsd && lpppPrice ? `≈ ${(lpppAmount / lpppPrice).toFixed(1)} LPPP` : undefined)}
-                            />
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">LP Match (LPPP) — Auto</label>
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        readOnly
+                                        value={solPrice && lpppPrice && lpppPrice > 0 ? `≈ ${((isBuyUsd ? buyAmount : buyAmount * solPrice) / lpppPrice).toLocaleString(undefined, { maximumFractionDigits: 1 })} LPPP` : 'Fetching prices...'}
+                                        className="w-full bg-input/50 border border-border/50 text-muted-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] cursor-not-allowed"
+                                    />
+                                </div>
+                                {solPrice && lpppPrice && lpppPrice > 0 && (
+                                    <span className="text-[9px] text-muted-foreground/70">≈ ${(isBuyUsd ? buyAmount : buyAmount * solPrice).toFixed(2)} USD equivalent</span>
+                                )}
+                            </div>
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-border">
@@ -569,52 +542,7 @@ function App() {
 
                         {/* Meteora Specific UI */}
                         <div className="mt-4 pt-4 border-t border-border space-y-4">
-                            <div className="flex items-center justify-between mb-1">
-                                <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Meteora Config</p>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-muted-foreground uppercase">Auto-Sync</span>
-                                    <button
-                                        onClick={() => setAutoSyncPrice(!autoSyncPrice)}
-                                        disabled={running}
-                                        className={`w-8 h-4 rounded-full transition-colors relative ${autoSyncPrice ? 'bg-primary' : 'bg-muted'}`}
-                                    >
-                                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${autoSyncPrice ? 'left-4.5' : 'left-0.5'}`} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {!autoSyncPrice && (
-                                <motion.div
-                                    initial={{ opacity: 0, y: -10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className="px-3 py-2 bg-amber-500/5 border border-amber-500/20 rounded-md"
-                                >
-                                    <p className="text-[10px] text-amber-500/80 font-bold mb-1.5 uppercase tracking-tighter">Manual Price Context</p>
-                                    <div className="flex items-center gap-2">
-                                        <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            value={manualPrice === 0 ? "" : manualPrice}
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
-                                                    setManualPrice(val === "" ? 0 : Number(val));
-                                                }
-                                            }}
-                                            onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
-                                            }}
-                                            disabled={running}
-                                            className="flex-1 bg-input border border-border rounded px-2 py-1 text-[12px] font-mono text-primary outline-none focus:border-amber-500/50 transition-colors"
-                                        />
-                                        <span className="text-[10px] text-muted-foreground font-bold">LPPP / TOKEN</span>
-                                    </div>
-                                    <p className="text-[9px] text-muted-foreground/60 mt-1.5 leading-tight italic">
-                                        Pool will seed at exactly this ratio. Ignore market price.
-                                    </p>
-                                </motion.div>
-                            )}
+                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Meteora Config</p>
 
                             <div className="flex flex-col gap-2">
                                 <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Fee Tier (%)</label>
