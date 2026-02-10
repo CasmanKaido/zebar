@@ -108,6 +108,7 @@ export class OnChainSafetyChecker {
 
                 let lockedAmount = 0;
                 let totalSupplyChecked = 0;
+                let devConcentration = 0;
 
                 for (let i = 0; i < topAccounts.length; i++) {
                     const account = topAccounts[i];
@@ -120,12 +121,26 @@ export class OnChainSafetyChecker {
                         // Check if the owner is a known locker or the token is burned
                         if (KNOWN_LOCKERS.has(ownerStr) || account.address.toBase58() === BURN_ADDRESS) {
                             lockedAmount += amount;
+                        } else {
+                            // Non-locker account — track concentration
+                            devConcentration += amount;
                         }
                     }
                 }
 
+                // Strategy: Total Supply is hard to get accurately without many RPC calls, 
+                // but we can estimate based on the largest accounts. 
+                // If the top 5 non-locker accounts hold a significant portion of what we checked:
+                const concentrationRatio = devConcentration / totalSupplyChecked;
+
+                if (concentrationRatio > 0.8 && devConcentration > 0) {
+                    result.safe = false;
+                    result.reason = `Extreme supply concentration detected (${(concentrationRatio * 100).toFixed(1)}% of top holders)`;
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... High holder concentration!`, "error");
+                    return result;
+                }
+
                 // We consider it "locked" if we can't determine (most tokens don't lock LP this way)
-                // For non-LP tokens, this check is informational rather than blocking
                 if (lockedAmount > 0) {
                     result.checks.liquidityLocked = "locked";
                     SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned`, "success");

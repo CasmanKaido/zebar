@@ -20,8 +20,8 @@ export class BirdeyeService {
         let nextScrollId: string | null = null;
         const seenMints = new Set<string>();
 
-        // Fetch up to 2 pages (100 tokens max) to stay within free tier limits
-        const MAX_PAGES = 2;
+        // Limit pages to stay within free tier limits
+        const MAX_PAGES = Number(process.env.BIRDEYE_MAX_PAGES) || 2;
 
         try {
             for (let page = 0; page < MAX_PAGES; page++) {

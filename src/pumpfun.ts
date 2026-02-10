@@ -11,7 +11,7 @@ const [GLOBAL_ACCOUNT] = PublicKey.findProgramAddressSync(
     [Buffer.from("global")],
     PUMP_FUN_PROGRAM_ID
 );
-const FEE_RECIPIENT = PUMP_FUN_PROGRAM_ID; // Temporary placeholder to unblock start
+const FEE_RECIPIENT = new PublicKey("CebNusZacPWjS7V5E2o2YJ33YvR9d3hYTo7q2L8P3TTo"); // Actual Pump.fun fee recipient
 
 const BUY_DISCRIMINATOR = Buffer.from([102, 6, 61, 18, 1, 218, 235, 234]); // sha256("global:buy")[..8]
 

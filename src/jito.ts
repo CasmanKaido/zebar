@@ -1,5 +1,5 @@
 import axios from "axios";
-import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction, SystemProgram } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, Transaction, VersionedTransaction, SystemProgram, TransactionMessage } from "@solana/web3.js";
 import bs58 from "bs58";
 
 export class JitoExecutor {
@@ -99,25 +99,25 @@ export class JitoExecutor {
         payer: Keypair,
         tipAmountLamports: number,
         recentBlockhash?: string
-    ): Promise<VersionedTransaction | Transaction> {
-        // Strict Sanitization: Ensure payer and tip account are valid PublicKeys
-        const payerPubkey = new PublicKey(payer.publicKey.toBase58());
-        const tipAccount = new PublicKey(this.getRandomTipAccount().toBase58());
+    ): Promise<VersionedTransaction> {
+        const tipAccount = this.getRandomTipAccount();
 
         const instruction = SystemProgram.transfer({
-            fromPubkey: payerPubkey,
+            fromPubkey: payer.publicKey,
             toPubkey: tipAccount,
             lamports: tipAmountLamports,
         });
 
-        // Use legacy transaction for simplicity of tip, or Versioned if needed.
-        // Legacy is fine for simple transfers.
-        const transaction = new Transaction().add(instruction);
-        // Use the provided blockhash (matches the main tx) or fetch a fresh one
-        transaction.recentBlockhash = recentBlockhash || (await connection.getLatestBlockhash()).blockhash;
-        transaction.feePayer = payer.publicKey;
+        const blockhash = recentBlockhash || (await connection.getLatestBlockhash()).blockhash;
 
-        transaction.sign(payer);
+        const messageV0 = new TransactionMessage({
+            payerKey: payer.publicKey,
+            recentBlockhash: blockhash,
+            instructions: [instruction],
+        }).compileToV0Message();
+
+        const transaction = new VersionedTransaction(messageV0);
+        transaction.sign([payer]);
 
         return transaction;
     }

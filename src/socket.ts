@@ -54,6 +54,9 @@ export class SocketManager {
 
     static emitPool(pool: any) {
         this.poolHistory.push(pool);
+        if (this.poolHistory.length > 100) { // Limit history to prevent OOM
+            this.poolHistory.shift();
+        }
         if (this.io) {
             this.io.emit("pool", pool);
         }

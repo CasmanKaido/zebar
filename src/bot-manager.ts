@@ -150,6 +150,11 @@ export class BotManager {
 
     async start(config?: Partial<BotSettings>) {
         if (this.isRunning) return;
+
+        // Final Safety Check: Ensure API keys are configured (Issue 27)
+        if (!process.env.BIRDEYE_API_KEY || process.env.BIRDEYE_API_KEY === "your_birdeye_api_key_here") {
+            SocketManager.emitLog("[CRITICAL] BIRDEYE_API_KEY is missing or using placeholder! Discovery limited.", "warning");
+        }
         if (config) {
             this.settings = { ...this.settings, ...config };
 
