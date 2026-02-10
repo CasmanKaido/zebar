@@ -435,13 +435,13 @@ export class StrategyManager {
                                 mintB: { address: poolState.quoteMint.toBase58(), decimals: poolState.quoteDecimal.toNumber() },
                                 lpMint: { address: poolState.lpMint.toBase58(), decimals: 9 },
                                 programId: accountInfo.owner.toBase58(),
-                                authority: PublicKey.default.toBase58(), // Calculated usually but SDK handles if implicit
+                                authority: Liquidity.getAssociatedAuthority({ programId: RAYDIUM_V4_PROGRAM_ID }).publicKey.toBase58(),
                                 openOrders: poolState.openOrders.toBase58(),
                                 targetOrders: poolState.targetOrders.toBase58(),
                                 vault: { A: poolState.baseVault.toBase58(), B: poolState.quoteVault.toBase58() },
                                 marketProgramId: poolState.marketProgramId.toBase58(),
                                 marketId: marketId.toBase58(),
-                                marketAuthority: PublicKey.default.toBase58(),
+                                marketAuthority: Liquidity.getAssociatedAuthority({ programId: poolState.marketProgramId }).publicKey.toBase58(),
                                 marketVault: { A: marketState.baseVault.toBase58(), B: marketState.quoteVault.toBase58() },
                                 marketBids: marketState.bids.toBase58(),
                                 marketAsks: marketState.asks.toBase58(),
@@ -630,6 +630,14 @@ export class StrategyManager {
                 new BN(0) // Min out (0 for now)
             );
 
+            // 0. Pre-Swap Balance Check (To calculate actual received amount)
+            const ata = await getAssociatedTokenAddress(mint, this.wallet.publicKey);
+            let preBalance = BigInt(0);
+            try {
+                const acc = await this.connection.getTokenAccountBalance(ata);
+                preBalance = BigInt(acc.value.amount);
+            } catch (ignore) { /* Account likely doesn't exist yet */ }
+
             // 4. Execute (Jito or Standard)
             let swapTx: Transaction | VersionedTransaction;
 
@@ -639,6 +647,15 @@ export class StrategyManager {
                 // Some SDK versions return tx directly
                 swapTx = swapResult as unknown as Transaction;
             }
+
+            // Helper to calculate tokens received
+            const getAmountReceived = async (): Promise<bigint> => {
+                try {
+                    const acc = await this.connection.getTokenAccountBalance(ata);
+                    const postBalance = BigInt(acc.value.amount);
+                    return postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
+                } catch (e) { return BigInt(0); }
+            };
 
             if (process.env.USE_JITO !== 'false') {
                 // Jito Logic
@@ -660,14 +677,18 @@ export class StrategyManager {
                 console.log(`[METEORA] Sending Jito Bundle...`);
                 const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Meteora+Tip");
                 if (jitoResult.success) {
-                    return { success: true, amount: BigInt(0) };
+                    const signature = bs58.encode(swapTx instanceof VersionedTransaction ? swapTx.signatures[0] : (swapTx as Transaction).signatures[0].signature!);
+                    await this.connection.confirmTransaction(signature, "confirmed");
+                    const outAmount = await getAmountReceived();
+                    return { success: true, amount: outAmount };
                 }
             }
 
             // Fallback Send
             const txSig = await sendAndConfirmTransaction(this.connection, swapTx as Transaction, [this.wallet], { skipPreflight: true, commitment: "confirmed" });
             console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txSig}`);
-            return { success: true, amount: BigInt(0) };
+            const outAmount = await getAmountReceived();
+            return { success: true, amount: outAmount };
 
         } catch (e: any) {
             console.error(`[METEORA] Swap Failed:`, e);

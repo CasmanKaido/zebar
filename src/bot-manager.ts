@@ -504,7 +504,8 @@ export class BotManager {
                         const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
                         const normalizedPrice = lpppIsMintA ? status.price : (1 / status.price);
                         const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
-                        const roiString = `${roiVal.toFixed(2)}%`;
+                        const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
+                        const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
 
                         // Sanity check: extreme negative ROI on first check likely means price inversion issue
                         if (roiVal < -50 && pool.roi === "0%") {
