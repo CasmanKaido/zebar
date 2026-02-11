@@ -81,8 +81,12 @@ export class BotManager {
 
             // Reconcile any crashes mid-withdrawal (Issue 30)
             await this.reconcilePendingWithdrawals(history);
+
+            // Trigger Blockchain Sync (New Phase 8)
+            await this.syncWithBlockchain();
         } catch (e) {
-            console.log("[BOT] No existing pool history found.");
+            console.log("[BOT] No existing pool history found. Triggering fresh sync...");
+            await this.syncWithBlockchain();
         }
     }
 
@@ -145,6 +149,67 @@ export class BotManager {
                 if (this.scanner) this.scanner.setConnection(connection);
                 this.isUsingBackup = false;
             }
+        }
+    }
+
+    /**
+     * Scans the Solana blockchain for active positions and restores missing state.
+     */
+    private async syncWithBlockchain() {
+        SocketManager.emitLog("[SYNC] Verifying on-chain state...", "info");
+        try {
+            const rawPools = await fs.readFile(POOL_DATA_FILE, "utf-8").catch(() => "[]");
+            const history: PoolData[] = JSON.parse(rawPools);
+            const knownPools = new Set(history.map(p => p.poolId));
+
+            const positions = await this.strategy.syncPositions();
+            if (positions.length === 0) {
+                SocketManager.emitLog("[SYNC] No active on-chain positions found.", "info");
+                return;
+            }
+
+            for (const pos of positions) {
+                if (!knownPools.has(pos.pool)) {
+                    SocketManager.emitLog(`[SYNC] Recovering position: ${pos.pool.slice(0, 8)}...`, "warning");
+
+                    try {
+                        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+                        const cpAmm = new CpAmm(connection);
+                        const poolState = await cpAmm.fetchPoolState(new PublicKey(pos.pool));
+
+                        const tokenMint = poolState.tokenAMint.toBase58() === LPPP_MINT.toBase58()
+                            ? poolState.tokenBMint.toBase58()
+                            : poolState.tokenAMint.toBase58();
+
+                        const geckoMeta = await GeckoService.getTokenMetadata(tokenMint);
+                        const symbol = geckoMeta?.symbol.toUpperCase() || "TOKEN";
+
+                        const initialPrice = await this.reconstructInitialPrice(pos.pool, tokenMint);
+
+                        const newPool: PoolData = {
+                            poolId: pos.pool,
+                            token: symbol,
+                            mint: tokenMint,
+                            roi: "0%", // Will be updated by monitorPositions
+                            created: new Date().toISOString(),
+                            initialPrice,
+                            initialTokenAmount: 0,
+                            initialLpppAmount: 0,
+                            exited: false,
+                            positionId: pos.publicKey,
+                            unclaimedFees: { sol: "0", token: "0" }
+                        };
+
+                        await this.savePools(newPool);
+                        SocketManager.emitPool(newPool);
+                        SocketManager.emitLog(`[SYNC] Fully restored ${symbol} (${pos.pool.slice(0, 8)}...)`, "success");
+                    } catch (err: any) {
+                        console.error(`[SYNC] Failed to restore pos ${pos.pool}:`, err.message);
+                    }
+                }
+            }
+        } catch (error: any) {
+            console.error("[SYNC] Global sync failure:", error.message);
         }
     }
 
@@ -845,6 +910,43 @@ export class BotManager {
         } catch (error: any) {
             console.error("[BOT] Wallet Update Failed:", error);
             return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Attempts to find the initial seed price of a pool by searching transaction history.
+     */
+    async reconstructInitialPrice(poolAddress: string, tokenMint: string): Promise<number> {
+        try {
+            const poolPubkey = new PublicKey(poolAddress);
+            const signatures = await connection.getSignaturesForAddress(poolPubkey, { limit: 100 });
+
+            if (signatures.length === 0) return 0;
+
+            // The earliest signature is likely the pool creation
+            const earliest = signatures[signatures.length - 1];
+
+            const tx = await connection.getParsedTransaction(earliest.signature, {
+                maxSupportedTransactionVersion: 0,
+                commitment: 'confirmed'
+            });
+
+            if (!tx || !tx.meta) return 0;
+
+            const postBalances = tx.meta.postTokenBalances || [];
+            const lpppBalance = postBalances.find(b => b.mint === LPPP_MINT.toBase58());
+            const tokenBalance = postBalances.find(b => b.mint === tokenMint);
+
+            if (lpppBalance && lpppBalance.uiTokenAmount.uiAmount && tokenBalance && tokenBalance.uiTokenAmount.uiAmount) {
+                const initialPrice = lpppBalance.uiTokenAmount.uiAmount / tokenBalance.uiTokenAmount.uiAmount;
+                console.log(`[SYNC] Reconstructed Price for ${poolAddress}: ${initialPrice.toFixed(6)} LPPP/Token`);
+                return initialPrice;
+            }
+
+            return 0;
+        } catch (error) {
+            console.error(`[SYNC] Failed to reconstruct price for ${poolAddress}:`, error);
+            return 0;
         }
     }
 }

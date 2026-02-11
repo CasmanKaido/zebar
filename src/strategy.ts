@@ -1354,4 +1354,24 @@ export class StrategyManager {
             return { success: false, error: error.message };
         }
     }
+
+    /**
+     * Discovers all active Meteora CP-AMM positions for the wallet.
+     */
+    async syncPositions(): Promise<any[]> {
+        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+        try {
+            const cpAmm = new CpAmm(this.connection);
+            const positions = await cpAmm.getPositionsByUser(this.wallet.publicKey);
+            return positions.map((p: any) => ({
+                publicKey: p.publicKey.toBase58(),
+                pool: p.account.pool.toBase58(),
+                nftMint: p.account.positionNftMint.toBase58(),
+                liquidity: p.account.unlockedLiquidity.toString()
+            }));
+        } catch (error) {
+            console.error("[STRATEGY] Sync Positions Error:", error);
+            return [];
+        }
+    }
 }
