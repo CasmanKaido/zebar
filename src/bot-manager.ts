@@ -642,7 +642,7 @@ export class BotManager {
                             // If LPPP is mintA, pool price = reserveA/reserveB = LPPP/Token (correct).
                             // If LPPP is mintB, pool price = reserveA/reserveB = Token/LPPP (need to invert).
                             const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
-                            const normalizedPrice = lpppIsMintA ? status.price : (1 / status.price);
+                            const normalizedPrice = lpppIsMintA ? (1 / status.price) : status.price;
                             const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
                             const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
