@@ -154,8 +154,15 @@ app.post("/api/pool/claim", async (req, res) => {
 
 // Config Endpoints
 app.post("/api/config/key", async (req, res) => {
-    const { privateKey } = req.body;
+    const { privateKey, adminPassword } = req.body;
     if (!privateKey) return res.status(400).json({ error: "Missing privateKey" });
+
+    // Security: Add password protection (Issue 34)
+    const REQUIRED_PASSWORD = process.env.ADMIN_PASSWORD || "lppp-admin";
+    if (adminPassword !== REQUIRED_PASSWORD) {
+        return res.status(401).json({ error: "Invalid admin password" });
+    }
+
     const result = await botManager.updateWallet(privateKey);
     res.json(result);
 });

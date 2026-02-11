@@ -1,4 +1,4 @@
-import { connection, wallet, POOL_DATA_FILE } from "./config";
+import { connection, wallet, POOL_DATA_FILE, LPPP_MINT, SOL_MINT } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -49,6 +49,8 @@ export class BotManager {
     private monitorInterval: NodeJS.Timeout | null = null;
     private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
     private activeTpSlActions: Set<string> = new Set(); // Guards against double TP/SL
+    private healthCheckInterval: NodeJS.Timeout | null = null;
+    private isUsingBackup: boolean = false;
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
@@ -73,6 +75,9 @@ export class BotManager {
             const history = JSON.parse(data);
             history.forEach((p: PoolData) => SocketManager.emitPool(p)); // Load into Socket History
             console.log(`[BOT] Loaded ${history.length} pools from history.`);
+
+            // Start Health Check Loop
+            this.startHealthCheck();
 
             // Reconcile any crashes mid-withdrawal (Issue 30)
             await this.reconcilePendingWithdrawals(history);
@@ -112,6 +117,37 @@ export class BotManager {
         }
     }
 
+    private startHealthCheck() {
+        if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
+        this.healthCheckInterval = setInterval(() => this.checkRpcHealth(), 60000); // Check every 60s
+    }
+
+    private async checkRpcHealth() {
+        const { RPC_URL, BACKUP_RPC_URL, updateConnection } = require("./config");
+        if (!BACKUP_RPC_URL) return;
+
+        try {
+            await connection.getSlot();
+            // If primary was down and is now up, we could switch back, but staying on backup is safer for stability
+        } catch (e) {
+            console.error(`[HEALTH] Primary RPC unhealthy. Attempting failover...`);
+            SocketManager.emitLog(`[RPC WARN] RPC Unhealthy. Failing over to backup...`, "warning");
+
+            if (!this.isUsingBackup) {
+                updateConnection(BACKUP_RPC_URL);
+                this.strategy.setConnection(connection);
+                if (this.scanner) this.scanner.setConnection(connection);
+                this.isUsingBackup = true;
+            } else {
+                // If backup is also failing, try primary again
+                updateConnection(RPC_URL);
+                this.strategy.setConnection(connection);
+                if (this.scanner) this.scanner.setConnection(connection);
+                this.isUsingBackup = false;
+            }
+        }
+    }
+
     /**
      * Scans the wallet for tokens purchased by the bot but never pooled (Issue 28).
      */
@@ -138,7 +174,7 @@ export class BotManager {
                 const balance = info.tokenAmount.uiAmount || 0;
 
                 // Skip LPPP and SOL
-                if (mint === "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV" || mint === "So11111111111111111111111111111111111111112") continue;
+                if (mint === LPPP_MINT.toBase58() || mint === SOL_MINT.toBase58()) continue;
 
                 if (balance > 0 && !pooledMints.has(mint)) {
                     SocketManager.emitLog(`[ORPHAN] Detected un-pooled tokens: ${balance.toFixed(2)} units of ${mint.slice(0, 8)}...`, "warning");
@@ -150,6 +186,21 @@ export class BotManager {
         }
     }
 
+    private async safeRename(src: string, dest: string, retries = 5, delay = 50) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                await fs.rename(src, dest);
+                return;
+            } catch (e: any) {
+                if (e.code === 'EBUSY' && i < retries - 1) {
+                    await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
+                    continue;
+                }
+                throw e;
+            }
+        }
+    }
+
     private async savePools(newPool: PoolData) {
         try {
             let history: PoolData[] = [];
@@ -157,7 +208,7 @@ export class BotManager {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
                 history = JSON.parse(data);
             } catch (e) {
-                // File likely doesn't exist, which is fine.
+                // File likely doesn't exist or is empty
             }
 
             history.push(newPool);
@@ -166,10 +217,10 @@ export class BotManager {
             const dataDir = path.dirname(POOL_DATA_FILE);
             await fs.mkdir(dataDir, { recursive: true });
 
-            // Atomic Write: Write to temp file then rename
+            // Atomic Write: Write to temp file then rename with retry
             const tempPath = `${POOL_DATA_FILE}.tmp`;
             await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
-            await fs.rename(tempPath, POOL_DATA_FILE);
+            await this.safeRename(tempPath, POOL_DATA_FILE);
         } catch (e) {
             console.error("[BOT] Failed to save pool history:", e);
         }
@@ -199,10 +250,10 @@ export class BotManager {
                     if (flags.withdrawalPending !== undefined) history[index].withdrawalPending = flags.withdrawalPending;
                 }
 
-                // Atomic Write
+                // Atomic Write with retry for Windows lock contention (Issue 32)
                 const tempPath = `${POOL_DATA_FILE}.tmp`;
                 await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
-                await fs.rename(tempPath, POOL_DATA_FILE);
+                await this.safeRename(tempPath, POOL_DATA_FILE);
 
                 SocketManager.emitPoolUpdate({ poolId, roi, exited, unclaimedFees });
             }
@@ -314,7 +365,7 @@ export class BotManager {
                     SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
 
                     // 2. Refresh Balance & Create LP (Dynamic Fee & Price)
-                    const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+                    const LPPP_MINT_ADDR = LPPP_MINT;
 
                     // Wait 1.5s for chain to reflect balance
                     await new Promise(r => setTimeout(r, 1500));
@@ -428,7 +479,7 @@ export class BotManager {
                             };
 
                             SocketManager.emitPool(fullPoolData);
-                            this.savePools(fullPoolData);
+                            await this.savePools(fullPoolData); // Ensure awaited (Issue 33)
 
                             this.sessionPoolCount++;
                             SocketManager.emitLog(`[SESSION] Pool Created: ${this.sessionPoolCount} / ${this.settings.maxPools}`, "info");
@@ -454,7 +505,7 @@ export class BotManager {
                 // Release the mint lock so it can be re-evaluated in future sweeps
                 this.pendingMints.delete(mintAddress);
             }
-        });
+        }, connection);
 
         this.scanner.start();
     }
@@ -463,10 +514,16 @@ export class BotManager {
      * High-priority evaluation for tokens discovered via real-time webhooks or manual triggers.
      */
     async evaluateDiscovery(mint: string, source: string = "Manual") {
+        // Issue 36: Early Deduplication (Skip API calls for tokens already in flight)
+        if (this.pendingMints.has(mint)) {
+            console.log(`[DISCOVERY] Skipping ${mint.slice(0, 8)}: Already pending.`);
+            return;
+        }
+
         try {
             const mintPubkey = new PublicKey(mint);
 
-            // 1. Fetch Basic Metadata (Jupiter or DexScreener)
+            // 1. Fetch Basic Metadata
             const pairRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
             const pairs = pairRes.data.pairs;
 
@@ -525,7 +582,7 @@ export class BotManager {
     async getWalletBalance() {
         try {
             const solBalance = await connection.getBalance(wallet.publicKey);
-            const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+
             const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
 
             let lpppBalance = 0;
@@ -546,97 +603,113 @@ export class BotManager {
     }
 
     private async monitorPositions() {
-        const LPPP_MINT_ADDR = "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV";
+        const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
-        this.monitorInterval = setInterval(async () => {
+        // Issue 37: Recursive Timeout (Prevents overlapping iterations)
+        const runMonitor = async () => {
+            if (!this.isRunning) return;
+
             try {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
                 const pools: PoolData[] = JSON.parse(data);
 
                 for (const pool of pools) {
-                    if (pool.exited) continue;
-                    if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
-                    if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
+                    try {
+                        if (pool.exited) continue;
+                        if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
+                        if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
 
-                    // Sort mints to match Meteora's on-chain vault derivation order
-                    const [sortedMintA, sortedMintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(LPPP_MINT_ADDR).toBuffer()) < 0
-                        ? [pool.mint, LPPP_MINT_ADDR]
-                        : [LPPP_MINT_ADDR, pool.mint];
+                        // Sort mints to match Meteora's on-chain vault derivation order
+                        const [sortedMintA, sortedMintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(LPPP_MINT_ADDR).toBuffer()) < 0
+                            ? [pool.mint, LPPP_MINT_ADDR]
+                            : [LPPP_MINT_ADDR, pool.mint];
 
-                    const status = await this.strategy.getPoolStatus(pool.poolId, sortedMintA, sortedMintB);
-                    const fees = await this.strategy.getMeteoraFees(pool.poolId);
+                        const status = await this.strategy.getPoolStatus(pool.poolId, sortedMintA, sortedMintB);
+                        const fees = await this.strategy.getMeteoraFees(pool.poolId);
 
-                    const feeTokenRaw = pool.mint === sortedMintA ? fees.feeA : fees.feeB;
-                    const feeLpppRaw = LPPP_MINT_ADDR === sortedMintA ? fees.feeA : fees.feeB;
+                        const feeTokenRaw = pool.mint === sortedMintA ? fees.feeA : fees.feeB;
+                        const feeLpppRaw = LPPP_MINT_ADDR === sortedMintA ? fees.feeA : fees.feeB;
 
-                    // Display raw fee amounts (no scaling needed — SDK returns atomic units)
-                    const adjustedLpppFee = feeLpppRaw.toString();
-                    const adjustedTokenFee = feeTokenRaw.toString();
+                        // Display raw fee amounts (no scaling needed — SDK returns atomic units)
+                        const adjustedLpppFee = feeLpppRaw.toString();
+                        const adjustedTokenFee = feeTokenRaw.toString();
 
-                    pool.unclaimedFees = { sol: adjustedLpppFee, token: adjustedTokenFee };
-                    SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
+                        pool.unclaimedFees = { sol: adjustedLpppFee, token: adjustedTokenFee };
+                        SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
 
-                    if (status.success && status.price > 0) {
-                        // Normalize price direction: initialPrice is always LPPP/Token.
-                        // If LPPP is mintA, pool price = reserveA/reserveB = LPPP/Token (correct).
-                        // If LPPP is mintB, pool price = reserveA/reserveB = Token/LPPP (need to invert).
-                        const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
-                        const normalizedPrice = lpppIsMintA ? status.price : (1 / status.price);
-                        const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
-                        const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
-                        const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
+                        if (status.success && status.price > 0) {
+                            // Normalize price direction: initialPrice is always LPPP/Token.
+                            // If LPPP is mintA, pool price = reserveA/reserveB = LPPP/Token (correct).
+                            // If LPPP is mintB, pool price = reserveA/reserveB = Token/LPPP (need to invert).
+                            const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
+                            const normalizedPrice = lpppIsMintA ? status.price : (1 / status.price);
+                            const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
+                            const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
+                            const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
+                            // ... continued
 
-                        // Sanity check: extreme negative ROI on first check likely means price inversion issue
-                        if (roiVal < -50 && pool.roi === "0%") {
-                            SocketManager.emitLog(`[MONITOR WARN] ${pool.token} ROI is ${roiString} on first check — possible price inversion. Skipping action.`, "warning");
-                            continue;
-                        }
-                        if (roiString !== pool.roi) {
-                            await this.updatePoolROI(pool.poolId, roiString, false);
-                            SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
-                        }
-
-                        // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
-                        if (roiVal >= 300 && !pool.tp1Done) {
-                            this.activeTpSlActions.add(pool.poolId);
-                            SocketManager.emitLog(`[TP1] ${pool.token} hit 3x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
-                            const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
-                            if (result.success) {
-                                await this.liquidatePoolToSol(pool.mint);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                            // Sanity check: extreme negative ROI on first check likely means price inversion issue
+                            if (roiVal < -50 && pool.roi === "0%") {
+                                SocketManager.emitLog(`[MONITOR WARN] ${pool.token} ROI is ${roiString} on first check — possible price inversion. Skipping action.`, "warning");
+                                continue;
                             }
-                            this.activeTpSlActions.delete(pool.poolId);
-                        }
-
-                        // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
-                        if (roiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
-                            this.activeTpSlActions.add(pool.poolId);
-                            SocketManager.emitLog(`[TP2] ${pool.token} hit 6x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
-                            const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
-                            if (result.success) {
-                                await this.liquidatePoolToSol(pool.mint);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                            if (roiString !== pool.roi) {
+                                await this.updatePoolROI(pool.poolId, roiString, false);
+                                SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
                             }
-                            this.activeTpSlActions.delete(pool.poolId);
-                        }
 
-                        // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
-                        if (roiVal <= -30 && !pool.stopLossDone) {
-                            this.activeTpSlActions.add(pool.poolId);
-                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${roiVal.toFixed(0)}%! Withdrawing 80%...`, "error");
-                            const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
-                            if (result.success) {
-                                await this.liquidatePoolToSol(pool.mint);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                            // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
+                            if (roiVal >= 300 && !pool.tp1Done) {
+                                this.activeTpSlActions.add(pool.poolId);
+                                SocketManager.emitLog(`[TP1] ${pool.token} hit 3x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                                const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
+                                if (result.success) {
+                                    await this.liquidatePoolToSol(pool.mint);
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                                }
+                                this.activeTpSlActions.delete(pool.poolId);
                             }
-                            this.activeTpSlActions.delete(pool.poolId);
+
+                            // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
+                            if (roiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
+                                this.activeTpSlActions.add(pool.poolId);
+                                SocketManager.emitLog(`[TP2] ${pool.token} hit 6x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                                const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
+                                if (result.success) {
+                                    await this.liquidatePoolToSol(pool.mint);
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                                }
+                                this.activeTpSlActions.delete(pool.poolId);
+                            }
+
+                            // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
+                            if (roiVal <= -30 && !pool.stopLossDone) {
+                                this.activeTpSlActions.add(pool.poolId);
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${roiVal.toFixed(0)}%! Withdrawing 80%...`, "error");
+                                const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
+                                if (result.success) {
+                                    await this.liquidatePoolToSol(pool.mint);
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                                }
+                                this.activeTpSlActions.delete(pool.poolId);
+                            }
                         }
+                    } catch (poolErr: any) {
+                        console.error(`[MONITOR] Error monitoring pool ${pool.poolId}:`, poolErr.message);
                     }
                 }
-            } catch (e) {
-                // Ignore
+            } catch (e: any) {
+                console.error("[MONITOR] Global Loop Error:", e.message);
+            } finally {
+                // Schedule next run
+                if (this.isRunning) {
+                    this.monitorInterval = setTimeout(runMonitor, 30000);
+                }
             }
-        }, 30000);
+        };
+
+        // Kick off first run
+        await runMonitor();
     }
 
     async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {

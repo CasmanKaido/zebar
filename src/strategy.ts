@@ -1,5 +1,5 @@
-import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram } from "@solana/web3.js";
-import { wallet, connection, JUPITER_API_KEY, DRY_RUN } from "./config";
+import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError } from "@solana/web3.js";
+import { wallet, connection, JUPITER_API_KEY, DRY_RUN, LPPP_MINT, SOL_MINT, USDC_MINT } from "./config";
 import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
@@ -11,8 +11,6 @@ import axios from "axios";
 import { SocketManager } from "./socket";
 import { JitoExecutor } from "./jito";
 
-
-
 export class StrategyManager {
     private connection: Connection;
     private wallet: Keypair;
@@ -23,11 +21,59 @@ export class StrategyManager {
     }
 
     /**
+     * Helper to confirm transactions with Blockheight Expiry handling (Issue 35).
+     */
+    async confirmOrRetry(signature: string): Promise<boolean> {
+        try {
+            const latestBlockhash = await this.connection.getLatestBlockhash();
+            await this.connection.confirmTransaction({
+                signature,
+                blockhash: latestBlockhash.blockhash,
+                lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+            }, "confirmed");
+            return true;
+        } catch (e) {
+            if (e instanceof TransactionExpiredBlockheightExceededError) {
+                console.warn(`[STRATEGY] Transaction Expired (Blockheight Exceeded): ${signature}`);
+                return false;
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Updates the connection instance for failover.
+     */
+    setConnection(conn: Connection) {
+        this.connection = conn;
+        console.log(`[STRATEGY] Connection Updated for Failover.`);
+    }
+
+    /**
      * Updates the active wallet keypair at runtime.
      */
     setKey(newKey: Keypair) {
         this.wallet = newKey;
         console.log(`[STRATEGY] Wallet Key Updated: ${this.wallet.publicKey.toBase58()}`);
+    }
+
+    /**
+     * Fetches current priority fees from RPC.
+     */
+    async getPriorityFee(): Promise<number> {
+        try {
+            const response = await this.connection.getRecentPrioritizationFees();
+            if (response.length === 0) return 100000; // Default 0.0001 SOL/CU if no data
+
+            // Get median of the last 100 slots
+            const sorted = response.map(f => f.prioritizationFee).sort((a, b) => a - b);
+            const median = sorted[Math.floor(sorted.length / 2)];
+
+            // Limit to max 1,000,000 (0.001 SOL per 1M CU) to prevent drain
+            return Math.min(Math.max(median, 100000), 1000000);
+        } catch (e) {
+            return 100000;
+        }
     }
 
     /**
@@ -71,7 +117,7 @@ export class StrategyManager {
             try {
                 // Ultra V1: GET /ultra/v1/order
                 const params = new URLSearchParams({
-                    inputMint: "So11111111111111111111111111111111111111112",
+                    inputMint: SOL_MINT.toBase58(),
                     outputMint: mint.toBase58(),
                     amount: amountLamports.toString(),
                     taker: this.wallet.publicKey.toBase58(),
@@ -111,6 +157,12 @@ export class StrategyManager {
                 const swapBlockhash = transaction.message.recentBlockhash;
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS, swapBlockhash);
 
+                // Issue 38: Pre-flight simulation
+                const sim = await this.connection.simulateTransaction(transaction);
+                if (sim.value.err) {
+                    throw new Error(`Jupiter Swap Simulation Failed: ${JSON.stringify(sim.value.err)}`);
+                }
+
                 // Main Swap Tx is already signed by `transaction.sign([this.wallet])` above
                 // Jito expects base58 encoded transactions
                 const b58Swap = bs58.encode(transaction.serialize());
@@ -127,7 +179,7 @@ export class StrategyManager {
                 // (The bundle ID is internal to Jito, the blockchain sees the tx signature)
                 const signature = bs58.encode(transaction.signatures[0]);
 
-                await this.connection.confirmTransaction(signature, "confirmed");
+                await this.confirmOrRetry(signature);
                 console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
 
                 // Capture actual amount
@@ -154,7 +206,7 @@ export class StrategyManager {
                     skipPreflight: true,
                     maxRetries: 2
                 });
-                await this.connection.confirmTransaction(txid);
+                await this.confirmOrRetry(txid);
                 console.log(`[STRATEGY] Jupiter Swap Success (RPC Fallback): https://solscan.io/tx/${txid}`);
 
                 // Capture actual amount
@@ -213,7 +265,7 @@ export class StrategyManager {
             // Ultra V1: GET /ultra/v1/order
             const params = new URLSearchParams({
                 inputMint: mint.toBase58(),
-                outputMint: "So11111111111111111111111111111111111111112",
+                outputMint: SOL_MINT.toBase58(),
                 amount: amountUnits.toString(),
                 taker: this.wallet.publicKey.toBase58(),
             });
@@ -241,6 +293,12 @@ export class StrategyManager {
                 // Use the same blockhash as the main swap tx for bundle consistency
                 const swapBlockhash = transaction.message.recentBlockhash;
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP, swapBlockhash);
+                // Issue 38: Pre-flight simulation
+                const sim = await this.connection.simulateTransaction(transaction);
+                if (sim.value.err) {
+                    throw new Error(`Sell Simulation Failed: ${JSON.stringify(sim.value.err)}`);
+                }
+
                 const result = await JitoExecutor.sendBundle([
                     bs58.encode(transaction.serialize()),
                     bs58.encode(tipTx.serialize() as Uint8Array)
@@ -248,7 +306,7 @@ export class StrategyManager {
 
                 if (!result.success) throw new Error("Jito Sell failed");
                 const signature = bs58.encode(transaction.signatures[0]);
-                await this.connection.confirmTransaction(signature, "confirmed");
+                await this.confirmOrRetry(signature);
                 console.log(`[STRATEGY] Sell Success: https://solscan.io/tx/${signature}`);
                 const solReceived = await getSolReceived();
                 console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
@@ -256,7 +314,7 @@ export class StrategyManager {
             } catch (err) {
                 // Fallback
                 const txid = await this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
-                await this.connection.confirmTransaction(txid);
+                await this.confirmOrRetry(txid);
                 const solReceived = await getSolReceived();
                 console.log(`[STRATEGY] Sell Success (RPC Fallback). Proceeds: ${solReceived.toFixed(6)} SOL`);
                 return { success: true, amountSol: solReceived };
@@ -288,8 +346,8 @@ export class StrategyManager {
                 try {
                     console.log("[RAYDIUM] Pool ID lookup failed. Attempting lookup by Token Mint...");
                     // Use WSOL Mint for the pair
-                    const SOL_MINT = "So11111111111111111111111111111111111111112";
-                    const response = await axios.get(`https://api-v3.raydium.io/pools/info/mint?mint1=${mint.toBase58()}&mint2=${SOL_MINT}&poolType=all&poolSortField=default&sortType=desc&pageSize=1&page=1`);
+                    const SOL_MINT_ADDR = SOL_MINT.toBase58();
+                    const response = await axios.get(`https://api-v3.raydium.io/pools/info/mint?mint1=${mint.toBase58()}&mint2=${SOL_MINT_ADDR}&poolType=all&poolSortField=default&sortType=desc&pageSize=1&page=1`);
                     poolData = response.data.data?.[0];
 
                     if (poolData) {
@@ -340,11 +398,9 @@ export class StrategyManager {
             // 2. TRUE ON-CHAIN SEARCH (If API fails, find the address ourselves)
             if (!poolData) {
                 try {
-                    console.log("[RAYDIUM] Determining correct pool address on-chain...");
+                    // Raydium V4 Program ID
                     // Raydium V4 Program ID
                     const RAYDIUM_V4_PROGRAM_ID = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
-                    const SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
-                    const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
                     // Filter 1: Token / SOL
                     const filtersSol = [
@@ -538,9 +594,9 @@ export class StrategyManager {
             for (const iTx of innerTransactions) {
                 const tx = new Transaction();
 
-                // PRIORITY FEES (Add to EVERY transaction) - Critical for Raydium
+                const priorityFee = await this.getPriorityFee();
                 tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }));
-                tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100000 }));
+                tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
                 tx.add(...iTx.instructions);
                 tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
@@ -555,7 +611,7 @@ export class StrategyManager {
                 console.log(`[RAYDIUM] Sent Internal Tx: https://solscan.io/tx/${txid}`);
 
                 // Confirm before next step (Crucial for ATAs)
-                await this.connection.confirmTransaction(txid, "confirmed");
+                await this.confirmOrRetry(txid);
                 lastTxId = txid;
             }
 
@@ -659,6 +715,7 @@ export class StrategyManager {
 
             if (process.env.USE_JITO !== 'false') {
                 // Jito Logic
+                const priorityFee = await this.getPriorityFee();
                 const JITO_TIP_LAMPORTS = 100000;
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS);
 
@@ -673,6 +730,12 @@ export class StrategyManager {
                     b58Swap = bs58.encode(swapTx.serialize());
                 }
                 const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
+
+                // Issue 38: Pre-flight simulation
+                const sim = await this.connection.simulateTransaction(swapTx as any);
+                if (sim.value.err) {
+                    throw new Error(`Meteora Swap Simulation Failed: ${JSON.stringify(sim.value.err)}`);
+                }
 
                 console.log(`[METEORA] Sending Jito Bundle...`);
                 const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Meteora+Tip");
@@ -744,7 +807,7 @@ export class StrategyManager {
      * Creates a Meteora DAMM V2 Pool (Constant Product).
      * Uses Standard Static Config (Index 0) for 0.25% fee (Standard Volatile).
      */
-    async createMeteoraPool(tokenMint: PublicKey, tokenAmount: bigint, baseAmount: bigint, baseMint: PublicKey = new PublicKey("So11111111111111111111111111111111111111112"), feeBps?: number): Promise<{ success: boolean; poolAddress?: string; positionAddress?: string; error?: string }> {
+    async createMeteoraPool(tokenMint: PublicKey, tokenAmount: bigint, baseAmount: bigint, baseMint: PublicKey = SOL_MINT, feeBps?: number): Promise<{ success: boolean; poolAddress?: string; positionAddress?: string; error?: string }> {
         const { DRY_RUN } = require("./config");
         console.log(`[METEORA] Creating DAMM V2 Pool... ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
@@ -916,17 +979,36 @@ export class StrategyManager {
             console.log(`[METEORA] LiquidityDelta: ${poolParams.liquidityDelta.toString()}`);
 
             // 9. Send & Confirm (MUST SIGN WITH POSITION NFT MINT)
+            // Issue 40: Wrap in Jito Bundle if enabled
+            const { USE_JITO, JITO_TIP } = require("./config");
+
+            if (USE_JITO) {
+                console.log(`[METEORA] Sending Pool Creation via Jito Bundle...`);
+                const b58Swap = bs58.encode(transaction.serialize());
+                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP);
+                const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
+
+                const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "CreatePool+Tip");
+                if (jitoResult.success) {
+                    console.log(`[METEORA] Bundle Sent. Signature: ${jitoResult.bundleId}`);
+                    return { success: true, poolAddress: poolAddress.toBase58(), positionAddress: positionAddress.toBase58() };
+                } else {
+                    throw new Error(`Jito Bundle Failed: ${jitoResult.error}`);
+                }
+            }
+
+            // Regular Send (Add Priority Fee)
+            const priorityFee = await this.getPriorityFee();
+            transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
+
             const txSig = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet, positionNftMint], {
-                skipPreflight: false, // Enable preflight to get error logs
+                skipPreflight: false,
                 commitment: "confirmed",
                 maxRetries: 3
             });
-
             console.log(`[METEORA] DAMM V2 Pool Created: https://solscan.io/tx/${txSig}`);
-            console.log(`[METEORA] Pool Address: ${poolAddress.toBase58()}`);
-            console.log(`[METEORA] Position Address: ${positionAddress.toBase58()}`);
-
             return { success: true, poolAddress: poolAddress.toBase58(), positionAddress: positionAddress.toBase58() };
+
 
         } catch (e: any) {
             console.error(`[METEORA] Pool Creation Failed:`, e.message);
@@ -978,65 +1060,96 @@ export class StrategyManager {
             }
 
             // Use stored positionId to find the correct position, or fall back to first
-            let pos = userPositions[0];
-            if (positionId) {
-                const match = userPositions.find((p: any) => p.position.toBase58() === positionId);
-                if (match) {
-                    pos = match;
-                } else {
-                    console.warn(`[STRATEGY] Stored positionId ${positionId.slice(0, 8)} not found. Using first position.`);
-                }
+            if (userPositions.length === 0) {
+                return { success: false, error: "No active position found." };
             }
+
+            // Issue 44: Bin Shift Logic - Iterate over ALL positions, not just the first one
+            // This handles cases where liquidity might be spread across multiple bins due to price movement
+            console.log(`[METEORA] Found ${userPositions.length} positions. Processing removal...`);
+
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
+            const transactions: Transaction[] = [];
 
-            let tx;
-            if (percent >= 100) {
-                console.log(`[STRATEGY] Withdrawal percent ${percent}% >= 100%. Executing FULL REMOVAL and closing position.`);
-                tx = await cpAmm.removeAllLiquidityAndClosePosition({
-                    owner: this.wallet.publicKey,
-                    poolState,
-                    positionState: pos.positionState,
-                    position: pos.position,
-                    positionNftAccount: pos.positionNftAccount,
-                    tokenAAmountThreshold: new BN(0),
-                    tokenBAmountThreshold: new BN(0),
-                    vestings: [],
-                    currentPoint: new BN(0)
-                });
-            } else {
+            for (const pos of userPositions) {
+                let tx: Transaction | null = null;
                 const currentLiquidity = new BN(pos.positionState.unlockedLiquidity.toString());
-                const liquidityDelta = currentLiquidity.mul(new BN(percent)).div(new BN(100));
 
-                if (liquidityDelta.isZero()) {
-                    return { success: false, error: "Liquidity delta is zero (maybe position is empty?)" };
+                if (currentLiquidity.isZero()) {
+                    // Clean up empty position if confirmed empty OR dust (< 1000 units)
+                    if (percent >= 100 || currentLiquidity.lt(new BN(1000))) {
+                        console.log(`[METEORA] Cleaning up empty/dust position: ${pos.position.toBase58()}`);
+                        tx = await cpAmm.removeAllLiquidityAndClosePosition({
+                            owner: this.wallet.publicKey,
+                            poolState,
+                            positionState: pos.positionState,
+                            position: pos.position,
+                            positionNftAccount: pos.positionNftAccount,
+                            tokenAAmountThreshold: new BN(0),
+                            tokenBAmountThreshold: new BN(0),
+                            vestings: [],
+                            currentPoint: new BN(0)
+                        });
+                    }
+                } else if (percent >= 100) {
+                    console.log(`[METEORA] Closing position (100%): ${pos.position.toBase58()}`);
+                    tx = await cpAmm.removeAllLiquidityAndClosePosition({
+                        owner: this.wallet.publicKey,
+                        poolState,
+                        positionState: pos.positionState,
+                        position: pos.position,
+                        positionNftAccount: pos.positionNftAccount,
+                        tokenAAmountThreshold: new BN(0),
+                        tokenBAmountThreshold: new BN(0),
+                        vestings: [],
+                        currentPoint: new BN(0)
+                    });
+                } else {
+                    const liquidityDelta = currentLiquidity.mul(new BN(percent)).div(new BN(100));
+                    if (!liquidityDelta.isZero()) {
+                        console.log(`[METEORA] Removing ${percent}% from position: ${pos.position.toBase58()}`);
+                        tx = await cpAmm.removeLiquidity({
+                            owner: this.wallet.publicKey,
+                            pool: poolPubkey,
+                            position: pos.position,
+                            positionNftAccount: pos.positionNftAccount,
+                            liquidityDelta,
+                            tokenAMint: poolState.tokenAMint,
+                            tokenBMint: poolState.tokenBMint,
+                            tokenAVault: poolState.tokenAVault,
+                            tokenBVault: poolState.tokenBVault,
+                            tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                            tokenBProgram: getTokenProgram(poolState.tokenBFlag),
+                            tokenAAmountThreshold: new BN(0),
+                            tokenBAmountThreshold: new BN(0),
+                            vestings: [],
+                            currentPoint: new BN(0)
+                        });
+                    }
                 }
 
-                tx = await cpAmm.removeLiquidity({
-                    owner: this.wallet.publicKey,
-                    pool: poolPubkey,
-                    position: pos.position,
-                    positionNftAccount: pos.positionNftAccount,
-                    liquidityDelta,
-                    tokenAMint: poolState.tokenAMint,
-                    tokenBMint: poolState.tokenBMint,
-                    tokenAVault: poolState.tokenAVault,
-                    tokenBVault: poolState.tokenBVault,
-                    tokenAProgram: getTokenProgram(poolState.tokenAFlag),
-                    tokenBProgram: getTokenProgram(poolState.tokenBFlag),
-                    tokenAAmountThreshold: new BN(0),
-                    tokenBAmountThreshold: new BN(0),
-                    vestings: [],
-                    currentPoint: new BN(0)
+                if (tx) {
+                    const priorityFee = await this.getPriorityFee();
+                    tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
+                    transactions.push(tx);
+                }
+            }
+
+            if (transactions.length === 0) {
+                return { success: false, error: "No executable transactions generated." };
+            }
+
+            // Execute all transactions sequentially (to avoid nonce issues)
+            let lastSig = "";
+            for (const tx of transactions) {
+                lastSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                    skipPreflight: true,
+                    commitment: "confirmed"
                 });
             }
 
-            const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
-                skipPreflight: true,
-                commitment: "confirmed"
-            });
-
-            console.log(`[METEORA] Liquidity Removed (Full: ${percent >= 100}): https://solscan.io/tx/${txSig}`);
-            return { success: true, txSig };
+            console.log(`[METEORA] Liquidity Removed. Last Sig: https://solscan.io/tx/${lastSig}`);
+            return { success: true, txSig: lastSig };
 
         } catch (error: any) {
             console.error(`[METEORA] Liquidity Removal Error:`, error);
@@ -1066,7 +1179,7 @@ export class StrategyManager {
             const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
 
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
-            const isTokenASOL = poolState.tokenAMint.equals(new PublicKey("So11111111111111111111111111111111111111112"));
+            const isTokenASOL = poolState.tokenAMint.equals(SOL_MINT);
 
             const depositQuote = cpAmm.getDepositQuote({
                 inAmount: amountLamports,
@@ -1106,11 +1219,13 @@ export class StrategyManager {
                 tokenBProgram: getTokenProgram(poolState.tokenBFlag),
             });
 
+            const priorityFee = await this.getPriorityFee();
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
+
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                 skipPreflight: true,
                 commitment: "confirmed"
             });
-
             console.log(`[METEORA] Liquidity Increased: https://solscan.io/tx/${txSig}`);
             return { success: true, txSig };
 
@@ -1224,11 +1339,13 @@ export class StrategyManager {
                 tokenBProgram: getTokenProgram(poolState.tokenBFlag)
             });
 
+            const priorityFee = await this.getPriorityFee();
+            tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
+
             const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                 skipPreflight: true,
                 commitment: "confirmed"
             });
-
             console.log(`[METEORA] Fees Claimed: https://solscan.io/tx/${txSig}`);
             return { success: true, txSig };
 

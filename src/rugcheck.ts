@@ -128,14 +128,17 @@ export class OnChainSafetyChecker {
                     }
                 }
 
-                // Strategy: Total Supply is hard to get accurately without many RPC calls, 
-                // but we can estimate based on the largest accounts. 
-                // If the top 5 non-locker accounts hold a significant portion of what we checked:
-                const concentrationRatio = devConcentration / totalSupplyChecked;
+                // Strategy: Get actual total supply (Issue 35)
+                const mintInfo = await getMint(connection, mint);
+                const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
+
+                // If supply is extremely low or 0, avoid division by zero
+                const divisor = totalSupply > 0 ? totalSupply : totalSupplyChecked;
+                const concentrationRatio = devConcentration / divisor;
 
                 if (concentrationRatio > 0.8 && devConcentration > 0) {
                     result.safe = false;
-                    result.reason = `Extreme supply concentration detected (${(concentrationRatio * 100).toFixed(1)}% of top holders)`;
+                    result.reason = `Extreme supply concentration detected (${(concentrationRatio * 100).toFixed(1)}% of total supply)`;
                     SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... High holder concentration!`, "error");
                     return result;
                 }

@@ -162,6 +162,37 @@ function App() {
 
     const logsEndRef = useRef<HTMLDivElement>(null);
 
+    // Auto-Refresh Wallet Balance (Issue 43)
+    const refreshBalance = async () => {
+        try {
+            const res = await axios.get(`${BACKEND_URL}/api/wallet`); // Used BACKEND_URL
+            setPortfolio({
+                sol: res.data.sol,
+                lppp: res.data.lppp
+            });
+        } catch (e) {
+            console.error("Failed to refresh wallet balance", e);
+        }
+    };
+
+    useEffect(() => {
+        refreshBalance(); // Initial fetch
+
+        const interval = setInterval(refreshBalance, 30000); // Poll every 30s
+
+        // Also refresh on trade events
+        socket.on('log', (data) => {
+            if (data.type === 'success' || data.message.includes('Swap Success') || data.message.includes('Liquidity Removed')) {
+                setTimeout(refreshBalance, 2000); // Slight delay for chain indexing
+            }
+        });
+
+        return () => {
+            clearInterval(interval);
+            socket.off('log');
+        };
+    }, []);
+
     useEffect(() => {
         socket.on('connect', () => console.log('Connected to Backend'));
         socket.on('status', (data) => setRunning(data.running));

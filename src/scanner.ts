@@ -2,6 +2,7 @@ import axios from "axios";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 import { BirdeyeService } from "./birdeye-service";
+import { connection, IGNORED_MINTS, SOL_MINT } from "./config";
 export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
@@ -22,6 +23,7 @@ export interface ScannerCriteria {
 }
 
 export class MarketScanner {
+    private connection: any;
     private isRunning: boolean = false;
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
@@ -34,9 +36,15 @@ export class MarketScanner {
     private jupiterSyncFailed = false;
     private jupiterFailCooldown = 0; // timestamp when we can retry after failure
 
-    constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>) {
+    constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any) {
         this.criteria = criteria;
         this.callback = callback;
+        this.connection = conn;
+    }
+
+    setConnection(conn: any) {
+        this.connection = conn;
+        console.log(`[SCANNER] Connection Updated for Failover.`);
     }
 
     async start() {
@@ -253,22 +261,6 @@ export class MarketScanner {
                 // Check seenPairs with cooldown
                 const lastSeen = this.seenPairs.get(pair.pairAddress);
                 if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
-
-                const SOL_MINT = "So11111111111111111111111111111111111111112";
-                const IGNORED_MINTS = [
-                    SOL_MINT,
-                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
-                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
-                    "USDH1SM1ojwRrt3WoCkmq7i9DE2yMK77CXY7MvJ8TCe",   // USDH
-                    "2b1fDQRsjtB2NYyQCneVr3TXuqcSFCvA13fnc7uxc8vi", // PYUSD
-                    "7kbnYjS6zY7ndS9S2MvSdgS9z9S2MvSdgS9z9S2MvSdg", // UXD
-                    "mSoLzYawRXYr3WvR86An1Ah6B1isS2nEv4tXQ7pA9Ym",   // mSOL
-                    "7dHbS7zSToynF6L8abS2yz7iYit2tiX1XW1tH8YqXgH",   // stSOL
-                    "J1tosoecvw9U96jrN17H8NfE59p5RST213R9RNoeWCH",   // jitoSOL
-                    "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", // RAY
-                ];
-
-                // Determine target
                 let targetToken = pair.baseToken;
                 let priceUSD = Number(pair.priceUsd || 0);
 
@@ -283,7 +275,6 @@ export class MarketScanner {
                 let tokenInfo = this.jupiterTokens.get(targetToken.address);
                 if (!tokenInfo) {
                     try {
-                        const { connection } = require("./config");
                         const mintPubkey = new PublicKey(targetToken.address);
                         const info = await connection.getParsedAccountInfo(mintPubkey);
                         if (info.value && (info.value.data as any).parsed) {
