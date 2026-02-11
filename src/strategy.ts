@@ -547,8 +547,8 @@ export class StrategyManager {
             };
 
             // 2. Define Tokens
-            const SOL_MINT = "So11111111111111111111111111111111111111112";
-            const currencyIn = poolKeys.quoteMint.toBase58() === SOL_MINT ? Token.WSOL : new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.quoteMint, Number(poolKeys.quoteDecimals), "QUOTE", "Quote Token");
+            // 2. Define Tokens
+            const currencyIn = poolKeys.quoteMint.equals(SOL_MINT) ? Token.WSOL : new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.quoteMint, Number(poolKeys.quoteDecimals), "QUOTE", "Quote Token");
 
             const isBase = poolKeys.baseMint.toBase58() === mint.toBase58();
             const currencyOut = isBase
