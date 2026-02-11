@@ -568,13 +568,11 @@ export class BotManager {
         if (this.scanner) {
             this.scanner.stop();
         }
-        // Stop the position monitor to prevent ghost intervals
-        if (this.monitorInterval) {
-            clearInterval(this.monitorInterval);
-            this.monitorInterval = null;
-        }
-        this.pendingMints.clear();
-        this.activeTpSlActions.clear();
+        // ONLY stop the monitor if we have no positions left to watch.
+        // Otherwise, keep monitoring ROI/Fees/SL/TP for existing money.
+        // Note: runMonitor already has logic to self-terminate if !isRunning && pools.length === 0
+        console.log("[BOT] Scanning stopped. Monitor will continue if active pools exist.");
+
         SocketManager.emitStatus(false);
         SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
     }
