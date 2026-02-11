@@ -168,8 +168,8 @@ function App() {
         try {
             const res = await axios.get(`${BACKEND_URL}/api/wallet`); // Used BACKEND_URL
             setPortfolio({
-                sol: res.data.sol,
-                lppp: res.data.lppp
+                sol: res.data.sol || 0,
+                lppp: res.data.lppp || 0
             });
         } catch (e) {
             console.error("Failed to refresh wallet balance", e);
