@@ -10,11 +10,31 @@ import { SocketManager } from "./socket";
 
 // Known LP locker program IDs on Solana
 const KNOWN_LOCKERS = new Set([
-    "2r5VekMNiWPzi1pWwvJczrdPaZnJG59u91unSrTunwJg", // Uncx Network
-    "Lock7kBijGCQLEFAmXcengzXKA88iDNQPriQ7TbgJFj",  // Team.Finance / Fluxbeam Locker
-    "FLockVVhmdNhRDHH48LoGadGSxPSABYh5hE8UGRjpVGT", // Streamflow Vesting/Lock
-    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",  // Metaplex (burn destination)
-    "1BWutmTvYPwDtmw9abTkS4Ssr8no61spGAvW1X6NDix",  // Raydium LP Lock
+    // UNCX Network (V4, Smart, CP, CLMM)
+    "GsSCS3vPWrtJ5Y9aEVVT65fmrex5P5RGHXdZvsdbWgfo",
+    "BzKincxjgFQjj4FmhaWrwHES1ekBGN73YesA7JwJJo7X",
+    "UNCX77nZrA3TdAxMEggqG18xxpgiNGT6iqyynPwpoxN",
+    "DAtFFs2mhQFvrgNLA29vEDeTLLN8vHknAaAhdLEc4SQH",
+    "UNCXdvMRxvz91g3HqFmpZ5NgmL77UH4QRM4NfeL4mQB",
+    "FEmGEWdxCBSJ1QFKeX5B6k7VTDPwNU3ZLdfgJkvGYrH5",
+    "UNCXrB8cZXnmtYM1aSo1Wx3pQaeSZYuF2jCTesXvECs",
+    "GAYWATob4bqCj3fhVm8ZxoMSqUW2fb6e6SBQ7kk5qyps",
+
+    // Team Finance / Fluxbeam
+    "Lock7kBijGCQLEFAmXcengzXKA88iDNQPriQ7TbgJFj",
+
+    // Streamflow
+    "FLockVVhmdNhRDHH48LoGadGSxPSABYh5hE8UGRjpVGT",
+    "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m",
+
+    // PinkSale
+    "FASGwdWxPjZ655g67idpSwiavigorgB9L7p6Y4qG6Pc5",
+
+    // Other (Metaplex, Raydium, Tally, SOLOCKER)
+    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+    "1BWutmTvYPwDtmw9abTkS4Ssr8no61spGAvW1X6NDix",
+    "A5vz72a5ipKUJZxmGUjGtS7uhWfzr6jhDgV2q73YhD8A", // Tally-Pay
+    "DLxB9dSQtA4WJ49hWFhxqiQkD9v6m67Yfk9voxpxrBs4", // SOLOCKER
 ]);
 
 // Burn address (tokens sent here = permanently locked)
