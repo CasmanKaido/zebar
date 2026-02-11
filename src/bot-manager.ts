@@ -59,11 +59,11 @@ export class BotManager {
         // 1. Migrate if needed
         await this.migrateFromJsonToSqlite();
 
-        // 2. Load and Sync
-        await this.loadAndSync();
+        // 2. Load and Monitor
+        await this.loadAndMonitor();
     }
 
-    private async loadAndSync() {
+    private async loadAndMonitor() {
         try {
             const history = await dbService.getAllPools();
             console.log(`[BOT] Loaded ${history.length} pools from SQLite.`);
@@ -71,9 +71,13 @@ export class BotManager {
 
             this.startHealthCheck();
 
-            // Reconcile and Sync
+            // Reconcile and Start Monitoring
             await this.reconcilePendingWithdrawals(history);
-            await this.syncWithBlockchain();
+
+            // Kick off position monitor (only if not already running)
+            if (!this.monitorInterval) {
+                this.monitorPositions();
+            }
         } catch (e: any) {
             console.error("[BOT] Initialization failed:", e.message);
         }
@@ -167,73 +171,6 @@ export class BotManager {
         }
     }
 
-    /**
-     * Scans the Solana blockchain for active positions and restores missing state.
-     */
-    private async syncWithBlockchain() {
-        SocketManager.emitLog("[SYNC] Verifying on-chain state...", "info");
-        try {
-            // Migrated logic: Read from DB instead of JSON
-            const history = await dbService.getAllPools();
-            const knownPools = new Set(history.map(p => p.poolId));
-
-            const positions = await this.strategy.syncPositions();
-            const onChainPoolIds = new Set(positions.map(pos => pos.pool));
-
-            // 1. Recover missing positions from Blockchain
-            for (const pos of positions) {
-                if (!knownPools.has(pos.pool)) {
-                    SocketManager.emitLog(`[SYNC] Recovering missing position: ${pos.pool.slice(0, 8)}...`, "warning");
-
-                    try {
-                        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
-                        const cpAmm = new CpAmm(connection);
-                        const poolState = await cpAmm.fetchPoolState(new PublicKey(pos.pool));
-
-                        const tokenMint = poolState.tokenAMint.toBase58() === LPPP_MINT.toBase58()
-                            ? poolState.tokenBMint.toBase58()
-                            : poolState.tokenAMint.toBase58();
-
-                        const geckoMeta = await GeckoService.getTokenMetadata(tokenMint);
-                        const symbol = geckoMeta?.symbol.toUpperCase() || "TOKEN";
-
-                        const initialPrice = await this.reconstructInitialPrice(pos.pool, tokenMint);
-
-                        const newPool: PoolData = {
-                            poolId: pos.pool,
-                            token: symbol,
-                            mint: tokenMint,
-                            roi: "0%", // Will be updated by monitorPositions
-                            created: new Date().toISOString(),
-                            initialPrice,
-                            initialTokenAmount: 0,
-                            initialLpppAmount: 0,
-                            exited: false,
-                            positionId: pos.publicKey,
-                            unclaimedFees: { sol: "0", token: "0" }
-                        };
-
-                        await this.savePools(newPool);
-                        SocketManager.emitPool(newPool);
-                        SocketManager.emitLog(`[SYNC] Fully restored ${symbol} (${pos.pool.slice(0, 8)}...)`, "success");
-                    } catch (err: any) {
-                        console.error(`[SYNC] Failed to restore pos ${pos.pool}:`, err.message);
-                    }
-                }
-            }
-
-            // 2. Prune "Ghost" positions (In JSON but NOT on-chain)
-            // If it's in history but NOT on-chain, and NOT already exited, mark as exited.
-            for (const pool of history) {
-                if (!pool.exited && !onChainPoolIds.has(pool.poolId)) {
-                    SocketManager.emitLog(`[SYNC] Position ${pool.poolId.slice(0, 8)} (${pool.token}) not found on-chain. Marking as EXITED.`, "warning");
-                    await this.updatePoolROI(pool.poolId, "EXITED (SYNC)", true, undefined, { withdrawalPending: false });
-                }
-            }
-        } catch (error: any) {
-            console.error("[SYNC] Global sync failure:", error.message);
-        }
-    }
 
     /**
      * Scans the wallet for tokens purchased by the bot but never pooled (Issue 28).
@@ -710,21 +647,8 @@ export class BotManager {
 
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
-                            // ═══ AUTO-RECALIBRATION (Issue: Stale Inverted Prices) ═══
-                            // If ROI is extreme negative on first check, the stored initialPrice is likely broken.
+                            // ═══ AUTO-RECALIBRATION (Simplified) ═══
                             if (roiVal < -90) {
-                                // Try Blockchain Reconstruction as the absolute truth
-                                if (!pool.priceReconstructed) {
-                                    console.log(`[MONITOR] Severe loss detected on ${pool.token} (${roiVal.toFixed(2)}%). Attempting Blockchain reconstruction...`);
-                                    const verifiedInitial = await this.reconstructInitialPrice(pool.poolId, pool.mint);
-                                    if (verifiedInitial > 0) {
-                                        pool.initialPrice = verifiedInitial;
-                                        roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
-                                        console.log(`[MONITOR] ROI Recovered for ${pool.token}: ${roiVal.toFixed(2)}%`);
-                                    }
-                                    pool.priceReconstructed = true;
-                                }
-
                                 if (roiVal < -95 && pool.roi === "0%") {
                                     const invertedInitial = 1 / pool.initialPrice;
                                     const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
@@ -920,40 +844,4 @@ export class BotManager {
         }
     }
 
-    /**
-     * Attempts to find the initial seed price of a pool by searching transaction history.
-     */
-    async reconstructInitialPrice(poolAddress: string, tokenMint: string): Promise<number> {
-        try {
-            const poolPubkey = new PublicKey(poolAddress);
-            const signatures = await connection.getSignaturesForAddress(poolPubkey, { limit: 100 });
-
-            if (signatures.length === 0) return 0;
-
-            // The earliest signature is likely the pool creation
-            const earliest = signatures[signatures.length - 1];
-
-            const tx = await connection.getParsedTransaction(earliest.signature, {
-                maxSupportedTransactionVersion: 0,
-                commitment: 'confirmed'
-            });
-
-            if (!tx || !tx.meta) return 0;
-
-            const postBalances = tx.meta.postTokenBalances || [];
-            const lpppBalance = postBalances.find(b => b.mint === LPPP_MINT.toBase58());
-            const tokenBalance = postBalances.find(b => b.mint === tokenMint);
-
-            if (lpppBalance && lpppBalance.uiTokenAmount.uiAmount && tokenBalance && tokenBalance.uiTokenAmount.uiAmount) {
-                const initialPrice = lpppBalance.uiTokenAmount.uiAmount / tokenBalance.uiTokenAmount.uiAmount;
-                console.log(`[SYNC] Reconstructed Price for ${poolAddress}: ${initialPrice.toFixed(6)} LPPP/Token`);
-                return initialPrice;
-            }
-
-            return 0;
-        } catch (error) {
-            console.error(`[SYNC] Failed to reconstruct price for ${poolAddress}:`, error);
-            return 0;
-        }
-    }
 }
