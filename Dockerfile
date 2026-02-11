@@ -20,7 +20,9 @@ WORKDIR /app
 
 # Copy root manifest and install backend dependencies
 COPY package*.json ./
-RUN rm -rf node_modules package-lock.json && npm install
+RUN apk add --no-cache build-base python3 && \
+    rm -rf node_modules package-lock.json && \
+    npm install
 
 # Copy TypeScript config and source code
 COPY tsconfig.json ./
