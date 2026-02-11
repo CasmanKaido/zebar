@@ -73,8 +73,8 @@ export class BotManager {
         try {
             const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
             const history = JSON.parse(data);
+            console.log(`[BOT] Loaded ${history.length} pools from: ${path.resolve(POOL_DATA_FILE)}`);
             history.forEach((p: PoolData) => SocketManager.emitPool(p)); // Load into Socket History
-            console.log(`[BOT] Loaded ${history.length} pools from history.`);
 
             // Start Health Check Loop
             this.startHealthCheck();
@@ -221,8 +221,9 @@ export class BotManager {
             const tempPath = `${POOL_DATA_FILE}.tmp`;
             await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
             await this.safeRename(tempPath, POOL_DATA_FILE);
+            console.log(`[BOT] Successfully saved pool ${newPool.token} to: ${path.resolve(POOL_DATA_FILE)}`);
         } catch (e) {
-            console.error("[BOT] Failed to save pool history:", e);
+            console.error(`[BOT] Failed to save pool history to ${POOL_DATA_FILE}:`, e);
         }
     }
 
@@ -605,27 +606,40 @@ export class BotManager {
     private async monitorPositions() {
         const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
-        // Issue 37: Recursive Timeout (Prevents overlapping iterations)
+        // Monitor loop
+        let sweepCount = 0;
         const runMonitor = async () => {
-            if (!this.isRunning) return;
-
+            let pools: PoolData[] = [];
+            // Monitor runs even if !this.isRunning, as long as we have pools to watch
             try {
                 const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-                const pools: PoolData[] = JSON.parse(data);
+                pools = JSON.parse(data);
+                if (pools.length > 0) {
+                    console.log(`[MONITOR DEBUG] Checking ${pools.length} pools from ${path.resolve(POOL_DATA_FILE)}...`);
+                } else {
+                    // Log every 5 minutes if empty to avoid spam
+                    if (sweepCount % 10 === 0) {
+                        console.log(`[MONITOR DEBUG] No pools found in: ${path.resolve(POOL_DATA_FILE)}`);
+                    }
+                }
 
                 for (const pool of pools) {
                     try {
                         if (pool.exited) continue;
+                        console.log(`[MONITOR DEBUG] Checking pool: ${pool.token} (${pool.poolId.slice(0, 8)}...)`);
                         if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
                         if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
 
                         // Sort mints to match Meteora's on-chain vault derivation order
-                        const [sortedMintA, sortedMintB] = new PublicKey(pool.mint).toBuffer().compare(new PublicKey(LPPP_MINT_ADDR).toBuffer()) < 0
-                            ? [pool.mint, LPPP_MINT_ADDR]
-                            : [LPPP_MINT_ADDR, pool.mint];
+                        const sortedMintA = new PublicKey(pool.mint).toBuffer().compare(LPPP_MINT.toBuffer()) < 0 ? pool.mint : LPPP_MINT_ADDR;
+                        const sortedMintB = sortedMintA === pool.mint ? LPPP_MINT_ADDR : pool.mint;
+                        const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
 
                         const status = await this.strategy.getPoolStatus(pool.poolId, sortedMintA, sortedMintB);
                         const fees = await this.strategy.getMeteoraFees(pool.poolId);
+
+                        console.log(`[MONITOR DEBUG] Status: ${JSON.stringify(status)}`);
+                        console.log(`[MONITOR DEBUG] Fees: A=${fees.feeA}, B=${fees.feeB}`);
 
                         const feeTokenRaw = pool.mint === sortedMintA ? fees.feeA : fees.feeB;
                         const feeLpppRaw = LPPP_MINT_ADDR === sortedMintA ? fees.feeA : fees.feeB;
@@ -646,6 +660,8 @@ export class BotManager {
                             const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
                             const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
+
+                            console.log(`[MONITOR DEBUG] NormPrice: ${normalizedPrice}, Initial: ${pool.initialPrice}, ROI: ${roiString}`);
                             // ... continued
 
                             // Sanity check: extreme negative ROI on first check likely means price inversion issue
@@ -654,6 +670,7 @@ export class BotManager {
                                 continue;
                             }
                             if (roiString !== pool.roi) {
+                                console.log(`[MONITOR DEBUG] ROI Update: ${pool.roi} -> ${roiString}`);
                                 await this.updatePoolROI(pool.poolId, roiString, false);
                                 SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
                             }
@@ -701,9 +718,12 @@ export class BotManager {
             } catch (e: any) {
                 console.error("[MONITOR] Global Loop Error:", e.message);
             } finally {
-                // Schedule next run
-                if (this.isRunning) {
-                    this.monitorInterval = setTimeout(runMonitor, 30000);
+                sweepCount++;
+                // Schedule next iteration (recursive timeout)
+                if (this.isRunning || pools.length > 0) {
+                    this.monitorInterval = setTimeout(runMonitor, 60000); // Check every 60s
+                } else {
+                    this.monitorInterval = null; // Clear interval if not running and no pools
                 }
             }
         };
