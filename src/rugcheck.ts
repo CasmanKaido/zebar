@@ -115,7 +115,7 @@ export class OnChainSafetyChecker {
         // we consider liquidity locked.
         try {
             const largestAccounts = await connection.getTokenLargestAccounts(mint);
-            const topAccounts = largestAccounts.value.slice(0, 5); // Check top 5 holders
+            const topAccounts = largestAccounts.value.slice(0, 20); // Check top 20 holders for bundling
 
             if (topAccounts.length === 0) {
                 result.checks.liquidityLocked = "unknown";
@@ -130,12 +130,22 @@ export class OnChainSafetyChecker {
                 let totalSupplyChecked = 0;
                 let devConcentration = 0;
 
+                // Heuristic: Bundle Detection (Identical Balances)
+                const balanceCounts = new Map<number, number>();
+                let maxDuplicates = 0;
+
                 for (let i = 0; i < topAccounts.length; i++) {
                     const account = topAccounts[i];
                     const info = accountInfos[i];
                     const amount = Number(account.uiAmount || 0);
-                    totalSupplyChecked += amount;
 
+                    if (amount > 0) {
+                        const count = (balanceCounts.get(amount) || 0) + 1;
+                        balanceCounts.set(amount, count);
+                        maxDuplicates = Math.max(maxDuplicates, count);
+                    }
+
+                    // Only count concentration for non-lockers
                     if (info?.owner) {
                         const ownerStr = info.owner.toBase58();
                         // Check if the owner is a known locker or the token is burned
@@ -146,6 +156,14 @@ export class OnChainSafetyChecker {
                             devConcentration += amount;
                         }
                     }
+                    totalSupplyChecked += amount;
+                }
+
+                if (maxDuplicates >= 3) {
+                    result.safe = false;
+                    result.reason = `Bundle Detected! ${maxDuplicates} wallets have identical balances.`;
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Bundle Detected (${maxDuplicates} identical wallets)`, "error");
+                    return result;
                 }
 
                 // Strategy: Get actual total supply (Issue 35)
