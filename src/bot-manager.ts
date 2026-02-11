@@ -9,25 +9,10 @@ import * as path from "path";
 import { GeckoService } from "./gecko-service";
 import axios from "axios";
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { dbService } from "./db-service";
+import { PoolData, TradeHistory } from "./types";
 
-interface PoolData {
-    poolId: string;
-    token: string; // Symbol
-    mint: string; // Token Mint Address
-    roi: string;
-    created: string;
-    initialPrice: number;
-    initialTokenAmount: number;
-    initialLpppAmount: number;
-    exited: boolean;
-    tp1Done?: boolean;       // Flag: TP Stage 1 (3x) completed
-    takeProfitDone?: boolean; // Flag: TP Stage 2 (6x) completed
-    stopLossDone?: boolean;  // Flag: Stop Loss (-30%) completed
-    positionId?: string; // Meteora Position PDA
-    unclaimedFees?: { sol: string; token: string };
-    withdrawalPending?: boolean; // Flag for atomicity (Issue 30)
-    priceReconstructed?: boolean; // Flag: Entry price audit complete
-}
+const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
 export interface BotSettings {
     buyAmount: number; // in SOL
@@ -67,27 +52,30 @@ export class BotManager {
 
     constructor() {
         this.strategy = new StrategyManager(connection, wallet);
-        this.loadPools();
+        this.initialize();
     }
 
-    private async loadPools() {
-        try {
-            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-            const history = JSON.parse(data);
-            console.log(`[BOT] Loaded ${history.length} pools from: ${path.resolve(POOL_DATA_FILE)}`);
-            history.forEach((p: PoolData) => SocketManager.emitPool(p)); // Load into Socket History
+    private async initialize() {
+        // 1. Migrate if needed
+        await this.migrateFromJsonToSqlite();
 
-            // Start Health Check Loop
+        // 2. Load and Sync
+        await this.loadAndSync();
+    }
+
+    private async loadAndSync() {
+        try {
+            const history = await dbService.getAllPools();
+            console.log(`[BOT] Loaded ${history.length} pools from SQLite.`);
+            history.forEach((p: PoolData) => SocketManager.emitPool(p));
+
             this.startHealthCheck();
 
-            // Reconcile any crashes mid-withdrawal (Issue 30)
+            // Reconcile and Sync
             await this.reconcilePendingWithdrawals(history);
-
-            // Trigger Blockchain Sync (New Phase 8)
             await this.syncWithBlockchain();
-        } catch (e) {
-            console.log("[BOT] No existing pool history found. Triggering fresh sync...");
-            await this.syncWithBlockchain();
+        } catch (e: any) {
+            console.error("[BOT] Initialization failed:", e.message);
         }
     }
 
@@ -154,13 +142,39 @@ export class BotManager {
     }
 
     /**
+     * One-time migration from pools.json to SQLite.
+     */
+    private async migrateFromJsonToSqlite() {
+        try {
+            const data = await fs.readFile(POOL_DATA_FILE, "utf-8").catch(() => null);
+            if (!data) return;
+
+            const history: PoolData[] = JSON.parse(data);
+            if (history.length === 0) return;
+
+            SocketManager.emitLog(`[DB] Migrating ${history.length} pools from JSON to SQLite...`, "warning");
+
+            for (const pool of history) {
+                await dbService.savePool(pool);
+            }
+
+            // Rename the old file to .bak to prevent re-migration
+            const bakPath = POOL_DATA_FILE + ".bak";
+            await fs.rename(POOL_DATA_FILE, bakPath);
+            SocketManager.emitLog(`[DB] Migration complete. Old file renamed to ${path.basename(bakPath)}`, "success");
+        } catch (error: any) {
+            console.error("[DB] Migration failed:", error.message);
+        }
+    }
+
+    /**
      * Scans the Solana blockchain for active positions and restores missing state.
      */
     private async syncWithBlockchain() {
         SocketManager.emitLog("[SYNC] Verifying on-chain state...", "info");
         try {
-            const rawPools = await fs.readFile(POOL_DATA_FILE, "utf-8").catch(() => "[]");
-            const history: PoolData[] = JSON.parse(rawPools);
+            // Migrated logic: Read from DB instead of JSON
+            const history = await dbService.getAllPools();
             const knownPools = new Set(history.map(p => p.poolId));
 
             const positions = await this.strategy.syncPositions();
@@ -227,8 +241,7 @@ export class BotManager {
     private async checkOrphanTokens() {
         SocketManager.emitLog("[ORPHAN-CHECK] Scanning wallet for un-pooled tokens...", "info");
         try {
-            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-            const pools: PoolData[] = JSON.parse(data);
+            const pools = await dbService.getAllPools();
             const pooledMints = new Set(pools.map(p => p.mint));
 
             // Get all token accounts with balance > 0
@@ -276,62 +289,35 @@ export class BotManager {
 
     private async savePools(newPool: PoolData) {
         try {
-            let history: PoolData[] = [];
-            try {
-                const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-                history = JSON.parse(data);
-            } catch (e) {
-                // File likely doesn't exist or is empty
-            }
-
-            history.push(newPool);
-
-            // Ensure directory exists
-            const dataDir = path.dirname(POOL_DATA_FILE);
-            await fs.mkdir(dataDir, { recursive: true });
-
-            // Atomic Write: Write to temp file then rename with retry
-            const tempPath = `${POOL_DATA_FILE}.tmp`;
-            await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
-            await this.safeRename(tempPath, POOL_DATA_FILE);
-            console.log(`[BOT] Successfully saved pool ${newPool.token} to: ${path.resolve(POOL_DATA_FILE)}`);
-        } catch (e) {
-            console.error(`[BOT] Failed to save pool history to ${POOL_DATA_FILE}:`, e);
+            await dbService.savePool(newPool);
+        } catch (error) {
+            console.error("[DB] Failed to save pool:", error);
         }
     }
 
-    async updatePoolROI(poolId: string, roi: string, exited: boolean, unclaimedFees?: any, flags?: { tp1Done?: boolean, takeProfitDone?: boolean, stopLossDone?: boolean, withdrawalPending?: boolean }) {
+    /**
+     * Updates the ROI of a pool in SQL and emits to socket.
+     */
+    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees?: { sol: string; token: string }, partial?: Partial<PoolData>) {
         if (this.activeTpSlActions.has(poolId)) return;
 
         try {
-            let history: PoolData[] = [];
-            try {
-                const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-                history = JSON.parse(data);
-            } catch (e) { return; }
+            const pool = await dbService.getPool(poolId);
+            if (!pool) return;
 
-            const index = history.findIndex(p => p.poolId === poolId);
-            if (index !== -1) {
-                if (roi) history[index].roi = roi;
-                history[index].exited = exited;
-                if (unclaimedFees) history[index].unclaimedFees = unclaimedFees;
+            const updatedPool: PoolData = {
+                ...pool,
+                roi,
+                exited: exited || pool.exited,
+                unclaimedFees: fees || pool.unclaimedFees,
+                ...partial
+            };
 
-                // Merge flags
-                if (flags) {
-                    if (flags.tp1Done !== undefined) history[index].tp1Done = flags.tp1Done;
-                    if (flags.takeProfitDone !== undefined) history[index].takeProfitDone = flags.takeProfitDone;
-                    if (flags.stopLossDone !== undefined) history[index].stopLossDone = flags.stopLossDone;
-                    if (flags.withdrawalPending !== undefined) history[index].withdrawalPending = flags.withdrawalPending;
-                }
-
-                // Atomic Write with retry for Windows lock contention (Issue 32)
-                const tempPath = `${POOL_DATA_FILE}.tmp`;
-                await fs.writeFile(tempPath, JSON.stringify(history, null, 2));
-                await this.safeRename(tempPath, POOL_DATA_FILE);
-
-                SocketManager.emitPoolUpdate({ poolId, roi, exited, unclaimedFees });
-            }
-        } catch (e) { }
+            await dbService.savePool(updatedPool);
+            SocketManager.emitPoolUpdate({ poolId, roi, exited, unclaimedFees: updatedPool.unclaimedFees });
+        } catch (e) {
+            console.error("[DB] Update ROI Failed:", e);
+        }
     }
 
     private async getLpppPrice(): Promise<number> {
@@ -680,16 +666,13 @@ export class BotManager {
         let sweepCount = 0;
         const runMonitor = async () => {
             let pools: PoolData[] = [];
-            // Monitor runs even if !this.isRunning, as long as we have pools to watch
             try {
-                const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-                pools = JSON.parse(data);
+                pools = await dbService.getAllPools();
                 if (pools.length > 0) {
-                    console.log(`[MONITOR DEBUG] Checking ${pools.length} pools from ${path.resolve(POOL_DATA_FILE)}...`);
+                    console.log(`[MONITOR DEBUG] Checking ${pools.length} pools from SQLite...`);
                 } else {
-                    // Log every 5 minutes if empty to avoid spam
                     if (sweepCount % 10 === 0) {
-                        console.log(`[MONITOR DEBUG] No pools found in: ${path.resolve(POOL_DATA_FILE)}`);
+                        console.log(`[MONITOR DEBUG] No active pools found.`);
                     }
                 }
 
@@ -833,10 +816,9 @@ export class BotManager {
         // Look up stored positionId for this pool
         let positionId: string | undefined;
         try {
-            const pools: PoolData[] = await this.getPortfolio();
-            const pool = pools.find((p: PoolData) => p.poolId === poolId);
+            const pool = await dbService.getPool(poolId);
             positionId = pool?.positionId;
-        } catch (e) { /* proceed without positionId */ }
+        } catch (e) { /* proceed without positionId stack trace */ }
 
         try {
             const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
@@ -850,8 +832,7 @@ export class BotManager {
                 if (isFull) {
                     // Try to liquidate remnants if any
                     try {
-                        const pools = await this.getPortfolio();
-                        const pool = pools.find(p => p.poolId === poolId);
+                        const pool = await dbService.getPool(poolId);
                         if (pool) await this.liquidatePoolToSol(pool.mint);
                     } catch (_) { }
                 }
@@ -921,12 +902,7 @@ export class BotManager {
     }
 
     async getPortfolio(): Promise<PoolData[]> {
-        try {
-            const data = await fs.readFile(POOL_DATA_FILE, "utf-8");
-            return JSON.parse(data);
-        } catch (e) {
-            return [];
-        }
+        return await dbService.getAllPools();
     }
 
     async updateWallet(privateKeyBs58: string) {
