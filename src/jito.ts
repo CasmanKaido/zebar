@@ -65,7 +65,12 @@ export class JitoExecutor {
                 }, { timeout: 2000 }); // Quick 2s timeout per endpoint
 
                 if (response.data.error) {
-                    console.warn(`[JITO WARN] Bundle Rejected by ${endpoint}:`, response.data.error);
+                    const errMsg = response.data.error.message || JSON.stringify(response.data.error);
+                    console.warn(`[JITO WARN] Bundle Rejected by ${endpoint}:`, errMsg);
+                    // If it's a structural error like "Non-base58", don't bother retrying other endpoints
+                    if (errMsg.includes("Non-base58")) {
+                        return { success: false, error: errMsg };
+                    }
                     continue; // Try next endpoint
                 }
 
@@ -85,8 +90,9 @@ export class JitoExecutor {
             }
         }
 
-        console.error("[JITO ERROR] All endpoints failed.");
-        return { success: false, error: "All Jito Endpoints Failed" };
+        console.error("[JITO ERROR] All endpoints failed or rejected.");
+        // Return a more descriptive error if we can collect them
+        return { success: false, error: "Jito Bundle Rejected or Endpoints Failed" };
     }
 
     /**

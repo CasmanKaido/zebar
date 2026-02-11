@@ -26,6 +26,7 @@ interface PoolData {
     positionId?: string; // Meteora Position PDA
     unclaimedFees?: { sol: string; token: string };
     withdrawalPending?: boolean; // Flag for atomicity (Issue 30)
+    priceReconstructed?: boolean; // Flag: Entry price audit complete
 }
 
 export interface BotSettings {
@@ -163,14 +164,12 @@ export class BotManager {
             const knownPools = new Set(history.map(p => p.poolId));
 
             const positions = await this.strategy.syncPositions();
-            if (positions.length === 0) {
-                SocketManager.emitLog("[SYNC] No active on-chain positions found.", "info");
-                return;
-            }
+            const onChainPoolIds = new Set(positions.map(pos => pos.pool));
 
+            // 1. Recover missing positions from Blockchain
             for (const pos of positions) {
                 if (!knownPools.has(pos.pool)) {
-                    SocketManager.emitLog(`[SYNC] Recovering position: ${pos.pool.slice(0, 8)}...`, "warning");
+                    SocketManager.emitLog(`[SYNC] Recovering missing position: ${pos.pool.slice(0, 8)}...`, "warning");
 
                     try {
                         const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
@@ -206,6 +205,15 @@ export class BotManager {
                     } catch (err: any) {
                         console.error(`[SYNC] Failed to restore pos ${pos.pool}:`, err.message);
                     }
+                }
+            }
+
+            // 2. Prune "Ghost" positions (In JSON but NOT on-chain)
+            // If it's in history but NOT on-chain, and NOT already exited, mark as exited.
+            for (const pool of history) {
+                if (!pool.exited && !onChainPoolIds.has(pool.poolId)) {
+                    SocketManager.emitLog(`[SYNC] Position ${pool.poolId.slice(0, 8)} (${pool.token}) not found on-chain. Marking as EXITED.`, "warning");
+                    await this.updatePoolROI(pool.poolId, "EXITED (SYNC)", true, undefined, { withdrawalPending: false });
                 }
             }
         } catch (error: any) {
@@ -720,19 +728,33 @@ export class BotManager {
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
                             // ═══ AUTO-RECALIBRATION (Issue: Stale Inverted Prices) ═══
-                            // If ROI is extreme negative on first check, the stored initialPrice is likely inverted.
-                            if (roiVal < -95 && pool.roi === "0%") {
-                                const invertedInitial = 1 / pool.initialPrice;
-                                const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
-                                if (Math.abs(newRoi) < 50) {
-                                    console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
-                                    pool.initialPrice = invertedInitial;
-                                    roiVal = newRoi;
-                                } else {
-                                    // If inversion doesn't fix it, reset initial to current to stop the bleed
-                                    console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
-                                    pool.initialPrice = normalizedPrice;
-                                    roiVal = 0;
+                            // If ROI is extreme negative on first check, the stored initialPrice is likely broken.
+                            if (roiVal < -90) {
+                                // Try Blockchain Reconstruction as the absolute truth
+                                if (!pool.priceReconstructed) {
+                                    console.log(`[MONITOR] Severe loss detected on ${pool.token} (${roiString}). Attempting Blockchain reconstruction...`);
+                                    const verifiedInitial = await this.reconstructInitialPrice(pool.poolId, pool.mint);
+                                    if (verifiedInitial > 0) {
+                                        pool.initialPrice = verifiedInitial;
+                                        roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
+                                        console.log(`[MONITOR] ROI Recovered for ${pool.token}: ${roiVal.toFixed(2)}%`);
+                                    }
+                                    pool.priceReconstructed = true;
+                                }
+
+                                if (roiVal < -95 && pool.roi === "0%") {
+                                    const invertedInitial = 1 / pool.initialPrice;
+                                    const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
+                                    if (Math.abs(newRoi) < 50) {
+                                        console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
+                                        pool.initialPrice = invertedInitial;
+                                        roiVal = newRoi;
+                                    } else {
+                                        // If inversion doesn't fix it, reset initial to current to stop the bleed
+                                        console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
+                                        pool.initialPrice = normalizedPrice;
+                                        roiVal = 0;
+                                    }
                                 }
                             }
 
@@ -836,8 +858,17 @@ export class BotManager {
                 return result;
             } else {
                 SocketManager.emitLog(`[ERROR] Withdrawal failed: ${result.error}`, "error");
-                // Clear pending flag so it can be re-tried
-                await this.updatePoolROI(poolId, "FAILED", false, undefined, { withdrawalPending: false });
+
+                // Issue: Ghost Positions (Position gone from chain but in our JSON)
+                // If the error specifically says "No active position found", it means we can't manage this anymore.
+                // We should mark it as exited so the bot stops spamming SL/TP checks.
+                if (result.error?.includes("No active position found")) {
+                    SocketManager.emitLog(`[RECOVERY] Pool position is gone from chain. Marking ${poolId.slice(0, 8)}... as EXITED.`, "warning");
+                    await this.updatePoolROI(poolId, "GONE", true, undefined, { withdrawalPending: false });
+                } else {
+                    // Clear pending flag so it can be re-tried for other errors
+                    await this.updatePoolROI(poolId, "FAILED", false, undefined, { withdrawalPending: false });
+                }
                 return result;
             }
         } catch (err: any) {

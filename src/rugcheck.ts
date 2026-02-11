@@ -218,14 +218,15 @@ export class OnChainSafetyChecker {
 
         // Raydium V4
         if (owner === "675k1S2AYp7jkS6GMBv6mUeBBSyitjGatE2Gf2n4jGvP") {
-            // lpMint is at offset 328 (32 bytes) in Raydium V4 AMM layout
+            // lpMint is at offset 328 in Raydium V4 AMM layout
             lpMint = new PublicKey(info.data.slice(328, 328 + 32)).toBase58();
         }
         // Meteora CP-AMM
-        else if (owner === "comp918Y7yG8itk9unB9p7jBMYxX2C12i8PSpdHeoX" || owner === "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C") {
-            // lpMint is at offset 168 (32 bytes) in Meteora CP-AMM PoolState
+        else if (owner === "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C") {
+            // lpMint is at offset 168 in Meteora CP-AMM PoolState
             lpMint = new PublicKey(info.data.slice(168, 168 + 32)).toBase58();
         }
+        // Fallback for other DEXs (like DLMM, Orca) can be added here if offsets are known
 
         if (!lpMint || lpMint === "11111111111111111111111111111111") return false;
 

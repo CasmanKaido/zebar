@@ -168,6 +168,12 @@ export class StrategyManager {
                 const b58Swap = bs58.encode(transaction.serialize());
                 const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
 
+                // Defensive Verification: Ensure no invalid strings reach Jito
+                const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
+                if (!isBase58(b58Swap) || !isBase58(b58Tip)) {
+                    throw new Error(`Serialization Failure: Transaction contains non-base58 characters before encoding? (Swap: ${isBase58(b58Swap)}, Tip: ${isBase58(b58Tip)})`);
+                }
+
                 const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Jupiter+Tip");
 
                 if (!jitoResult.success) {
@@ -177,7 +183,11 @@ export class StrategyManager {
                 console.log(`[JITO] Bundle Submitted. Waiting for confirmation...`);
                 // We track the Swap Transaction Signature
                 // (The bundle ID is internal to Jito, the blockchain sees the tx signature)
-                const signature = bs58.encode(transaction.signatures[0]);
+                const sigBuffer = transaction.signatures[0];
+                if (!sigBuffer || sigBuffer.every(b => b === 0)) {
+                    throw new Error("Transaction signature is empty or invalid after signing.");
+                }
+                const signature = bs58.encode(sigBuffer);
 
                 await this.confirmOrRetry(signature);
                 console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
@@ -984,9 +994,23 @@ export class StrategyManager {
 
             if (USE_JITO) {
                 console.log(`[METEORA] Sending Pool Creation via Jito Bundle...`);
+
+                // CRITICAL: Sign with both Wallet AND Position NFT Mint before serializing for Jito
+                if (transaction instanceof Transaction) {
+                    transaction.partialSign(this.wallet, positionNftMint);
+                } else {
+                    (transaction as VersionedTransaction).sign([this.wallet, positionNftMint]);
+                }
+
                 const b58Swap = bs58.encode(transaction.serialize());
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP);
                 const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
+
+                // Defensive Verification
+                const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
+                if (!isBase58(b58Swap) || !isBase58(b58Tip)) {
+                    throw new Error(`Serialization Failure in Pool Creation! (Swap: ${isBase58(b58Swap)}, Tip: ${isBase58(b58Tip)})`);
+                }
 
                 const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "CreatePool+Tip");
                 if (jitoResult.success) {
