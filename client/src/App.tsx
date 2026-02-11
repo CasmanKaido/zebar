@@ -32,6 +32,7 @@ interface Pool {
     poolId: string;
     token: string;
     roi: string;
+    netRoi?: string;     // Inventory-based ROI
     created: string;
     unclaimedFees?: { sol: string; token: string };
     exited?: boolean;
@@ -40,6 +41,7 @@ interface Pool {
 interface PoolUpdate {
     poolId: string;
     roi?: string;
+    netRoi?: string;
     unclaimedFees?: { sol: string; token: string };
     exited?: boolean;
 }
@@ -210,6 +212,7 @@ function App() {
             setPools(prev => prev.map(p => p.poolId === update.poolId ? {
                 ...p,
                 roi: update.roi || p.roi,
+                netRoi: update.netRoi || p.netRoi,
                 unclaimedFees: update.unclaimedFees || p.unclaimedFees,
                 exited: update.exited !== undefined ? update.exited : p.exited
             } : p));
@@ -789,10 +792,15 @@ function App() {
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">ROI</p>
-                                        <p className={`text-xl font-bold transition-colors ${pool.roi.startsWith('-') ? 'text-red-400' : 'text-emerald-400 group-hover:text-primary'}`}>
-                                            {pool.roi}
-                                        </p>
+                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Spot / Net ROI</p>
+                                        <div className="flex flex-col items-end">
+                                            <p className={`text-sm font-mono transition-colors ${pool.roi.startsWith('-') ? 'text-red-400/70' : 'text-emerald-400/70'}`}>
+                                                {pool.roi}
+                                            </p>
+                                            <p className={`text-xl font-bold transition-colors ${pool.netRoi?.startsWith('-') ? 'text-red-400' : 'text-emerald-400 group-hover:text-primary'}`}>
+                                                {pool.netRoi || '---'}
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
 

@@ -251,7 +251,13 @@ export class BotManager {
             };
 
             await dbService.savePool(updatedPool);
-            SocketManager.emitPoolUpdate({ poolId, roi, exited, unclaimedFees: updatedPool.unclaimedFees });
+            SocketManager.emitPoolUpdate({
+                poolId,
+                roi,
+                netRoi: updatedPool.netRoi,
+                exited,
+                unclaimedFees: updatedPool.unclaimedFees
+            });
         } catch (e) {
             console.error("[DB] Update ROI Failed:", e);
         }
@@ -462,6 +468,7 @@ export class BotManager {
                             };
 
                             const initialPrice = tokenUiAmountChecked > 0 ? finalLpppUiAmount / tokenUiAmountChecked : 0;
+                            const initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
 
                             const fullPoolData: PoolData = {
                                 ...poolEvent,
@@ -469,6 +476,7 @@ export class BotManager {
                                 initialPrice,
                                 initialTokenAmount: tokenUiAmountChecked,
                                 initialLpppAmount: finalLpppUiAmount,
+                                initialSolValue,
                                 exited: false,
                                 positionId: poolInfo.positionAddress,
                                 unclaimedFees: { sol: "0", token: "0" }
@@ -620,31 +628,14 @@ export class BotManager {
                         if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
                         if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
 
-                        // Sort mints to match Meteora's on-chain vault derivation order
-                        const sortedMintA = new PublicKey(pool.mint).toBuffer().compare(LPPP_MINT.toBuffer()) < 0 ? pool.mint : LPPP_MINT_ADDR;
-                        const sortedMintB = sortedMintA === pool.mint ? LPPP_MINT_ADDR : pool.mint;
-                        const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
+                        const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint);
 
-                        const status = await this.strategy.getPoolStatus(pool.poolId, sortedMintA, sortedMintB);
-                        const fees = await this.strategy.getMeteoraFees(pool.poolId);
+                        if (posValue.success) {
+                            // 1. Update Fees
+                            pool.unclaimedFees = { sol: posValue.feesSol.toString(), token: "0" };
 
-                        console.log(`[MONITOR DEBUG] Status: ${JSON.stringify(status)}`);
-                        console.log(`[MONITOR DEBUG] Fees: A=${fees.feeA}, B=${fees.feeB}`);
-
-                        const feeTokenRaw = pool.mint === sortedMintA ? fees.feeA : fees.feeB;
-                        const feeLpppRaw = LPPP_MINT_ADDR === sortedMintA ? fees.feeA : fees.feeB;
-
-                        // Display raw fee amounts (no scaling needed — SDK returns atomic units)
-                        const adjustedLpppFee = feeLpppRaw.toString();
-                        const adjustedTokenFee = feeTokenRaw.toString();
-
-                        pool.unclaimedFees = { sol: adjustedLpppFee, token: adjustedTokenFee };
-                        SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
-
-                        if (status.success && status.price > 0) {
-                            const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
-                            const normalizedPrice = lpppIsMintA ? (1 / status.price) : status.price;
-
+                            // 2. Spot ROI (Price-based)
+                            const normalizedPrice = posValue.spotPrice;
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
                             // ═══ AUTO-RECALIBRATION (Simplified) ═══
@@ -657,7 +648,6 @@ export class BotManager {
                                         pool.initialPrice = invertedInitial;
                                         roiVal = newRoi;
                                     } else {
-                                        // If inversion doesn't fix it, reset initial to current to stop the bleed
                                         console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
                                         pool.initialPrice = normalizedPrice;
                                         roiVal = 0;
@@ -667,17 +657,31 @@ export class BotManager {
 
                             const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
+                            pool.roi = roiString;
 
-                            console.log(`[MONITOR DEBUG] NormPrice: ${normalizedPrice}, Initial: ${pool.initialPrice}, ROI: ${roiString}`);
+                            // 3. NET ROI (Inventory-based)
+                            // Initialize initialSolValue if missing (for legacy positions)
+                            if (!pool.initialSolValue) {
+                                pool.initialSolValue = pool.initialLpppAmount + (pool.initialTokenAmount * pool.initialPrice);
+                            }
+
+                            const netProfit = posValue.totalSol - pool.initialSolValue;
+                            const netRoiVal = (netProfit / pool.initialSolValue) * 100;
+                            pool.netRoi = `${netRoiVal.toFixed(2)}%`;
+
+                            console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | SolValue: ${posValue.totalSol.toFixed(4)}`);
 
                             // Update local state and emit
-                            pool.roi = roiString;
-                            await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees);
+                            await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
+                                netRoi: pool.netRoi,
+                                initialSolValue: pool.initialSolValue
+                            });
 
                             // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
-                            if (roiVal >= 300 && !pool.tp1Done) {
+                            // We use Net ROI for all decisions to ensure real profit capture
+                            if (netRoiVal >= 300 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} hit 3x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                                SocketManager.emitLog(`[TP1] ${pool.token} hit 3x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
@@ -687,9 +691,9 @@ export class BotManager {
                             }
 
                             // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
-                            if (roiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
+                            if (netRoiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} hit 6x (+${roiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                                SocketManager.emitLog(`[TP2] ${pool.token} hit 6x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
@@ -699,9 +703,9 @@ export class BotManager {
                             }
 
                             // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
-                            if (roiVal <= -30 && !pool.stopLossDone) {
+                            if (netRoiVal <= -30 && !pool.stopLossDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${roiVal.toFixed(0)}%! Withdrawing 80%...`, "error");
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${netRoiVal.toFixed(0)}% Net Loss! Withdrawing 80%...`, "error");
                                 const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);

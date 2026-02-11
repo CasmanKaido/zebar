@@ -40,6 +40,8 @@ export class DatabaseService {
                 fee_token TEXT,
                 withdrawalPending INTEGER NOT NULL DEFAULT 0,
                 priceReconstructed INTEGER NOT NULL DEFAULT 0,
+                netRoi TEXT,
+                initialSolValue REAL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -74,12 +76,14 @@ export class DatabaseService {
                 poolId, token, mint, roi, created, initialPrice, 
                 initialTokenAmount, initialLpppAmount, exited, 
                 tp1Done, takeProfitDone, stopLossDone, positionId, 
-                fee_sol, fee_token, withdrawalPending, priceReconstructed
+                fee_sol, fee_token, withdrawalPending, priceReconstructed,
+                netRoi, initialSolValue
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
                 @tp1Done, @takeProfitDone, @stopLossDone, @positionId,
-                @fee_sol, @fee_token, @withdrawalPending, @priceReconstructed
+                @fee_sol, @fee_token, @withdrawalPending, @priceReconstructed,
+                @netRoi, @initialSolValue
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
                 exited = excluded.exited,
@@ -91,6 +95,8 @@ export class DatabaseService {
                 fee_token = excluded.fee_token,
                 withdrawalPending = excluded.withdrawalPending,
                 priceReconstructed = excluded.priceReconstructed,
+                netRoi = excluded.netRoi,
+                initialSolValue = excluded.initialSolValue,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -157,7 +163,9 @@ export class DatabaseService {
                 token: row.fee_token || "0"
             },
             withdrawalPending: !!row.withdrawalPending,
-            priceReconstructed: !!row.priceReconstructed
+            priceReconstructed: !!row.priceReconstructed,
+            netRoi: row.netRoi,
+            initialSolValue: row.initialSolValue
         };
     }
 

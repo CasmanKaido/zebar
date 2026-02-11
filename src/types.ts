@@ -13,6 +13,8 @@ export interface PoolData {
     stopLossDone?: boolean;  // Flag: Stop Loss (-30%) completed
     positionId?: string; // Meteora Position PDA
     unclaimedFees?: { sol: string; token: string };
+    netRoi?: string;     // Inventory-based ROI (Real Profit)
+    initialSolValue?: number; // Total SOL value at start
     withdrawalPending?: boolean; // Flag for atomicity (Issue 30)
     priceReconstructed?: boolean; // Flag: Entry price audit complete
 }

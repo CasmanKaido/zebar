@@ -1263,10 +1263,8 @@ export class StrategyManager {
      * Gets total pool liquidity status.
      */
     async getPoolStatus(poolAddress: string, tokenAMint: string, tokenBMint: string): Promise<{ tokenAmount: number; baseAmount: number; price: number; success: boolean; metrics?: any }> {
-        const { deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
-        const { PublicKey } = require("@solana/web3.js");
-
         try {
+            const { deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
             const poolPubkey = new PublicKey(poolAddress);
             const tokenAPubkey = new PublicKey(tokenAMint);
             const tokenBPubkey = new PublicKey(tokenBMint);
@@ -1279,27 +1277,78 @@ export class StrategyManager {
             const balanceA = await this.connection.getTokenAccountBalance(vaultA);
             const balanceB = await this.connection.getTokenAccountBalance(vaultB);
 
-            // 3. Parse Balances (handle decimals if needed, but uiAmount is easiest for price)
             const amountA = balanceA.value.uiAmount || 0;
             const amountB = balanceB.value.uiAmount || 0;
 
-            if (amountA === 0) {
-                // All of token A sold out — price is effectively infinite (extreme moon)
-                return { price: amountB > 0 ? Infinity : 0, tokenAmount: 0, baseAmount: amountB, success: amountB > 0 };
-            }
+            if (amountA === 0) return { price: amountB > 0 ? Infinity : 0, tokenAmount: 0, baseAmount: amountB, success: amountB > 0 };
 
-            // 4. Calculate Price (B per A) -> Assuming B is Quote (LPPP)
             const price = amountB / amountA;
-
-            return {
-                price,
-                tokenAmount: amountA,
-                baseAmount: amountB,
-                success: true
-            };
+            return { price, tokenAmount: amountA, baseAmount: amountB, success: true };
         } catch (error) {
             console.warn(`[STRATEGY] Failed to fetch pool status for ${poolAddress}:`, error);
             return { price: 0, tokenAmount: 0, baseAmount: 0, success: false };
+        }
+    }
+
+    /**
+     * Calculates the total value of a Meteora position in SOL (Net Position Value).
+     * SUM(TokenValueInSOL + SolValue + FeesInSol)
+     */
+    async getPositionValue(poolAddress: string, tokenMint: string): Promise<{ totalSol: number; feesSol: number; spotPrice: number; success: boolean }> {
+        try {
+            const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
+            const cpAmm = new CpAmm(this.connection);
+            const poolPubkey = new PublicKey(poolAddress);
+
+            // 1. Fetch Pool State & Sorted Mints
+            const poolState = await cpAmm.fetchPoolState(poolPubkey);
+            const mintA = poolState.tokenAMint;
+            const mintB = poolState.tokenBMint;
+
+            // 2. Derive Vaults & Fetch Balances
+            const vaultA = deriveTokenVaultAddress(mintA, poolPubkey);
+            const vaultB = deriveTokenVaultAddress(mintB, poolPubkey);
+            const [balA, balB] = await Promise.all([
+                this.connection.getTokenAccountBalance(vaultA),
+                this.connection.getTokenAccountBalance(vaultB)
+            ]);
+
+            const amountA = balA.value.uiAmount || 0;
+            const amountB = balB.value.uiAmount || 0;
+
+            // 3. Determine which side is SOL (LPPP proxy)
+            const isLpppA = mintA.toBase58() === LPPP_MINT.toBase58();
+            const solAmount = isLpppA ? amountA : amountB;
+            const tokenAmount = isLpppA ? amountB : amountA;
+
+            // 4. Calculate Spot Price (LPPP per Token)
+            const spotPrice = isLpppA ? (amountA / amountB) : (amountB / amountA);
+
+            // 5. Fetch Pending Fees
+            const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
+            let feesSol = 0;
+            if (userPositions.length > 0) {
+                const pos = userPositions[0];
+                const feeA = Number(pos.positionState.feeAPending.toString()) / 1e9; // Assuming 9 decimals for LPPP/SOL
+                const feeB = Number(pos.positionState.feeBPending.toString()) / 1e9; // Need to be careful with token decimals here
+
+                // For simplified ROI, we mostly care about the SOL-side fees
+                feesSol = isLpppA ? feeA : feeB;
+            }
+
+            // 6. Total Value in SOL units
+            // (Token Inventory * Price) + SOL Inventory + Fees
+            const totalSol = (tokenAmount * spotPrice) + solAmount + feesSol;
+
+            return {
+                totalSol,
+                feesSol,
+                spotPrice,
+                success: true
+            };
+        } catch (error) {
+            console.error(`[STRATEGY] getPositionValue Failed:`, error);
+            return { totalSol: 0, feesSol: 0, spotPrice: 0, success: false };
         }
     }
 
