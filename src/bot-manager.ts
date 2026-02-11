@@ -732,7 +732,7 @@ export class BotManager {
                             if (roiVal < -90) {
                                 // Try Blockchain Reconstruction as the absolute truth
                                 if (!pool.priceReconstructed) {
-                                    console.log(`[MONITOR] Severe loss detected on ${pool.token} (${roiString}). Attempting Blockchain reconstruction...`);
+                                    console.log(`[MONITOR] Severe loss detected on ${pool.token} (${roiVal.toFixed(2)}%). Attempting Blockchain reconstruction...`);
                                     const verifiedInitial = await this.reconstructInitialPrice(pool.poolId, pool.mint);
                                     if (verifiedInitial > 0) {
                                         pool.initialPrice = verifiedInitial;
