@@ -651,28 +651,36 @@ export class BotManager {
                         SocketManager.emitPoolUpdate({ poolId: pool.poolId, unclaimedFees: pool.unclaimedFees });
 
                         if (status.success && status.price > 0) {
-                            // Normalize price direction: initialPrice is always LPPP/Token.
-                            // If LPPP is mintA, pool price = reserveA/reserveB = LPPP/Token (correct).
-                            // If LPPP is mintB, pool price = reserveA/reserveB = Token/LPPP (need to invert).
                             const lpppIsMintA = LPPP_MINT_ADDR === sortedMintA;
                             const normalizedPrice = lpppIsMintA ? (1 / status.price) : status.price;
-                            const roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
+
+                            let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
+
+                            // ═══ AUTO-RECALIBRATION (Issue: Stale Inverted Prices) ═══
+                            // If ROI is extreme negative on first check, the stored initialPrice is likely inverted.
+                            if (roiVal < -95 && pool.roi === "0%") {
+                                const invertedInitial = 1 / pool.initialPrice;
+                                const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
+                                if (Math.abs(newRoi) < 50) {
+                                    console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
+                                    pool.initialPrice = invertedInitial;
+                                    roiVal = newRoi;
+                                } else {
+                                    // If inversion doesn't fix it, reset initial to current to stop the bleed
+                                    console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
+                                    pool.initialPrice = normalizedPrice;
+                                    roiVal = 0;
+                                }
+                            }
+
                             const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
 
                             console.log(`[MONITOR DEBUG] NormPrice: ${normalizedPrice}, Initial: ${pool.initialPrice}, ROI: ${roiString}`);
-                            // ... continued
 
-                            // Sanity check: extreme negative ROI on first check likely means price inversion issue
-                            if (roiVal < -50 && pool.roi === "0%") {
-                                SocketManager.emitLog(`[MONITOR WARN] ${pool.token} ROI is ${roiString} on first check — possible price inversion. Skipping action.`, "warning");
-                                continue;
-                            }
-                            if (roiString !== pool.roi) {
-                                console.log(`[MONITOR DEBUG] ROI Update: ${pool.roi} -> ${roiString}`);
-                                await this.updatePoolROI(pool.poolId, roiString, false);
-                                SocketManager.emitPoolUpdate({ poolId: pool.poolId, roi: roiString });
-                            }
+                            // Update local state and emit
+                            pool.roi = roiString;
+                            await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees);
 
                             // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
                             if (roiVal >= 300 && !pool.tp1Done) {
