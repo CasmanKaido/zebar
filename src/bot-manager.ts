@@ -344,9 +344,8 @@ export class BotManager {
             SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
             SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
 
-            // 0. On-Chain Safety Check (Mint/Freeze Authority + LP Lock)
             try {
-                const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress);
+                const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
                 if (!safety.safe) {
                     SocketManager.emitLog(`[SAFETY] ❌ Skipped ${result.symbol}: ${safety.reason}`, "error");
                     return;

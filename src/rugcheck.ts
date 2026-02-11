@@ -1,3 +1,4 @@
+
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { SocketManager } from "./socket";
@@ -59,7 +60,8 @@ export class OnChainSafetyChecker {
      */
     static async checkToken(
         connection: Connection,
-        mintAddress: string
+        mintAddress: string,
+        pairAddress?: string
     ): Promise<SafetyResult> {
         const mint = new PublicKey(mintAddress);
         const result: SafetyResult = {
@@ -74,7 +76,6 @@ export class OnChainSafetyChecker {
 
         // ═══ 1. Mint Authority Check ═══
         try {
-            // Try standard SPL Token first, then Token-2022
             let mintInfo;
             try {
                 mintInfo = await getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID);
@@ -110,18 +111,28 @@ export class OnChainSafetyChecker {
         }
 
         // ═══ 3. Liquidity Lock Check ═══
-        // Strategy: Find the largest token accounts for this mint.
-        // If the top holders are known locker programs or burn addresses,
-        // we consider liquidity locked.
         try {
-            const largestAccounts = await connection.getTokenLargestAccounts(mint);
-            const topAccounts = largestAccounts.value.slice(0, 20); // Check top 20 holders for bundling
+            // Priority: Check LP Mint if pairAddress is provided
+            let lpLocked = false;
+            if (pairAddress) {
+                try {
+                    lpLocked = await this.checkLpLock(connection, pairAddress);
+                } catch (lpErr) {
+                    console.warn(`[SAFETY] Dedicated LP lock check failed: ${lpErr}`);
+                }
+            }
 
-            if (topAccounts.length === 0) {
-                result.checks.liquidityLocked = "unknown";
-                SocketManager.emitLog(`[SAFETY] ⚠️ No token accounts found for LP lock check`, "warning");
-            } else {
-                // Get owner info for the top accounts
+            if (lpLocked) {
+                result.checks.liquidityLocked = "locked";
+                SocketManager.emitLog(`[SAFETY] ✅ LP Tokens verified LOCKED/BURNED`, "success");
+                return result;
+            }
+
+            // Fallback: Check largest accounts of the token itself (Heuristic)
+            const largestAccounts = await connection.getTokenLargestAccounts(mint);
+            const topAccounts = largestAccounts.value.slice(0, 20);
+
+            if (topAccounts.length > 0) {
                 const accountInfos = await connection.getMultipleAccountsInfo(
                     topAccounts.map(a => a.address)
                 );
@@ -130,7 +141,6 @@ export class OnChainSafetyChecker {
                 let totalSupplyChecked = 0;
                 let devConcentration = 0;
 
-                // Heuristic: Bundle Detection (Identical Balances)
                 const balanceCounts = new Map<number, number>();
                 let maxDuplicates = 0;
 
@@ -145,14 +155,11 @@ export class OnChainSafetyChecker {
                         maxDuplicates = Math.max(maxDuplicates, count);
                     }
 
-                    // Only count concentration for non-lockers
                     if (info?.owner) {
                         const ownerStr = info.owner.toBase58();
-                        // Check if the owner is a known locker or the token is burned
                         if (KNOWN_LOCKERS.has(ownerStr) || account.address.toBase58() === BURN_ADDRESS) {
                             lockedAmount += amount;
                         } else {
-                            // Non-locker account — track concentration
                             devConcentration += amount;
                         }
                     }
@@ -166,11 +173,8 @@ export class OnChainSafetyChecker {
                     return result;
                 }
 
-                // Strategy: Get actual total supply (Issue 35)
                 const mintInfo = await getMint(connection, mint);
                 const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
-
-                // If supply is extremely low or 0, avoid division by zero
                 const divisor = totalSupply > 0 ? totalSupply : totalSupplyChecked;
                 const concentrationRatio = devConcentration / divisor;
 
@@ -181,22 +185,73 @@ export class OnChainSafetyChecker {
                     return result;
                 }
 
-                // We consider it "locked" if we can't determine (most tokens don't lock LP this way)
                 if (lockedAmount > 0) {
                     result.checks.liquidityLocked = "locked";
-                    SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned`, "success");
+                    SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned (token level)`, "success");
                 } else {
                     result.checks.liquidityLocked = "unlocked";
-                    // Log warning but don't block — many legitimate tokens don't use lockers
-                    SocketManager.emitLog(`[SAFETY] ⚠️ No locked LP detected (not blocking)`, "warning");
+                    // BLOCK UNLOCKED LIQUIDITY
+                    result.safe = false;
+                    result.reason = "No locked liquidity detected (verified via lpMint and token holders)";
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... NO LOCKED LP DETECTED`, "error");
+                    return result;
                 }
             }
         } catch (err: any) {
             console.warn(`[SAFETY] LP lock check failed: ${err.message}`);
             result.checks.liquidityLocked = "unknown";
-            // Don't fail the entire check for LP lock issues
         }
 
         return result;
+    }
+
+    /**
+     * Checks if the LP tokens for a given pool are locked or burned.
+     */
+    private static async checkLpLock(connection: Connection, pairAddress: string): Promise<boolean> {
+        const pairPubkey = new PublicKey(pairAddress);
+        const info = await connection.getAccountInfo(pairPubkey);
+        if (!info) return false;
+
+        const owner = info.owner.toBase58();
+        let lpMint: string | null = null;
+
+        // Raydium V4
+        if (owner === "675k1S2AYp7jkS6GMBv6mUeBBSyitjGatE2Gf2n4jGvP") {
+            // lpMint is at offset 328 (32 bytes) in Raydium V4 AMM layout
+            lpMint = new PublicKey(info.data.slice(328, 328 + 32)).toBase58();
+        }
+        // Meteora CP-AMM
+        else if (owner === "comp918Y7yG8itk9unB9p7jBMYxX2C12i8PSpdHeoX" || owner === "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C") {
+            // lpMint is at offset 168 (32 bytes) in Meteora CP-AMM PoolState
+            lpMint = new PublicKey(info.data.slice(168, 168 + 32)).toBase58();
+        }
+
+        if (!lpMint || lpMint === "11111111111111111111111111111111") return false;
+
+        // Check holders of the LP Mint
+        const largestLpAccounts = await connection.getTokenLargestAccounts(new PublicKey(lpMint));
+        const topLpAccounts = largestLpAccounts.value.slice(0, 5);
+        const lpAccountInfos = await connection.getMultipleAccountsInfo(topLpAccounts.map(a => a.address));
+
+        let lockedLpAmount = 0;
+        let totalLpChecked = 0;
+
+        for (let i = 0; i < topLpAccounts.length; i++) {
+            const acc = topLpAccounts[i];
+            const meta = lpAccountInfos[i];
+            const amount = Number(acc.uiAmount || 0);
+            totalLpChecked += amount;
+
+            if (meta?.owner) {
+                const ownerStr = meta.owner.toBase58();
+                if (KNOWN_LOCKERS.has(ownerStr) || acc.address.toBase58() === BURN_ADDRESS || ownerStr === BURN_ADDRESS) {
+                    lockedLpAmount += amount;
+                }
+            }
+        }
+
+        // Consider locked if >95% is in lockers or burned
+        return (lockedLpAmount / totalLpChecked) > 0.95;
     }
 }
