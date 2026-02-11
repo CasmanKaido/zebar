@@ -8,8 +8,8 @@ services:
     env_file:
       - .env
     volumes:
-      # Optional: Persist logs or data if you have local DB files
       - ./logs:/app/logs
+      - ./data:/app/data
     environment:
       - NODE_ENV=production
       - PORT=3000
