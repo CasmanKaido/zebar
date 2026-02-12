@@ -113,6 +113,84 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
     );
 };
 
+const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity }: {
+    pool: Pool;
+    isBot: boolean;
+    claimFees: (id: string) => void;
+    increaseLiquidity: (id: string) => void;
+    withdrawLiquidity: (id: string, pct: number) => void;
+}) => (
+    <div key={pool.poolId} className={`bg-secondary border p-4 rounded-md flex flex-col gap-4 group transition-all duration-300 ${isBot ? 'hover:border-pink-500/50 border-border shadow-[0_4px_12px_rgba(236,72,153,0.05)]' : 'hover:border-primary/50 border-border opacity-90'}`}>
+        <div className="flex justify-between items-start">
+            <div>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
+                <div className="flex items-center gap-2">
+                    <a
+                        href={`https://solscan.io/account/${pool.poolId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`font-mono text-[13px] hover:underline flex items-center gap-1.5 transition-colors ${isBot ? 'text-pink-400' : 'text-primary'}`}
+                    >
+                        {pool.poolId.slice(0, 12)}...
+                        <ExternalLink size={10} className="opacity-50" />
+                    </a>
+                </div>
+                <div className="flex items-center gap-2 mt-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] rounded font-bold ${isBot ? 'bg-pink-500/10 text-pink-500 border border-pink-500/20' : 'bg-primary/10 text-primary'}`}>{pool.token}</span>
+                    {isBot && (
+                        <span className="px-1.5 py-0.5 bg-pink-500/20 text-pink-500 text-[8px] rounded font-black border border-pink-500/30 flex items-center gap-1 animate-pulse">
+                            <Zap size={8} /> LIVE SNIPE
+                        </span>
+                    )}
+                    <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
+                </div>
+            </div>
+            <div className="text-right">
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Spot / Net ROI</p>
+                <div className="flex flex-col items-end">
+                    <p className={`text-sm font-mono transition-colors ${pool.roi.startsWith('-') ? 'text-red-400/70' : 'text-emerald-400/70'}`}>
+                        {pool.roi}
+                    </p>
+                    <p className={`text-xl font-bold transition-colors ${pool.netRoi?.startsWith('-') ? 'text-red-400' : 'text-emerald-400'}`}>
+                        {pool.netRoi || '---'}
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div className="flex justify-between items-center py-2 px-3 bg-card/30 rounded border border-border/50">
+            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Unclaimed Fees</span>
+            <div className="text-right">
+                <p className="text-[11px] font-bold text-emerald-400">{(Number(pool.unclaimedFees?.sol || 0) / 1e9).toFixed(5)} SOL</p>
+                <p className="text-[9px] text-muted-foreground/60">{(Number(pool.unclaimedFees?.token || 0) / 1e9).toFixed(2)} {pool.token}</p>
+            </div>
+        </div>
+
+        <div className="flex flex-col gap-2 mt-auto">
+            <div className="grid grid-cols-2 gap-2">
+                <button
+                    onClick={() => claimFees(pool.poolId)}
+                    className="py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 text-[10px] font-black rounded border border-emerald-500/20 transition-all flex items-center justify-center gap-1"
+                >
+                    <Zap size={10} /> HARVEST
+                </button>
+                <button
+                    onClick={() => increaseLiquidity(pool.poolId)}
+                    className="py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-black rounded border border-primary/20 transition-all flex items-center justify-center gap-1"
+                >
+                    <Droplets size={10} /> ADD LIQ
+                </button>
+            </div>
+            <button
+                onClick={() => withdrawLiquidity(pool.poolId, 100)}
+                className={`w-full mt-2 py-1.5 text-white text-[10px] font-black rounded shadow-lg transition-all ${isBot ? 'bg-pink-600 hover:bg-pink-700' : 'bg-red-600 hover:bg-red-700'}`}
+            >
+                FULL CLOSE
+            </button>
+        </div>
+    </div>
+);
+
 function App() {
     const [running, setRunning] = useState(false);
     const [logs, setLogs] = useState<Log[]>([]);
@@ -137,7 +215,6 @@ function App() {
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
-    const [showOnlyBotManaged, setShowOnlyBotManaged] = useState(false);
 
     // Modal State
     const [modalConfig, setModalConfig] = useState<{
@@ -767,106 +844,55 @@ function App() {
                 </div>
 
                 {/* Bottom Section: Pools */}
-                <div className="lg:col-span-3 bg-card border border-border rounded-lg p-5">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                            <Zap size={18} className="text-primary" />
-                            <h2 className="text-sm font-semibold">Active Liquidity Pools</h2>
+                <div className="lg:col-span-3 space-y-8">
+                    {/* section 1: Bot Managed */}
+                    <div className="bg-card border border-border rounded-lg p-5">
+                        <div className="flex items-center gap-2 mb-4">
+                            <Zap size={18} className="text-pink-500" />
+                            <h2 className="text-sm font-semibold uppercase tracking-wider">Bot Managed Positions</h2>
                         </div>
-                        <div className="flex items-center gap-3">
-                            <label className="flex items-center gap-2 cursor-pointer group">
-                                <span className="text-[10px] font-bold text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-widest">Bot Managed Only</span>
-                                <div className="relative inline-block w-8 h-4">
-                                    <input
-                                        type="checkbox"
-                                        className="sr-only"
-                                        checked={showOnlyBotManaged}
-                                        onChange={() => setShowOnlyBotManaged(!showOnlyBotManaged)}
-                                    />
-                                    <div className={`block w-full h-full rounded-full transition-colors ${showOnlyBotManaged ? 'bg-primary' : 'bg-muted-foreground'}`}></div>
-                                    <div className={`absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition-transform ${showOnlyBotManaged ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {pools.filter(p => !p.exited && p.isBotCreated).map(pool => (
+                                <PoolCard
+                                    key={pool.poolId}
+                                    pool={pool}
+                                    isBot={true}
+                                    claimFees={claimFees}
+                                    increaseLiquidity={increaseLiquidity}
+                                    withdrawLiquidity={withdrawLiquidity}
+                                />
+                            ))}
+                            {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (
+                                <div className="col-span-full py-6 text-center text-muted-foreground/40 text-[11px] border border-dashed border-border rounded">
+                                    No active bot-managed snipes yet.
                                 </div>
-                            </label>
+                            )}
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {pools.filter(p => !p.exited && (!showOnlyBotManaged || p.isBotCreated)).map(pool => (
-                            <div key={pool.poolId} className="bg-secondary border border-border p-4 rounded-md flex flex-col gap-4 group hover:border-primary/50 transition-colors">
-                                <div className="flex justify-between items-start">
-                                    <div>
-                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
-                                        <a
-                                            href={`https://solscan.io/account/${pool.poolId}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="font-mono text-[13px] text-primary hover:text-primary/80 hover:underline flex items-center gap-1.5 transition-colors"
-                                        >
-                                            {pool.poolId.slice(0, 12)}...
-                                            <ExternalLink size={10} className="opacity-50" />
-                                        </a>
-                                        <div className="flex items-center gap-2 mt-2">
-                                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] rounded font-bold">{pool.token}</span>
-                                            {pool.isBotCreated && (
-                                                <span className="px-1.5 py-0.5 bg-pink-500/20 text-pink-500 text-[8px] rounded font-black border border-pink-500/30 flex items-center gap-1">
-                                                    <Zap size={8} /> BOT MANAGED
-                                                </span>
-                                            )}
-                                            <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Spot / Net ROI</p>
-                                        <div className="flex flex-col items-end">
-                                            <p className={`text-sm font-mono transition-colors ${pool.roi.startsWith('-') ? 'text-red-400/70' : 'text-emerald-400/70'}`}>
-                                                {pool.roi}
-                                            </p>
-                                            <p className={`text-xl font-bold transition-colors ${pool.netRoi?.startsWith('-') ? 'text-red-400' : 'text-emerald-400 group-hover:text-primary'}`}>
-                                                {pool.netRoi || '---'}
-                                            </p>
-                                        </div>
-                                    </div>
+                    {/* section 2: Recovered / External */}
+                    <div className="bg-card border border-border rounded-lg p-5 opacity-80 hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-2 mb-4">
+                            <ShieldAlert size={18} className="text-muted-foreground" />
+                            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recovered / External Positions</h2>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {pools.filter(p => !p.exited && !p.isBotCreated).map(pool => (
+                                <PoolCard
+                                    key={pool.poolId}
+                                    pool={pool}
+                                    isBot={false}
+                                    claimFees={claimFees}
+                                    increaseLiquidity={increaseLiquidity}
+                                    withdrawLiquidity={withdrawLiquidity}
+                                />
+                            ))}
+                            {pools.filter(p => !p.exited && !p.isBotCreated).length === 0 && (
+                                <div className="col-span-full py-6 text-center text-muted-foreground/40 text-[11px] border border-dashed border-border rounded">
+                                    No recovered external positions found.
                                 </div>
-
-                                <div className="flex justify-between items-center py-2 px-3 bg-card/30 rounded border border-border/50">
-                                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Unclaimed Fees</span>
-                                    <div className="text-right">
-                                        <p className="text-[11px] font-bold text-emerald-400">{(Number(pool.unclaimedFees?.sol || 0) / 1e9).toFixed(5)} SOL</p>
-                                        <p className="text-[9px] text-muted-foreground/60">{(Number(pool.unclaimedFees?.token || 0) / 1e9).toFixed(2)} {pool.token}</p>
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col gap-2 mt-auto">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <button
-                                            onClick={() => claimFees(pool.poolId)}
-                                            className="py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 text-[10px] font-black rounded border border-emerald-500/20 transition-all flex items-center justify-center gap-1"
-                                        >
-                                            <Zap size={10} /> HARVEST
-                                        </button>
-                                        <button
-                                            onClick={() => increaseLiquidity(pool.poolId)}
-                                            className="py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-black rounded border border-primary/20 transition-all flex items-center justify-center gap-1"
-                                        >
-                                            <Droplets size={10} /> ADD LIQ
-                                        </button>
-                                    </div>
-                                    <button
-                                        onClick={() => withdrawLiquidity(pool.poolId, 100)}
-                                        className="w-full mt-2 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black rounded shadow-lg transition-all"
-                                    >
-                                        FULL CLOSE
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                        {pools.length === 0 && (
-                            <div className="col-span-full py-8 text-center text-muted-foreground bg-secondary/50 rounded-md border border-dashed border-border flex flex-col items-center gap-2">
-                                <Search size={24} className="opacity-20" />
-                                <div className="text-sm">No active pools tracking...</div>
-                                <p className="text-[11px] opacity-50">Start LPPP BOT to begin auto-deployment</p>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
                 </div>
             </main>
