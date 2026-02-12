@@ -13,19 +13,31 @@ export class TokenMetadataService {
     private static lastSync = 0;
     private static SYNC_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
+    private static syncFailureCount = 0;
+    private static lastFailureTimestamp = 0;
+
     private static async syncJupiter() {
+        // Only try to sync if cache is empty or interval passed
         if (Date.now() - this.lastSync < this.SYNC_INTERVAL && this.jupiterCache.size > 0) return;
+
+        // If we recently failed, don't spam the logs/network (5 min backoff)
+        if (this.syncFailureCount > 0 && Date.now() - this.lastFailureTimestamp < 5 * 60 * 1000) return;
+
         try {
-            const res = await axios.get("https://token.jup.ag/all", { timeout: 10000 });
+            console.log("[METADATA] Syncing Jupiter token list...");
+            const res = await axios.get("https://token.jup.ag/all", { timeout: 15000 });
             if (Array.isArray(res.data)) {
                 res.data.forEach((token: any) => {
                     this.jupiterCache.set(token.address, token);
                 });
                 this.lastSync = Date.now();
-                console.log(`[METADATA] Initialized Jupiter Token List (${this.jupiterCache.size} tokens)`);
+                this.syncFailureCount = 0;
+                console.log(`[METADATA] Jupiter List Synced: ${this.jupiterCache.size} tokens`);
             }
         } catch (e) {
-            console.error("[METADATA] Jupiter sync failed:", e);
+            this.syncFailureCount++;
+            this.lastFailureTimestamp = Date.now();
+            console.warn(`[METADATA] Jupiter sync failed (attempt ${this.syncFailureCount}). Falling back to DexScreener/Gecko for now.`);
         }
     }
 

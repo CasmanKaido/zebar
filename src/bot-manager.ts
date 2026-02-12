@@ -169,6 +169,9 @@ export class BotManager {
                     await dbService.savePool(recoveredPool);
                     SocketManager.emitPool(recoveredPool);
                     recoveredCount++;
+
+                    // Throttling to prevent 429 (Too Many Requests)
+                    await new Promise(r => setTimeout(r, 500));
                 }
             }
 
@@ -750,6 +753,9 @@ export class BotManager {
                                 netRoi: pool.netRoi,
                                 initialSolValue: pool.initialSolValue
                             });
+
+                            // Small delay to prevent 429s in big loops
+                            await new Promise(r => setTimeout(r, 100));
 
                             // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
                             // We use Net ROI for all decisions to ensure real profit capture
