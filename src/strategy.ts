@@ -810,6 +810,39 @@ export class StrategyManager {
     }
 
     /**
+     * Checks if a Meteora DAMM V2 pool already exists for a given token pair.
+     * Returns the pool address if it exists, null otherwise.
+     * This prevents wasting SOL on buys when pool creation would fail.
+     */
+    async checkMeteoraPoolExists(tokenMint: PublicKey, baseMint: PublicKey = LPPP_MINT): Promise<string | null> {
+        try {
+            const { deriveConfigAddress, derivePoolAddress } = require("@meteora-ag/cp-amm-sdk");
+            const BN = require("bn.js");
+
+            // Sort tokens exactly like createMeteoraPool does
+            const [tokenA, tokenB] = tokenMint.toBuffer().compare(baseMint.toBuffer()) < 0
+                ? [tokenMint, baseMint]
+                : [baseMint, tokenMint];
+
+            // Check standard pool (config index 0)
+            const configIndex = new BN(0);
+            const configAddress = deriveConfigAddress(configIndex);
+            const poolAddress = derivePoolAddress(configAddress, tokenA, tokenB);
+
+            const accountInfo = await this.connection.getAccountInfo(poolAddress);
+            if (accountInfo) {
+                console.log(`[METEORA] Pool already exists: ${poolAddress.toBase58()} for ${tokenA.toBase58().slice(0, 8)}/${tokenB.toBase58().slice(0, 8)}`);
+                return poolAddress.toBase58();
+            }
+
+            return null;
+        } catch (err: any) {
+            console.warn(`[METEORA] Pool existence check failed: ${err.message}`);
+            return null; // Assume no pool exists, let creation handle it
+        }
+    }
+
+    /**
      * Creates a Meteora DAMM V2 Pool (Standard Constant Product) and seeds initial liquidity.
      * Expects RAW ATOMIC AMOUNTS (BigInt), not UI amounts.
      */

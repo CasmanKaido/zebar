@@ -432,6 +432,18 @@ export class BotManager {
                 return;
             }
 
+            // Pre-flight: Check if a Meteora pool already exists on-chain for this pair
+            // If it does, buying would waste SOL since pool creation will fail
+            try {
+                const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
+                if (existingPool) {
+                    SocketManager.emitLog(`[SKIP] ${result.symbol}: Meteora pool already exists on-chain (${existingPool.slice(0, 8)}...). Skipping to avoid wasted SOL.`, "warning");
+                    return;
+                }
+            } catch (poolCheckErr: any) {
+                console.warn(`[POOL CHECK] Failed for ${result.symbol}: ${poolCheckErr.message}. Proceeding anyway.`);
+            }
+
             // 1. Swap (Buy)
             SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
             try {
