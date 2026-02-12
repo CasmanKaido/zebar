@@ -1440,7 +1440,7 @@ export class StrategyManager {
 
             // 7. User's Pending Fees
             // DEBUG: Inspect the raw object to find correct fee property
-            // console.log(`[DEBUG FEES] Position State:`, JSON.stringify(pos.positionState, (key, value) => typeof value === 'bigint' ? value.toString() : value));
+            console.log(`[DEBUG FEES] Position State:`, JSON.stringify(pos.positionState, (key, value) => typeof value === 'bigint' ? value.toString() : value));
 
             // Use explicit property check for safety across SDK versions
             const feeA = Number(pos.positionState.feeAPending?.toString() || pos.positionState.feeA?.toString() || "0") / Math.pow(10, decimalsA);
