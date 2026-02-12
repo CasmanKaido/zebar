@@ -60,18 +60,18 @@ export class BotManager {
         // 1. Migrate if needed
         await this.migrateFromJsonToSqlite();
 
-        // 2. Sync with Blockchain (Recover missing positions)
-        // Doing this BEFORE loadAndMonitor ensures they are in DB for the first monitor tick
-        await this.syncActivePositions();
+        // 2. Recovery scan DISABLED — bot only tracks its own created pools.
+        // await this.syncActivePositions();
 
-        // 3. Load and Start Monitor
+        // 3. Load and Start Monitor (bot-created pools only)
         await this.loadAndMonitor();
     }
 
     private async loadAndMonitor() {
         try {
-            const history = await dbService.getAllPools();
-            console.log(`[BOT] Loaded ${history.length} pools from SQLite.`);
+            const allPools = await dbService.getAllPools();
+            const history = allPools.filter(p => p.isBotCreated);
+            console.log(`[BOT] Loaded ${history.length} bot-managed pools from SQLite (${allPools.length - history.length} recovered pools ignored).`);
             history.forEach((p: PoolData) => SocketManager.emitPool(p));
 
             this.startHealthCheck();
@@ -366,8 +366,8 @@ export class BotManager {
             }
         }
 
-        // Run Stabilization Guards (Issue 28 & 30)
-        await this.checkOrphanTokens();
+        // Orphan check DISABLED — focused on bot-created pools only.
+        // await this.checkOrphanTokens();
 
         this.sessionPoolCount = 0; // Reset session counter
         this.pendingMints.clear(); // Reset pending buys
@@ -701,9 +701,8 @@ export class BotManager {
                     try {
                         if (pool.exited) continue;
 
-                        // NEW: Filter: Skip manual/external pools if REQUIRE_BOT_MANAGED is enabled
-                        if (process.env.REQUIRE_BOT_MANAGED === 'true' && !pool.isBotCreated) {
-                            if (sweepCount % 20 === 0) console.log(`[MONITOR] Skipping external pool ${pool.token} (REQUIRE_BOT_MANAGED=true)`);
+                        // HARDCODED: Only monitor bot-created pools. Skip all recovered/external.
+                        if (!pool.isBotCreated) {
                             continue;
                         }
 

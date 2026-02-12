@@ -196,7 +196,6 @@ function App() {
     const [logs, setLogs] = useState<Log[]>([]);
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
-    const [poolTab, setPoolTab] = useState<'bot' | 'recovered'>('bot');
 
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
@@ -848,86 +847,34 @@ function App() {
                     </div>
                 </div>
 
-                {/* Bottom Section: Pools */}
+                {/* Bottom Section: Active Snipes (Bot-Created Only) */}
                 <div className="lg:col-span-3">
-                    <div className="flex items-center gap-6 border-b border-border mb-6 px-2">
-                        <button
-                            onClick={() => setPoolTab('bot')}
-                            className={`pb-3 text-xs font-black tracking-widest transition-all relative flex items-center gap-2 ${poolTab === 'bot' ? 'text-pink-500' : 'text-muted-foreground hover:text-foreground'}`}
-                        >
-                            <Zap size={14} />
-                            BOT MANAGED
-                            <span className="bg-pink-500/10 text-[10px] px-1.5 py-0.5 rounded-full border border-pink-500/20">
-                                {pools.filter(p => !p.exited && p.isBotCreated).length}
-                            </span>
-                            {poolTab === 'bot' && <motion.div layoutId="activePoolTab" className="absolute bottom-0 left-0 right-0 h-[3px] bg-pink-500 rounded-t-full shadow-[0_0_10px_rgba(236,72,153,0.5)]" />}
-                        </button>
-                        <button
-                            onClick={() => setPoolTab('recovered')}
-                            className={`pb-3 text-xs font-black tracking-widest transition-all relative flex items-center gap-2 ${poolTab === 'recovered' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
-                        >
-                            <ShieldAlert size={14} />
-                            RECOVERED
-                            <span className="bg-primary/10 text-[10px] px-1.5 py-0.5 rounded-full border border-primary/20">
-                                {pools.filter(p => !p.exited && !p.isBotCreated).length}
-                            </span>
-                            {poolTab === 'recovered' && <motion.div layoutId="activePoolTab" className="absolute bottom-0 left-0 right-0 h-[3px] bg-primary rounded-t-full shadow-[0_0_10px_rgba(16,185,129,0.5)]" />}
-                        </button>
+                    <div className="flex items-center gap-3 mb-6 px-2">
+                        <Zap size={18} className="text-pink-500" />
+                        <h2 className="text-sm font-black tracking-widest uppercase text-pink-500">Active Snipes</h2>
+                        <span className="bg-pink-500/10 text-pink-400 text-[10px] px-2 py-0.5 rounded-full border border-pink-500/20 font-bold">
+                            {pools.filter(p => !p.exited && p.isBotCreated).length}
+                        </span>
                     </div>
-
-                    <AnimatePresence mode="wait">
-                        {poolTab === 'bot' ? (
-                            <motion.div
-                                key="bot-pools"
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                exit={{ opacity: 0, x: 10 }}
-                                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-                            >
-                                {pools.filter(p => !p.exited && p.isBotCreated).map(pool => (
-                                    <PoolCard
-                                        key={pool.poolId}
-                                        pool={pool}
-                                        isBot={true}
-                                        claimFees={claimFees}
-                                        increaseLiquidity={increaseLiquidity}
-                                        withdrawLiquidity={withdrawLiquidity}
-                                    />
-                                ))}
-                                {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (
-                                    <div className="col-span-full py-12 text-center text-muted-foreground/40 bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3">
-                                        <Zap size={32} className="opacity-20" />
-                                        <p className="text-sm font-medium">No active bot snipes found</p>
-                                    </div>
-                                )}
-                            </motion.div>
-                        ) : (
-                            <motion.div
-                                key="recovered-pools"
-                                initial={{ opacity: 0, x: 10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                exit={{ opacity: 0, x: -10 }}
-                                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
-                            >
-                                {pools.filter(p => !p.exited && !p.isBotCreated).map(pool => (
-                                    <PoolCard
-                                        key={pool.poolId}
-                                        pool={pool}
-                                        isBot={false}
-                                        claimFees={claimFees}
-                                        increaseLiquidity={increaseLiquidity}
-                                        withdrawLiquidity={withdrawLiquidity}
-                                    />
-                                ))}
-                                {pools.filter(p => !p.exited && !p.isBotCreated).length === 0 && (
-                                    <div className="col-span-full py-12 text-center text-muted-foreground/40 bg-white/[0.01] border border-dashed border-border/50 rounded-lg flex flex-col items-center gap-3">
-                                        <ShieldAlert size={32} className="opacity-20" />
-                                        <p className="text-sm font-medium">No recovered positions to track</p>
-                                    </div>
-                                )}
-                            </motion.div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {pools.filter(p => !p.exited && p.isBotCreated).map(pool => (
+                            <PoolCard
+                                key={pool.poolId}
+                                pool={pool}
+                                isBot={true}
+                                claimFees={claimFees}
+                                increaseLiquidity={increaseLiquidity}
+                                withdrawLiquidity={withdrawLiquidity}
+                            />
+                        ))}
+                        {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (
+                            <div className="col-span-full py-16 text-center bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3">
+                                <Zap size={40} className="opacity-15 text-pink-500" />
+                                <p className="text-sm font-medium text-muted-foreground/50">Waiting for bot to snipe...</p>
+                                <p className="text-[10px] text-muted-foreground/30">Pools will appear here when the bot creates them</p>
+                            </div>
                         )}
-                    </AnimatePresence>
+                    </div>
                 </div>
             </main>
 
