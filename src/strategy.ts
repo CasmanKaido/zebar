@@ -1358,9 +1358,10 @@ export class StrategyManager {
     async fetchAllUserPositions(): Promise<{ poolAddress: string; positionId: string }[]> {
         const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
         try {
-            const cpAmm = new CpAmm(this.connection);
-            const programId = cpAmm.program.programId;
-            const accounts = await this.connection.getProgramAccounts(programId, {
+            // Constant Program ID for Meteora CP-AMM (DAMM v2)
+            const CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+
+            const accounts = await this.connection.getProgramAccounts(CP_AMM_PROGRAM_ID, {
                 filters: [
                     { dataSize: 112 }, // Position account size for CP-AMM
                     { memcmp: { offset: 8 + 32, bytes: this.wallet.publicKey.toBase58() } } // Owner offset
