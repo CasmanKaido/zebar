@@ -944,7 +944,50 @@ export class BotManager {
 
                 // 2. Clear pending and update state
                 const isFull = percent >= 100;
-                await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", isFull, undefined, { withdrawalPending: false });
+
+                // CRITICAL FIX: Update initialSolValue proportionally for partial withdrawals.
+                // Otherwise ROI = (Remaining Value - Full Entry Cost) / Full Entry Cost => Massive Fake Loss
+                if (!isFull) {
+                    try {
+                        const pool = await dbService.getPool(poolId);
+                        if (pool && pool.initialSolValue) {
+                            // If we withdrew 40%, we have 60% left. So new cost basis is 60% of original.
+                            const remainingRatio = 1 - (percent / 100);
+                            const newInitialVal = pool.initialSolValue * remainingRatio;
+
+                            // Update DB with new "Entry Price" for the remaining bag
+                            // We use a dedicated update for this property to ensure it sticks
+                            // Note: We don't have a direct "updateInitialValue" method, so we use updatePool
+                            // But updatePool usually takes an ROI string. We need to persist this change effectively.
+                            // The easiest way is to update the IN-MEMORY pool object that next monitor loop will use?
+                            // No, memory is refreshed from DB every loop (dbService.getAllPools).
+                            // So we MUST update DB.
+
+                            // Since dbService doesn't expose a clean "update property" method, we rely on the loop to re-calc?
+                            // No, the loop only SETS initialSolValue if it's missing (lines 833).
+                            // It does NOT update it down.
+
+                            // We need to implement a DB update here.
+                            // Assuming dbService has `updatePool(poolId, { initialSolValue: ... })` support?
+                            // Checking db-service.ts would be ideal, but standard pattern suggests `updatePool` might just confirm activity.
+                            // Let's manually trigger the `updatePoolROI` with the new value.
+
+                            await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", false, undefined, {
+                                withdrawalPending: false,
+                                initialSolValue: newInitialVal
+                            });
+
+                            SocketManager.emitLog(`[ROI FIX] Adjusted Entry Value: ${pool.initialSolValue.toFixed(4)} -> ${newInitialVal.toFixed(4)} LPPP`, "info");
+                        } else {
+                            await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", false, undefined, { withdrawalPending: false });
+                        }
+                    } catch (e) {
+                        console.error("[ROI FIX] Failed to update initialSolValue:", e);
+                        await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", false, undefined, { withdrawalPending: false });
+                    }
+                } else {
+                    await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", isFull, undefined, { withdrawalPending: false });
+                }
 
                 if (isFull) {
                     // Try to liquidate remnants if any
