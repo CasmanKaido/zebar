@@ -37,6 +37,7 @@ export class BotManager {
     private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
     private activeTpSlActions: Set<string> = new Set(); // Guards against double TP/SL
     private rejectedTokens: Map<string, { reason: string, expiry: number }> = new Map(); // Fix 5: Cache rejected tokens
+    private lastMonitorHeartbeat: number = Date.now(); // Watchdog: Track monitor activity
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isUsingBackup: boolean = false;
     private settings: BotSettings = {
@@ -218,801 +219,824 @@ export class BotManager {
             }
         }
     }
+}
+
+// Watchdog: Check if monitor loop is stuck (no heartbeat for 5 mins)
+if (this.isRunning) {
+    const timeSinceLastMonitor = Date.now() - this.lastMonitorHeartbeat;
+    if (timeSinceLastMonitor > 5 * 60 * 1000) { // 5 minutes
+        console.warn(`[WATCHDOG] Monitor loop stuck for ${(timeSinceLastMonitor / 60000).toFixed(1)}m. Force restarting...`);
+        SocketManager.emitLog(`[WATCHDOG] Monitor loop stuck. Force restarting...`, "error");
+
+        // Clear existing timer if any (though likely lost in event loop limbo)
+        if (this.monitorInterval) {
+            clearTimeout(this.monitorInterval);
+            this.monitorInterval = null;
+        }
+
+        // Restart monitor
+        this.monitorPositions();
+        this.lastMonitorHeartbeat = Date.now();
+    }
+}
+    }
 
     /**
      * One-time migration from pools.json to SQLite.
      */
     private async migrateFromJsonToSqlite() {
-        try {
-            const data = await fs.readFile(POOL_DATA_FILE, "utf-8").catch(() => null);
-            if (!data) return;
+    try {
+        const data = await fs.readFile(POOL_DATA_FILE, "utf-8").catch(() => null);
+        if (!data) return;
 
-            const history: PoolData[] = JSON.parse(data);
-            if (history.length === 0) return;
+        const history: PoolData[] = JSON.parse(data);
+        if (history.length === 0) return;
 
-            SocketManager.emitLog(`[DB] Migrating ${history.length} pools from JSON to SQLite...`, "warning");
+        SocketManager.emitLog(`[DB] Migrating ${history.length} pools from JSON to SQLite...`, "warning");
 
-            for (const pool of history) {
-                await dbService.savePool(pool);
-            }
-
-            // Rename the old file to .bak to prevent re-migration
-            const bakPath = POOL_DATA_FILE + ".bak";
-            await fs.rename(POOL_DATA_FILE, bakPath);
-            SocketManager.emitLog(`[DB] Migration complete. Old file renamed to ${path.basename(bakPath)}`, "success");
-        } catch (error: any) {
-            console.error("[DB] Migration failed:", error.message);
+        for (const pool of history) {
+            await dbService.savePool(pool);
         }
+
+        // Rename the old file to .bak to prevent re-migration
+        const bakPath = POOL_DATA_FILE + ".bak";
+        await fs.rename(POOL_DATA_FILE, bakPath);
+        SocketManager.emitLog(`[DB] Migration complete. Old file renamed to ${path.basename(bakPath)}`, "success");
+    } catch (error: any) {
+        console.error("[DB] Migration failed:", error.message);
     }
+}
 
 
     /**
      * Scans the wallet for tokens purchased by the bot but never pooled (Issue 28).
      */
     private async checkOrphanTokens() {
-        SocketManager.emitLog("[ORPHAN-CHECK] Scanning wallet for un-pooled tokens...", "info");
-        try {
-            const pools = await dbService.getAllPools();
-            const pooledMints = new Set(pools.map(p => p.mint));
+    SocketManager.emitLog("[ORPHAN-CHECK] Scanning wallet for un-pooled tokens...", "info");
+    try {
+        const pools = await dbService.getAllPools();
+        const pooledMints = new Set(pools.map(p => p.mint));
 
-            // Get all token accounts with balance > 0
-            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                programId: TOKEN_PROGRAM_ID
-            });
-            const accounts2022 = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                programId: TOKEN_2022_PROGRAM_ID
-            });
+        // Get all token accounts with balance > 0
+        const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+            programId: TOKEN_PROGRAM_ID
+        });
+        const accounts2022 = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+            programId: TOKEN_2022_PROGRAM_ID
+        });
 
-            const allAccounts = [...accounts.value, ...accounts2022.value];
+        const allAccounts = [...accounts.value, ...accounts2022.value];
 
-            for (const acc of allAccounts) {
-                const info = acc.account.data.parsed.info;
-                const mint = info.mint;
-                const balance = info.tokenAmount.uiAmount || 0;
+        for (const acc of allAccounts) {
+            const info = acc.account.data.parsed.info;
+            const mint = info.mint;
+            const balance = info.tokenAmount.uiAmount || 0;
 
-                // Skip LPPP and SOL
-                if (mint === LPPP_MINT.toBase58() || mint === SOL_MINT.toBase58()) continue;
+            // Skip LPPP and SOL
+            if (mint === LPPP_MINT.toBase58() || mint === SOL_MINT.toBase58()) continue;
 
-                if (balance > 0 && !pooledMints.has(mint)) {
-                    SocketManager.emitLog(`[ORPHAN] Detected un-pooled tokens: ${balance.toFixed(2)} units of ${mint.slice(0, 8)}...`, "warning");
-                    SocketManager.emitLog(`[RECOVERY] Tip: You can manually swap these to SOL or wait for future auto-recovery.`, "info");
-                }
+            if (balance > 0 && !pooledMints.has(mint)) {
+                SocketManager.emitLog(`[ORPHAN] Detected un-pooled tokens: ${balance.toFixed(2)} units of ${mint.slice(0, 8)}...`, "warning");
+                SocketManager.emitLog(`[RECOVERY] Tip: You can manually swap these to SOL or wait for future auto-recovery.`, "info");
             }
-        } catch (e) {
-            console.warn("[ORPHAN-CHECK] Skip: No pool data file yet.");
         }
+    } catch (e) {
+        console.warn("[ORPHAN-CHECK] Skip: No pool data file yet.");
     }
+}
 
     private async safeRename(src: string, dest: string, retries = 5, delay = 50) {
-        for (let i = 0; i < retries; i++) {
-            try {
-                await fs.rename(src, dest);
-                return;
-            } catch (e: any) {
-                if (e.code === 'EBUSY' && i < retries - 1) {
-                    await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
-                    continue;
-                }
-                throw e;
+    for (let i = 0; i < retries; i++) {
+        try {
+            await fs.rename(src, dest);
+            return;
+        } catch (e: any) {
+            if (e.code === 'EBUSY' && i < retries - 1) {
+                await new Promise(r => setTimeout(r, delay * Math.pow(2, i)));
+                continue;
             }
+            throw e;
         }
     }
+}
 
     private async savePools(newPool: PoolData) {
-        try {
-            await dbService.savePool(newPool);
-        } catch (error) {
-            console.error("[DB] Failed to save pool:", error);
-        }
+    try {
+        await dbService.savePool(newPool);
+    } catch (error) {
+        console.error("[DB] Failed to save pool:", error);
     }
+}
 
     /**
      * Updates the ROI of a pool in SQL and emits to socket.
      */
-    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees?: { sol: string; token: string }, partial?: Partial<PoolData>) {
-        if (this.activeTpSlActions.has(poolId)) return;
+    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees ?: { sol: string; token: string }, partial ?: Partial<PoolData>) {
+    if (this.activeTpSlActions.has(poolId)) return;
 
-        try {
-            const pool = await dbService.getPool(poolId);
-            if (!pool) return;
+    try {
+        const pool = await dbService.getPool(poolId);
+        if (!pool) return;
 
-            const updatedPool: PoolData = {
-                ...pool,
-                roi,
-                exited: exited || pool.exited,
-                unclaimedFees: fees || pool.unclaimedFees,
-                ...partial
-            };
-
-            await dbService.savePool(updatedPool);
-            SocketManager.emitPoolUpdate({
-                poolId,
-                roi,
-                netRoi: updatedPool.netRoi,
-                exited,
-                unclaimedFees: updatedPool.unclaimedFees
-            });
-        } catch (e) {
-            console.error("[DB] Update ROI Failed:", e);
-        }
-    }
-
-    private async getLpppPrice(): Promise<number> {
-        try {
-            const res = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
-            const data: any = await res.json();
-            const price = parseFloat(data?.pairs?.[0]?.priceUsd || "0");
-            // No floor check — LPPP is a micro-cap token that can legitimately trade at very low prices.
-            // parseFloat already returns 0 for invalid data, which is the only case we reject.
-            return price;
-        } catch (e) {
-            console.warn("[BOT] Failed to fetch LPPP price:", e);
-            return 0;
-        }
-    }
-
-    async start(config?: Partial<BotSettings>) {
-        if (this.isRunning) return;
-
-        // Final Safety Check: Ensure API keys are configured (Issue 27)
-        if (!process.env.BIRDEYE_API_KEY || process.env.BIRDEYE_API_KEY === "your_birdeye_api_key_here") {
-            SocketManager.emitLog("[CRITICAL] BIRDEYE_API_KEY is missing or using placeholder! Discovery limited.", "warning");
-        }
-        if (config) {
-            this.settings = { ...this.settings, ...config };
-
-            // Validation: Log Warning if 0 Buy Amount, but do not override
-            if (this.settings.buyAmount <= 0) {
-                SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
-            }
-        }
-
-        // Orphan check DISABLED — focused on bot-created pools only.
-        // await this.checkOrphanTokens();
-
-        this.sessionPoolCount = 0; // Reset session counter
-        this.pendingMints.clear(); // Reset pending buys
-
-        // Start position monitor (only if not already running)
-        if (!this.monitorInterval) {
-            this.monitorPositions();
-        }
-
-        // Check Balance
-        const balance = await connection.getBalance(wallet.publicKey);
-        if (balance === 0) {
-            SocketManager.emitLog(`[WARNING] Your wallet (${wallet.publicKey.toBase58().slice(0, 8)}...) has 0 SOL. Buys will fail.`, "error");
-        } else {
-            SocketManager.emitLog(`[WALLET] Active: ${wallet.publicKey.toBase58().slice(0, 8)}... | Balance: ${(balance / 1e9).toFixed(3)} SOL`, "success");
-        }
-
-        this.isRunning = true;
-        SocketManager.emitStatus(true);
-        SocketManager.emitLog(`LPPP BOT Streamer Active (Vol5m > $${this.settings.minVolume5m}, Vol1h > $${this.settings.minVolume1h}, Vol24h > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
-
-        const criteria: ScannerCriteria = {
-            minVolume5m: this.settings.minVolume5m,
-            minVolume1h: this.settings.minVolume1h,
-            minVolume24h: this.settings.minVolume24h,
-            minLiquidity: this.settings.minLiquidity,
-            minMcap: this.settings.minMcap
+        const updatedPool: PoolData = {
+            ...pool,
+            roi,
+            exited: exited || pool.exited,
+            unclaimedFees: fees || pool.unclaimedFees,
+            ...partial
         };
 
-        this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
-            if (!this.isRunning) return;
-
-            const mintAddress = result.mint.toBase58();
-
-            // Guard: Skip if already being processed (prevents race condition duplicate buys)
-            if (this.pendingMints.has(mintAddress)) return;
-
-            // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
-            // The on-chain pool address is deterministic — even exited pools can't be re-created.
-            const activePools: PoolData[] = await this.getPortfolio();
-            if (activePools.some((p: PoolData) => p.mint === mintAddress)) {
-                // Silently skip to keep logs clean
-                return;
-            }
-
-            // Fix 5: Check rejected token cache (skip tokens that failed safety checks recently)
-            const cached = this.rejectedTokens.get(mintAddress);
-            if (cached && cached.expiry > Date.now()) {
-                return; // Silently skip — already failed safety within last 30 min
-            }
-            this.rejectedTokens.delete(mintAddress); // Clean up expired entries
-
-            // Lock this mint to prevent duplicate buys during processing
-            this.pendingMints.add(mintAddress);
-
-            SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
-            SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
-            SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
-
-            try {
-                const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
-                if (!safety.safe) {
-                    SocketManager.emitLog(`[SAFETY] ❌ Skipped ${result.symbol}: ${safety.reason}`, "error");
-                    // Fix 5: Cache this rejection for 30 minutes
-                    this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });
-                    return;
-                }
-            } catch (safetyErr: any) {
-                console.warn("[SAFETY] Check failed:", safetyErr.message);
-                SocketManager.emitLog(`[SAFETY] ⚠️ Could not verify ${result.symbol} — skipping for safety`, "warning");
-                return;
-            }
-
-            // Pre-flight: Check if a Meteora pool already exists on-chain for this pair
-            // If it does, buying would waste SOL since pool creation will fail
-            try {
-                const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
-                if (existingPool) {
-                    SocketManager.emitLog(`[SKIP] ${result.symbol}: Meteora pool already exists on-chain (${existingPool.slice(0, 8)}...). Skipping to avoid wasted SOL.`, "warning");
-                    return;
-                }
-            } catch (poolCheckErr: any) {
-                console.warn(`[POOL CHECK] Failed for ${result.symbol}: ${poolCheckErr.message}. Proceeding anyway.`);
-            }
-
-            // 1. Swap (Buy)
-            SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
-            try {
-                const { success, amount, uiAmount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
-
-                if (success) {
-                    SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
-
-                    // 2. Refresh Balance & Create LP (Dynamic Fee & Price)
-                    const LPPP_MINT_ADDR = LPPP_MINT;
-
-                    // Wait 1.5s for chain to reflect balance
-                    await new Promise(r => setTimeout(r, 1500));
-
-                    // Fetch ACTUAL balance instead of relying on swap output
-                    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint });
-                    const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
-                    const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
-
-                    if (actualAmountRaw === 0n) {
-                        SocketManager.emitLog(`[LP ERROR] No token balance found for ${result.symbol} after swap. Skipping pool creation.`, "error");
-                        return;
-                    }
-
-                    // Use 99% of balance to avoid "Custom: 0" (Insufficient Balance)
-                    // CRITICAL: We scale BOTH sides to 99% to maintain the exact PRICE RATIO.
-                    const tokenAmount = (actualAmountRaw * 99n) / 100n;
-                    const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
-
-                    let targetLpppAmount = this.settings.lpppAmount;
-
-                    // Dynamic Price Calculation (always auto-sync)
-                    if (result.priceUsd > 0) {
-                        const lpppPrice = await this.getLpppPrice();
-                        if (lpppPrice > 0) {
-                            const tokenPriceLppp = result.priceUsd / lpppPrice;
-                            targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
-                            SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
-                        } else {
-                            SocketManager.emitLog(`[AUTO-PRICE] LPPP price unavailable. Cannot create pool.`, "error");
-                            return;
-                        }
-                    }
-
-                    // Final guard: never create a pool with 0 LPPP
-                    if (targetLpppAmount <= 0) {
-                        SocketManager.emitLog(`[LP ERROR] Cannot seed pool: LPPP amount is 0. Aborting.`, "error");
-                        return;
-                    }
-
-                    // Apply the same 99% buffer to LPPP side to preserve ratio
-                    const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e6));
-                    let finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
-                    let finalLpppUiAmount = (targetLpppAmount * 99) / 100;
-
-                    // ═══ CRITICAL: Pre-Flight LPPP Balance Check (Batch 2.1) ═══
-                    // The LPPP token is Token-2022, which has transfer fees.
-                    // We MUST verify the wallet has enough LPPP before creating the pool.
-                    let effectiveTokenAmount = tokenAmount;
-                    const LPPP_DECIMALS = 6;
-                    try {
-                        const lpppAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
-                        const lpppBalanceRaw = lpppAccounts.value.reduce(
-                            (acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n
-                        );
-                        const lpppBalanceUi = Number(lpppBalanceRaw) / (10 ** LPPP_DECIMALS);
-
-                        // Apply 5% buffer for Token-2022 transfer fees
-                        const maxUsableLppp = (lpppBalanceRaw * 95n) / 100n;
-                        const maxUsableLpppUi = lpppBalanceUi * 0.95;
-
-                        if (lpppBalanceRaw < 100n * BigInt(10 ** LPPP_DECIMALS)) {
-                            SocketManager.emitLog(`[LP ERROR] LPPP balance too low (${lpppBalanceUi.toFixed(2)} LPPP). Need at least 100 LPPP to seed pool. Skipping.`, "error");
-                            return;
-                        }
-
-                        if (finalLpppAmountBase > maxUsableLppp) {
-                            SocketManager.emitLog(`[LP WARN] Required LPPP (${finalLpppUiAmount.toFixed(2)}) exceeds wallet balance (${lpppBalanceUi.toFixed(2)}). Capping to ${maxUsableLpppUi.toFixed(2)} LPPP.`, "warning");
-                            finalLpppAmountBase = maxUsableLppp;
-                            finalLpppUiAmount = maxUsableLpppUi;
-
-                            // Recalculate token amount to maintain price ratio
-                            if (targetLpppAmount > 0) {
-                                const ratio = maxUsableLpppUi / targetLpppAmount;
-                                const adjustedTokenRaw = BigInt(Math.floor(Number(tokenAmount) * ratio));
-                                // Use the smaller of the two to be safe
-                                effectiveTokenAmount = adjustedTokenRaw < tokenAmount ? adjustedTokenRaw : tokenAmount;
-                            }
-                        }
-                    } catch (balErr: any) {
-                        SocketManager.emitLog(`[LP WARN] Could not verify LPPP balance: ${balErr.message}. Proceeding with calculated amount.`, "warning");
-                    }
-
-                    // ═══ DIAGNOSTIC LOGGING ═══
-                    SocketManager.emitLog(`[POOL DIAG] LPPP Sending: ${finalLpppUiAmount.toFixed(2)} | Token Sending: ${Number(effectiveTokenAmount)} raw | Ratio: ${(finalLpppUiAmount / tokenUiAmountChecked).toFixed(4)} LPPP/Token`, "info");
-
-                    // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
-                    try {
-                        const poolInfo = await this.strategy.createMeteoraPool(result.mint, effectiveTokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
-
-                        if (poolInfo.success) {
-                            SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
-                            const poolEvent = {
-                                poolId: poolInfo.poolAddress || "",
-                                token: result.symbol,
-                                roi: "0%", // Initial ROI
-                                created: new Date().toISOString()
-                            };
-
-                            const initialPrice = tokenUiAmountChecked > 0 ? finalLpppUiAmount / tokenUiAmountChecked : 0;
-                            // Estimated value in base units (LPPP) — will be overwritten by actual on-chain value
-                            let initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
-
-                            // Query ACTUAL on-chain position value as our true baseline (with retry)
-                            try {
-                                const RETRY_DELAYS = [3000, 6000, 10000]; // Increasing delays for chain settlement
-                                const estimatedValue = initialSolValue;
-                                for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
-                                    await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
-                                    const onChainValue = await this.strategy.getPositionValue(
-                                        poolInfo.poolAddress || "",
-                                        result.mint.toBase58(),
-                                        poolInfo.positionAddress
-                                    );
-                                    if (onChainValue.success && onChainValue.totalSol > 0) {
-                                        initialSolValue = onChainValue.totalSol;
-                                        const gap = Math.abs(initialSolValue - estimatedValue) / estimatedValue;
-                                        console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} | On-chain: ${initialSolValue.toFixed(4)} | Estimated: ${estimatedValue.toFixed(4)} | Gap: ${(gap * 100).toFixed(0)}%`);
-                                        if (gap <= 0.5) break; // Gap <50% — value has settled
-                                        if (attempt === RETRY_DELAYS.length - 1) {
-                                            console.warn(`[BASELINE] ${result.symbol} | Gap still ${(gap * 100).toFixed(0)}% after ${RETRY_DELAYS.length} retries. Using best on-chain value.`);
-                                        }
-                                    } else {
-                                        console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} failed, ${attempt < RETRY_DELAYS.length - 1 ? 'retrying...' : 'using estimate.'}`);
-                                        if (attempt === RETRY_DELAYS.length - 1) initialSolValue = estimatedValue;
-                                    }
-                                }
-                                SocketManager.emitLog(`[BASELINE] True position value: ${initialSolValue.toFixed(4)} base units`, "info");
-                            } catch (baselineErr: any) {
-                                console.warn(`[BASELINE] Could not fetch on-chain value: ${baselineErr.message}`);
-                            }
-
-                            const fullPoolData: PoolData = {
-                                ...poolEvent,
-                                mint: result.mint.toBase58(),
-                                roi: "0%",
-                                netRoi: "0%",
-                                initialPrice,
-                                initialTokenAmount: tokenUiAmountChecked,
-                                initialLpppAmount: finalLpppUiAmount,
-                                initialSolValue,
-                                exited: false,
-                                positionId: poolInfo.positionAddress,
-                                unclaimedFees: { sol: "0", token: "0" },
-                                isBotCreated: true // High-priority tag for bot-created pools
-                            };
-
-                            SocketManager.emitPool(fullPoolData);
-                            await this.savePools(fullPoolData); // Ensure awaited (Issue 33)
-
-                            this.sessionPoolCount++;
-                            SocketManager.emitLog(`[SESSION] Pool Created: ${this.sessionPoolCount} / ${this.settings.maxPools}`, "info");
-
-                            if (this.sessionPoolCount >= this.settings.maxPools) {
-                                SocketManager.emitLog(`[LIMIT REACHED] Session limit of ${this.settings.maxPools} pools reached. Shutting down...`, "warning");
-                                this.stop();
-                            }
-                        } else {
-                            SocketManager.emitLog(`[LP ERROR] Pool Failed: ${poolInfo.error}`, "error");
-                        }
-                    } catch (lpError: any) {
-                        console.error("[BOT] LP Creation Critical Failure:", lpError);
-                        SocketManager.emitLog(`[ERROR] Failed to seed pool: ${lpError.message}`, "error");
-                    }
-                } else {
-                    SocketManager.emitLog(`Buy Failed: ${error || "Unknown Error"}`, "error");
-                }
-            } catch (swapError: any) {
-                console.error("[BOT] Swap Execution Failure:", swapError);
-                SocketManager.emitLog(`[ERROR] Swap execution failed: ${swapError.message}`, "error");
-            } finally {
-                // Release the mint lock so it can be re-evaluated in future sweeps
-                this.pendingMints.delete(mintAddress);
-            }
-        }, connection);
-
-        this.scanner.start();
+        await dbService.savePool(updatedPool);
+        SocketManager.emitPoolUpdate({
+            poolId,
+            roi,
+            netRoi: updatedPool.netRoi,
+            exited,
+            unclaimedFees: updatedPool.unclaimedFees
+        });
+    } catch (e) {
+        console.error("[DB] Update ROI Failed:", e);
     }
+}
+
+    private async getLpppPrice(): Promise < number > {
+    try {
+        const res = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+        const data: any = await res.json();
+        const price = parseFloat(data?.pairs?.[0]?.priceUsd || "0");
+        // No floor check — LPPP is a micro-cap token that can legitimately trade at very low prices.
+        // parseFloat already returns 0 for invalid data, which is the only case we reject.
+        return price;
+    } catch(e) {
+        console.warn("[BOT] Failed to fetch LPPP price:", e);
+        return 0;
+    }
+}
+
+    async start(config ?: Partial<BotSettings>) {
+    if (this.isRunning) return;
+
+    // Final Safety Check: Ensure API keys are configured (Issue 27)
+    if (!process.env.BIRDEYE_API_KEY || process.env.BIRDEYE_API_KEY === "your_birdeye_api_key_here") {
+        SocketManager.emitLog("[CRITICAL] BIRDEYE_API_KEY is missing or using placeholder! Discovery limited.", "warning");
+    }
+    if (config) {
+        this.settings = { ...this.settings, ...config };
+
+        // Validation: Log Warning if 0 Buy Amount, but do not override
+        if (this.settings.buyAmount <= 0) {
+            SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
+        }
+    }
+
+    // Orphan check DISABLED — focused on bot-created pools only.
+    // await this.checkOrphanTokens();
+
+    this.sessionPoolCount = 0; // Reset session counter
+    this.pendingMints.clear(); // Reset pending buys
+
+    // Start position monitor (only if not already running)
+    if (!this.monitorInterval) {
+        this.monitorPositions();
+    }
+
+    // Check Balance
+    const balance = await connection.getBalance(wallet.publicKey);
+    if (balance === 0) {
+        SocketManager.emitLog(`[WARNING] Your wallet (${wallet.publicKey.toBase58().slice(0, 8)}...) has 0 SOL. Buys will fail.`, "error");
+    } else {
+        SocketManager.emitLog(`[WALLET] Active: ${wallet.publicKey.toBase58().slice(0, 8)}... | Balance: ${(balance / 1e9).toFixed(3)} SOL`, "success");
+    }
+
+    this.isRunning = true;
+    SocketManager.emitStatus(true);
+    SocketManager.emitLog(`LPPP BOT Streamer Active (Vol5m > $${this.settings.minVolume5m}, Vol1h > $${this.settings.minVolume1h}, Vol24h > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
+
+    const criteria: ScannerCriteria = {
+        minVolume5m: this.settings.minVolume5m,
+        minVolume1h: this.settings.minVolume1h,
+        minVolume24h: this.settings.minVolume24h,
+        minLiquidity: this.settings.minLiquidity,
+        minMcap: this.settings.minMcap
+    };
+
+    this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
+        if (!this.isRunning) return;
+
+        const mintAddress = result.mint.toBase58();
+
+        // Guard: Skip if already being processed (prevents race condition duplicate buys)
+        if (this.pendingMints.has(mintAddress)) return;
+
+        // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
+        // The on-chain pool address is deterministic — even exited pools can't be re-created.
+        const activePools: PoolData[] = await this.getPortfolio();
+        if (activePools.some((p: PoolData) => p.mint === mintAddress)) {
+            // Silently skip to keep logs clean
+            return;
+        }
+
+        // Fix 5: Check rejected token cache (skip tokens that failed safety checks recently)
+        const cached = this.rejectedTokens.get(mintAddress);
+        if (cached && cached.expiry > Date.now()) {
+            return; // Silently skip — already failed safety within last 30 min
+        }
+        this.rejectedTokens.delete(mintAddress); // Clean up expired entries
+
+        // Lock this mint to prevent duplicate buys during processing
+        this.pendingMints.add(mintAddress);
+
+        SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
+        SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
+        SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
+
+        try {
+            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
+            if (!safety.safe) {
+                SocketManager.emitLog(`[SAFETY] ❌ Skipped ${result.symbol}: ${safety.reason}`, "error");
+                // Fix 5: Cache this rejection for 30 minutes
+                this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });
+                return;
+            }
+        } catch (safetyErr: any) {
+            console.warn("[SAFETY] Check failed:", safetyErr.message);
+            SocketManager.emitLog(`[SAFETY] ⚠️ Could not verify ${result.symbol} — skipping for safety`, "warning");
+            return;
+        }
+
+        // Pre-flight: Check if a Meteora pool already exists on-chain for this pair
+        // If it does, buying would waste SOL since pool creation will fail
+        try {
+            const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
+            if (existingPool) {
+                SocketManager.emitLog(`[SKIP] ${result.symbol}: Meteora pool already exists on-chain (${existingPool.slice(0, 8)}...). Skipping to avoid wasted SOL.`, "warning");
+                return;
+            }
+        } catch (poolCheckErr: any) {
+            console.warn(`[POOL CHECK] Failed for ${result.symbol}: ${poolCheckErr.message}. Proceeding anyway.`);
+        }
+
+        // 1. Swap (Buy)
+        SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
+        try {
+            const { success, amount, uiAmount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
+
+            if (success) {
+                SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
+
+                // 2. Refresh Balance & Create LP (Dynamic Fee & Price)
+                const LPPP_MINT_ADDR = LPPP_MINT;
+
+                // Wait 1.5s for chain to reflect balance
+                await new Promise(r => setTimeout(r, 1500));
+
+                // Fetch ACTUAL balance instead of relying on swap output
+                const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint });
+                const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+                const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+
+                if (actualAmountRaw === 0n) {
+                    SocketManager.emitLog(`[LP ERROR] No token balance found for ${result.symbol} after swap. Skipping pool creation.`, "error");
+                    return;
+                }
+
+                // Use 99% of balance to avoid "Custom: 0" (Insufficient Balance)
+                // CRITICAL: We scale BOTH sides to 99% to maintain the exact PRICE RATIO.
+                const tokenAmount = (actualAmountRaw * 99n) / 100n;
+                const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
+
+                let targetLpppAmount = this.settings.lpppAmount;
+
+                // Dynamic Price Calculation (always auto-sync)
+                if (result.priceUsd > 0) {
+                    const lpppPrice = await this.getLpppPrice();
+                    if (lpppPrice > 0) {
+                        const tokenPriceLppp = result.priceUsd / lpppPrice;
+                        targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
+                        SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
+                    } else {
+                        SocketManager.emitLog(`[AUTO-PRICE] LPPP price unavailable. Cannot create pool.`, "error");
+                        return;
+                    }
+                }
+
+                // Final guard: never create a pool with 0 LPPP
+                if (targetLpppAmount <= 0) {
+                    SocketManager.emitLog(`[LP ERROR] Cannot seed pool: LPPP amount is 0. Aborting.`, "error");
+                    return;
+                }
+
+                // Apply the same 99% buffer to LPPP side to preserve ratio
+                const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e6));
+                let finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
+                let finalLpppUiAmount = (targetLpppAmount * 99) / 100;
+
+                // ═══ CRITICAL: Pre-Flight LPPP Balance Check (Batch 2.1) ═══
+                // The LPPP token is Token-2022, which has transfer fees.
+                // We MUST verify the wallet has enough LPPP before creating the pool.
+                let effectiveTokenAmount = tokenAmount;
+                const LPPP_DECIMALS = 6;
+                try {
+                    const lpppAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
+                    const lpppBalanceRaw = lpppAccounts.value.reduce(
+                        (acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n
+                    );
+                    const lpppBalanceUi = Number(lpppBalanceRaw) / (10 ** LPPP_DECIMALS);
+
+                    // Apply 5% buffer for Token-2022 transfer fees
+                    const maxUsableLppp = (lpppBalanceRaw * 95n) / 100n;
+                    const maxUsableLpppUi = lpppBalanceUi * 0.95;
+
+                    if (lpppBalanceRaw < 100n * BigInt(10 ** LPPP_DECIMALS)) {
+                        SocketManager.emitLog(`[LP ERROR] LPPP balance too low (${lpppBalanceUi.toFixed(2)} LPPP). Need at least 100 LPPP to seed pool. Skipping.`, "error");
+                        return;
+                    }
+
+                    if (finalLpppAmountBase > maxUsableLppp) {
+                        SocketManager.emitLog(`[LP WARN] Required LPPP (${finalLpppUiAmount.toFixed(2)}) exceeds wallet balance (${lpppBalanceUi.toFixed(2)}). Capping to ${maxUsableLpppUi.toFixed(2)} LPPP.`, "warning");
+                        finalLpppAmountBase = maxUsableLppp;
+                        finalLpppUiAmount = maxUsableLpppUi;
+
+                        // Recalculate token amount to maintain price ratio
+                        if (targetLpppAmount > 0) {
+                            const ratio = maxUsableLpppUi / targetLpppAmount;
+                            const adjustedTokenRaw = BigInt(Math.floor(Number(tokenAmount) * ratio));
+                            // Use the smaller of the two to be safe
+                            effectiveTokenAmount = adjustedTokenRaw < tokenAmount ? adjustedTokenRaw : tokenAmount;
+                        }
+                    }
+                } catch (balErr: any) {
+                    SocketManager.emitLog(`[LP WARN] Could not verify LPPP balance: ${balErr.message}. Proceeding with calculated amount.`, "warning");
+                }
+
+                // ═══ DIAGNOSTIC LOGGING ═══
+                SocketManager.emitLog(`[POOL DIAG] LPPP Sending: ${finalLpppUiAmount.toFixed(2)} | Token Sending: ${Number(effectiveTokenAmount)} raw | Ratio: ${(finalLpppUiAmount / tokenUiAmountChecked).toFixed(4)} LPPP/Token`, "info");
+
+                // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
+                try {
+                    const poolInfo = await this.strategy.createMeteoraPool(result.mint, effectiveTokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
+
+                    if (poolInfo.success) {
+                        SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
+                        const poolEvent = {
+                            poolId: poolInfo.poolAddress || "",
+                            token: result.symbol,
+                            roi: "0%", // Initial ROI
+                            created: new Date().toISOString()
+                        };
+
+                        const initialPrice = tokenUiAmountChecked > 0 ? finalLpppUiAmount / tokenUiAmountChecked : 0;
+                        // Estimated value in base units (LPPP) — will be overwritten by actual on-chain value
+                        let initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
+
+                        // Query ACTUAL on-chain position value as our true baseline (with retry)
+                        try {
+                            const RETRY_DELAYS = [3000, 6000, 10000]; // Increasing delays for chain settlement
+                            const estimatedValue = initialSolValue;
+                            for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
+                                await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+                                const onChainValue = await this.strategy.getPositionValue(
+                                    poolInfo.poolAddress || "",
+                                    result.mint.toBase58(),
+                                    poolInfo.positionAddress
+                                );
+                                if (onChainValue.success && onChainValue.totalSol > 0) {
+                                    initialSolValue = onChainValue.totalSol;
+                                    const gap = Math.abs(initialSolValue - estimatedValue) / estimatedValue;
+                                    console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} | On-chain: ${initialSolValue.toFixed(4)} | Estimated: ${estimatedValue.toFixed(4)} | Gap: ${(gap * 100).toFixed(0)}%`);
+                                    if (gap <= 0.5) break; // Gap <50% — value has settled
+                                    if (attempt === RETRY_DELAYS.length - 1) {
+                                        console.warn(`[BASELINE] ${result.symbol} | Gap still ${(gap * 100).toFixed(0)}% after ${RETRY_DELAYS.length} retries. Using best on-chain value.`);
+                                    }
+                                } else {
+                                    console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} failed, ${attempt < RETRY_DELAYS.length - 1 ? 'retrying...' : 'using estimate.'}`);
+                                    if (attempt === RETRY_DELAYS.length - 1) initialSolValue = estimatedValue;
+                                }
+                            }
+                            SocketManager.emitLog(`[BASELINE] True position value: ${initialSolValue.toFixed(4)} base units`, "info");
+                        } catch (baselineErr: any) {
+                            console.warn(`[BASELINE] Could not fetch on-chain value: ${baselineErr.message}`);
+                        }
+
+                        const fullPoolData: PoolData = {
+                            ...poolEvent,
+                            mint: result.mint.toBase58(),
+                            roi: "0%",
+                            netRoi: "0%",
+                            initialPrice,
+                            initialTokenAmount: tokenUiAmountChecked,
+                            initialLpppAmount: finalLpppUiAmount,
+                            initialSolValue,
+                            exited: false,
+                            positionId: poolInfo.positionAddress,
+                            unclaimedFees: { sol: "0", token: "0" },
+                            isBotCreated: true // High-priority tag for bot-created pools
+                        };
+
+                        SocketManager.emitPool(fullPoolData);
+                        await this.savePools(fullPoolData); // Ensure awaited (Issue 33)
+
+                        this.sessionPoolCount++;
+                        SocketManager.emitLog(`[SESSION] Pool Created: ${this.sessionPoolCount} / ${this.settings.maxPools}`, "info");
+
+                        if (this.sessionPoolCount >= this.settings.maxPools) {
+                            SocketManager.emitLog(`[LIMIT REACHED] Session limit of ${this.settings.maxPools} pools reached. Shutting down...`, "warning");
+                            this.stop();
+                        }
+                    } else {
+                        SocketManager.emitLog(`[LP ERROR] Pool Failed: ${poolInfo.error}`, "error");
+                    }
+                } catch (lpError: any) {
+                    console.error("[BOT] LP Creation Critical Failure:", lpError);
+                    SocketManager.emitLog(`[ERROR] Failed to seed pool: ${lpError.message}`, "error");
+                }
+            } else {
+                SocketManager.emitLog(`Buy Failed: ${error || "Unknown Error"}`, "error");
+            }
+        } catch (swapError: any) {
+            console.error("[BOT] Swap Execution Failure:", swapError);
+            SocketManager.emitLog(`[ERROR] Swap execution failed: ${swapError.message}`, "error");
+        } finally {
+            // Release the mint lock so it can be re-evaluated in future sweeps
+            this.pendingMints.delete(mintAddress);
+        }
+    }, connection);
+
+    this.scanner.start();
+}
 
     /**
      * High-priority evaluation for tokens discovered via real-time webhooks or manual triggers.
      */
     async evaluateDiscovery(mint: string, source: string = "Manual") {
-        // Issue 36: Early Deduplication (Skip API calls for tokens already in flight)
-        if (this.pendingMints.has(mint)) {
-            console.log(`[DISCOVERY] Skipping ${mint.slice(0, 8)}: Already pending.`);
+    // Issue 36: Early Deduplication (Skip API calls for tokens already in flight)
+    if (this.pendingMints.has(mint)) {
+        console.log(`[DISCOVERY] Skipping ${mint.slice(0, 8)}: Already pending.`);
+        return;
+    }
+
+    try {
+        const mintPubkey = new PublicKey(mint);
+
+        // 1. Fetch Basic Metadata
+        const pairRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+        const pairs = pairRes.data.pairs;
+
+        if (!pairs || pairs.length === 0) {
+            SocketManager.emitLog(`[${source}] No pool data found for ${mint}. indexing delay?`, "warning");
             return;
         }
 
-        try {
-            const mintPubkey = new PublicKey(mint);
+        const bestPair = pairs[0];
 
-            // 1. Fetch Basic Metadata
-            const pairRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-            const pairs = pairRes.data.pairs;
+        // 2. Fetch Deep Metadata (CoinGecko)
+        const geckoMeta = await GeckoService.getTokenMetadata(mint);
 
-            if (!pairs || pairs.length === 0) {
-                SocketManager.emitLog(`[${source}] No pool data found for ${mint}. indexing delay?`, "warning");
-                return;
-            }
+        const result: ScanResult = {
+            mint: mintPubkey,
+            pairAddress: bestPair.pairAddress,
+            dexId: bestPair.dexId,
+            volume24h: bestPair.volume?.h24 || 0,
+            liquidity: bestPair.liquidity?.usd || 0,
+            mcap: bestPair.fdv || 0,
+            symbol: bestPair.baseToken.symbol,
+            priceUsd: Number(bestPair.priceUsd)
+        };
 
-            const bestPair = pairs[0];
-
-            // 2. Fetch Deep Metadata (CoinGecko)
-            const geckoMeta = await GeckoService.getTokenMetadata(mint);
-
-            const result: ScanResult = {
-                mint: mintPubkey,
-                pairAddress: bestPair.pairAddress,
-                dexId: bestPair.dexId,
-                volume24h: bestPair.volume?.h24 || 0,
-                liquidity: bestPair.liquidity?.usd || 0,
-                mcap: bestPair.fdv || 0,
-                symbol: bestPair.baseToken.symbol,
-                priceUsd: Number(bestPair.priceUsd)
-            };
-
-            SocketManager.emitLog(`[${source}] Real-time validation for ${result.symbol}...`, "info");
-            if (geckoMeta?.links.twitter_screen_name) {
-                SocketManager.emitLog(`[${source}] Socials Detected: Twitter @${geckoMeta.links.twitter_screen_name}`, "success");
-            }
-
-            if (this.isRunning && this.scanner) {
-                // High-priority evaluation (ignores standard sweep interval)
-                await this.scanner.evaluateToken(result);
-            }
-
-        } catch (error: any) {
-            console.error(`[DISCOVERY ERROR] ${error.message}`);
+        SocketManager.emitLog(`[${source}] Real-time validation for ${result.symbol}...`, "info");
+        if (geckoMeta?.links.twitter_screen_name) {
+            SocketManager.emitLog(`[${source}] Socials Detected: Twitter @${geckoMeta.links.twitter_screen_name}`, "success");
         }
-    }
 
-    stop() {
-        this.isRunning = false;
-        if (this.scanner) {
-            this.scanner.stop();
+        if (this.isRunning && this.scanner) {
+            // High-priority evaluation (ignores standard sweep interval)
+            await this.scanner.evaluateToken(result);
         }
-        // ONLY stop the monitor if we have no positions left to watch.
-        // Otherwise, keep monitoring ROI/Fees/SL/TP for existing money.
-        // Note: runMonitor already has logic to self-terminate if !isRunning && pools.length === 0
-        console.log("[BOT] Scanning stopped. Monitor will continue if active pools exist.");
 
-        SocketManager.emitStatus(false);
-        SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
+    } catch (error: any) {
+        console.error(`[DISCOVERY ERROR] ${error.message}`);
     }
+}
+
+stop() {
+    this.isRunning = false;
+    if (this.scanner) {
+        this.scanner.stop();
+    }
+    // ONLY stop the monitor if we have no positions left to watch.
+    // Otherwise, keep monitoring ROI/Fees/SL/TP for existing money.
+    // Note: runMonitor already has logic to self-terminate if !isRunning && pools.length === 0
+    console.log("[BOT] Scanning stopped. Monitor will continue if active pools exist.");
+
+    SocketManager.emitStatus(false);
+    SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
+}
 
     async getWalletBalance() {
-        try {
-            const solBalance = await connection.getBalance(wallet.publicKey);
+    try {
+        const solBalance = await connection.getBalance(wallet.publicKey);
 
-            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
 
-            let lpppBalance = 0;
-            if (tokenAccounts.value.length > 0) {
-                lpppBalance = tokenAccounts.value.reduce((acc, account) => {
-                    return acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0);
-                }, 0);
-            }
-
-            return {
-                sol: solBalance / 1e9,
-                lppp: lpppBalance
-            };
-        } catch (error) {
-            console.error("Portfolio Fetch Error:", error);
-            return { sol: 0, lppp: 0 };
+        let lpppBalance = 0;
+        if (tokenAccounts.value.length > 0) {
+            lpppBalance = tokenAccounts.value.reduce((acc, account) => {
+                return acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0);
+            }, 0);
         }
+
+        return {
+            sol: solBalance / 1e9,
+            lppp: lpppBalance
+        };
+    } catch (error) {
+        console.error("Portfolio Fetch Error:", error);
+        return { sol: 0, lppp: 0 };
     }
+}
 
     private async monitorPositions() {
-        const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
+    const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
-        // Monitor loop
-        let sweepCount = 0;
-        const runMonitor = async () => {
-            let pools: PoolData[] = [];
-            try {
-                pools = await dbService.getAllPools();
-                if (pools.length > 0) {
-                    console.log(`[MONITOR DEBUG] Checking ${pools.length} pools from SQLite...`);
-                } else {
-                    if (sweepCount % 10 === 0) {
-                        console.log(`[MONITOR DEBUG] No active pools found.`);
-                    }
+    // Monitor loop
+    let sweepCount = 0;
+    const runMonitor = async () => {
+        this.lastMonitorHeartbeat = Date.now(); // Watchdog: I'm alive!
+
+        let pools: PoolData[] = [];
+        try {
+            pools = await dbService.getAllPools();
+            if (pools.length > 0) {
+                console.log(`[MONITOR DEBUG] Checking ${pools.length} pools from SQLite...`);
+            } else {
+                if (sweepCount % 10 === 0) {
+                    console.log(`[MONITOR DEBUG] No active pools found.`);
                 }
+            }
 
-                for (const pool of pools) {
-                    try {
-                        if (pool.exited) continue;
+            for (const pool of pools) {
+                try {
+                    if (pool.exited) continue;
 
-                        // HARDCODED: Only monitor bot-created pools. Skip all recovered/external.
-                        if (!pool.isBotCreated) {
+                    // HARDCODED: Only monitor bot-created pools. Skip all recovered/external.
+                    if (!pool.isBotCreated) {
+                        continue;
+                    }
+
+                    console.log(`[MONITOR DEBUG] Checking pool: ${pool.token} (${pool.poolId.slice(0, 8)}...)`);
+                    if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
+                    if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
+
+                    const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
+
+                    if (posValue.success) {
+                        // ═══ DEBUG: Show raw values for diagnosis ═══
+                        if (sweepCount < 10 || sweepCount % 5 === 0) {
+                            console.log(`[MONITOR RAW] ${pool.token} | totalSol: ${posValue.totalSol.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | fees: ${posValue.feesSol.toFixed(6)} | initialSolValue: ${pool.initialSolValue?.toFixed(6) || 'N/A'}`);
+                        }
+
+                        // ═══ SANITY GUARD: Reject zero-value responses from RPC glitches ═══
+                        if (posValue.totalSol <= 0 && pool.initialSolValue && pool.initialSolValue > 0) {
+                            console.log(`[MONITOR] ⚠️ ${pool.token}: RPC returned 0 value (likely 429/lag). Keeping last known ROI: ${pool.roi}`);
+                            await new Promise(r => setTimeout(r, 1000));
                             continue;
                         }
 
-                        console.log(`[MONITOR DEBUG] Checking pool: ${pool.token} (${pool.poolId.slice(0, 8)}...)`);
-                        if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
-                        if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
+                        // 1. Update Fees
+                        pool.unclaimedFees = { sol: posValue.feesSol.toString(), token: "0" };
 
-                        const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
+                        // 2. Spot ROI (Price-based)
+                        const normalizedPrice = posValue.spotPrice;
+                        let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
-                        if (posValue.success) {
-                            // ═══ DEBUG: Show raw values for diagnosis ═══
-                            if (sweepCount < 10 || sweepCount % 5 === 0) {
-                                console.log(`[MONITOR RAW] ${pool.token} | totalSol: ${posValue.totalSol.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | fees: ${posValue.feesSol.toFixed(6)} | initialSolValue: ${pool.initialSolValue?.toFixed(6) || 'N/A'}`);
-                            }
-
-                            // ═══ SANITY GUARD: Reject zero-value responses from RPC glitches ═══
-                            if (posValue.totalSol <= 0 && pool.initialSolValue && pool.initialSolValue > 0) {
-                                console.log(`[MONITOR] ⚠️ ${pool.token}: RPC returned 0 value (likely 429/lag). Keeping last known ROI: ${pool.roi}`);
-                                await new Promise(r => setTimeout(r, 1000));
-                                continue;
-                            }
-
-                            // 1. Update Fees
-                            pool.unclaimedFees = { sol: posValue.feesSol.toString(), token: "0" };
-
-                            // 2. Spot ROI (Price-based)
-                            const normalizedPrice = posValue.spotPrice;
-                            let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
-
-                            // ═══ AUTO-RECALIBRATION (Simplified) ═══
-                            if (roiVal < -90) {
-                                if (roiVal < -95 && (pool.roi === "0%" || pool.roi === "0.00%")) {
-                                    const invertedInitial = 1 / pool.initialPrice;
-                                    const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
-                                    if (Math.abs(newRoi) < 50) {
-                                        console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
-                                        pool.initialPrice = invertedInitial;
-                                        roiVal = newRoi;
-                                    } else {
-                                        console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
-                                        pool.initialPrice = normalizedPrice;
-                                        roiVal = 0;
-                                    }
-                                }
-                            }
-
-                            const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
-                            const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
-                            pool.roi = roiString;
-
-                            // 3. NET ROI (Inventory-based)
-                            // Initialize initialSolValue if missing (for legacy or recovered positions)
-                            if (!pool.initialSolValue || pool.initialSolValue <= 0) {
-                                const calculatedInitial = (pool.initialLpppAmount || 0) + ((pool.initialTokenAmount || 0) * pool.initialPrice);
-                                pool.initialSolValue = calculatedInitial > 0 ? calculatedInitial : posValue.totalSol;
-                            }
-
-                            const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
-                            const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
-                            pool.netRoi = `${netRoiVal.toFixed(2)}%`;
-
-                            // Log state for visibility
-                            // Always log if there's activity or periodic heartbeat
-                            if (netRoiVal !== 0 || roiVal !== 0 || sweepCount < 30 || sweepCount % 10 === 0) {
-                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP | Entry: ${pool.initialSolValue?.toFixed(4)} LPPP`);
-                            }
-
-                            // Update local state and emit
-                            await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
-                                netRoi: pool.netRoi,
-                                initialSolValue: pool.initialSolValue
-                            });
-
-                            // Small delay to prevent 429s in big loops - Be aggressive for DRPC
-                            await new Promise(r => setTimeout(r, 1000));
-
-                            // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
-                            // We use Net ROI for all decisions to ensure real profit capture
-                            if (netRoiVal >= 300 && !pool.tp1Done) {
-                                this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} hit 3x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
-                                if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                }
-                                // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions)
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
-                            }
-
-                            // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
-                            if (netRoiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
-                                this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} hit 6x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
-                                if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                }
-                                // Clear lock BEFORE updatePoolROI
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
-                            }
-
-                            // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
-                            // 3-minute cooldown: don't trigger SL on pools younger than 3 minutes
-                            const poolAgeMs = Date.now() - new Date(pool.created).getTime();
-                            const SL_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
-                            if (netRoiVal <= -30 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
-                                this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${netRoiVal.toFixed(0)}% Net Loss! Withdrawing 80%...`, "error");
-                                const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
-                                if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                }
-                                // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions and returns early!)
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
-
-                                // If position is essentially dead (-95%+), mark as exited entirely
-                                if (netRoiVal <= -95) {
-                                    SocketManager.emitLog(`[CLEANUP] ${pool.token} position is dead (${netRoiVal.toFixed(0)}%). Marking as EXITED.`, "warning");
-                                    await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                        // ═══ AUTO-RECALIBRATION (Simplified) ═══
+                        if (roiVal < -90) {
+                            if (roiVal < -95 && (pool.roi === "0%" || pool.roi === "0.00%")) {
+                                const invertedInitial = 1 / pool.initialPrice;
+                                const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
+                                if (Math.abs(newRoi) < 50) {
+                                    console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
+                                    pool.initialPrice = invertedInitial;
+                                    roiVal = newRoi;
+                                } else {
+                                    console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
+                                    pool.initialPrice = normalizedPrice;
+                                    roiVal = 0;
                                 }
                             }
                         }
-                    } catch (poolErr: any) {
-                        console.error(`[MONITOR] Error monitoring pool ${pool.poolId}:`, poolErr.message);
+
+                        const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
+                        const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
+                        pool.roi = roiString;
+
+                        // 3. NET ROI (Inventory-based)
+                        // Initialize initialSolValue if missing (for legacy or recovered positions)
+                        if (!pool.initialSolValue || pool.initialSolValue <= 0) {
+                            const calculatedInitial = (pool.initialLpppAmount || 0) + ((pool.initialTokenAmount || 0) * pool.initialPrice);
+                            pool.initialSolValue = calculatedInitial > 0 ? calculatedInitial : posValue.totalSol;
+                        }
+
+                        const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
+                        const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
+                        pool.netRoi = `${netRoiVal.toFixed(2)}%`;
+
+                        // Log state for visibility
+                        // Always log if there's activity or periodic heartbeat
+                        if (netRoiVal !== 0 || roiVal !== 0 || sweepCount < 30 || sweepCount % 10 === 0) {
+                            console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP | Entry: ${pool.initialSolValue?.toFixed(4)} LPPP`);
+                        }
+
+                        // Update local state and emit
+                        await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
+                            netRoi: pool.netRoi,
+                            initialSolValue: pool.initialSolValue
+                        });
+
+                        // Small delay to prevent 429s in big loops - Be aggressive for DRPC
+                        await new Promise(r => setTimeout(r, 1000));
+
+                        // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
+                        // We use Net ROI for all decisions to ensure real profit capture
+                        if (netRoiVal >= 300 && !pool.tp1Done) {
+                            this.activeTpSlActions.add(pool.poolId);
+                            SocketManager.emitLog(`[TP1] ${pool.token} hit 3x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                            const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
+                            if (result.success) {
+                                await this.liquidatePoolToSol(pool.mint);
+                            }
+                            // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions)
+                            this.activeTpSlActions.delete(pool.poolId);
+                            await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                        }
+
+                        // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
+                        if (netRoiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
+                            this.activeTpSlActions.add(pool.poolId);
+                            SocketManager.emitLog(`[TP2] ${pool.token} hit 6x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                            const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
+                            if (result.success) {
+                                await this.liquidatePoolToSol(pool.mint);
+                            }
+                            // Clear lock BEFORE updatePoolROI
+                            this.activeTpSlActions.delete(pool.poolId);
+                            await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                        }
+
+                        // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
+                        // 3-minute cooldown: don't trigger SL on pools younger than 3 minutes
+                        const poolAgeMs = Date.now() - new Date(pool.created).getTime();
+                        const SL_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
+                        if (netRoiVal <= -30 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
+                            this.activeTpSlActions.add(pool.poolId);
+                            SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${netRoiVal.toFixed(0)}% Net Loss! Withdrawing 80%...`, "error");
+                            const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
+                            if (result.success) {
+                                await this.liquidatePoolToSol(pool.mint);
+                            }
+                            // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions and returns early!)
+                            this.activeTpSlActions.delete(pool.poolId);
+                            await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+
+                            // If position is essentially dead (-95%+), mark as exited entirely
+                            if (netRoiVal <= -95) {
+                                SocketManager.emitLog(`[CLEANUP] ${pool.token} position is dead (${netRoiVal.toFixed(0)}%). Marking as EXITED.`, "warning");
+                                await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                            }
+                        }
                     }
-                }
-            } catch (e: any) {
-                console.error("[MONITOR] Global Loop Error:", e.message);
-            } finally {
-                sweepCount++;
-                // Schedule next iteration (recursive timeout)
-                if (this.isRunning || pools.length > 0) {
-                    this.monitorInterval = setTimeout(runMonitor, 60000); // Check every 60s
-                } else {
-                    this.monitorInterval = null; // Clear interval if not running and no pools
+                } catch (poolErr: any) {
+                    console.error(`[MONITOR] Error monitoring pool ${pool.poolId}:`, poolErr.message);
                 }
             }
-        };
+        } catch (e: any) {
+            console.error("[MONITOR] Global Loop Error:", e.message);
+        } finally {
+            sweepCount++;
+            // Schedule next iteration (recursive timeout)
+            if (this.isRunning || pools.length > 0) {
+                this.monitorInterval = setTimeout(runMonitor, 60000); // Check every 60s
+            } else {
+                this.monitorInterval = null; // Clear interval if not running and no pools
+            }
+        }
+    };
 
-        // Kick off first run
-        await runMonitor();
-    }
+    // Kick off first run
+    await runMonitor();
+}
 
     async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {
-        SocketManager.emitLog(`[${source}] Withdrawing ${percent}% liquidity from ${poolId.slice(0, 8)}...`, "warning");
+    SocketManager.emitLog(`[${source}] Withdrawing ${percent}% liquidity from ${poolId.slice(0, 8)}...`, "warning");
 
-        // 1. Mark as Pending (Issue 30 - Atomicity)
-        await this.updatePoolROI(poolId, "PENDING...", false, undefined, { withdrawalPending: true });
+    // 1. Mark as Pending (Issue 30 - Atomicity)
+    await this.updatePoolROI(poolId, "PENDING...", false, undefined, { withdrawalPending: true });
 
-        // Look up stored positionId for this pool
-        let positionId: string | undefined;
-        try {
-            const pool = await dbService.getPool(poolId);
-            positionId = pool?.positionId;
-        } catch (e) { /* proceed without positionId stack trace */ }
+    // Look up stored positionId for this pool
+    let positionId: string | undefined;
+    try {
+        const pool = await dbService.getPool(poolId);
+        positionId = pool?.positionId;
+    } catch (e) { /* proceed without positionId stack trace */ }
 
-        try {
-            const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
-            if (result.success) {
-                SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
+    try {
+        const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
+        if (result.success) {
+            SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
 
-                // 2. Clear pending and update state
-                const isFull = percent >= 100;
-                await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", isFull, undefined, { withdrawalPending: false });
+            // 2. Clear pending and update state
+            const isFull = percent >= 100;
+            await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", isFull, undefined, { withdrawalPending: false });
 
-                if (isFull) {
-                    // Try to liquidate remnants if any
-                    try {
-                        const pool = await dbService.getPool(poolId);
-                        if (pool) await this.liquidatePoolToSol(pool.mint);
-                    } catch (_) { }
-                }
-                return result;
-            } else {
-                SocketManager.emitLog(`[ERROR] Withdrawal failed: ${result.error}`, "error");
-
-                // Issue: Ghost Positions (Position gone from chain but in our JSON)
-                // If the error specifically says "No active position found", it means we can't manage this anymore.
-                // We should mark it as exited so the bot stops spamming SL/TP checks.
-                if (result.error?.includes("No active position found")) {
-                    SocketManager.emitLog(`[RECOVERY] Pool position is gone from chain. Marking ${poolId.slice(0, 8)}... as EXITED.`, "warning");
-                    await this.updatePoolROI(poolId, "GONE", true, undefined, { withdrawalPending: false });
-                } else {
-                    // Clear pending flag so it can be re-tried for other errors
-                    await this.updatePoolROI(poolId, "FAILED", false, undefined, { withdrawalPending: false });
-                }
-                return result;
+            if (isFull) {
+                // Try to liquidate remnants if any
+                try {
+                    const pool = await dbService.getPool(poolId);
+                    if (pool) await this.liquidatePoolToSol(pool.mint);
+                } catch (_) { }
             }
-        } catch (err: any) {
-            console.error("[WITHDRAW] Critical Error:", err);
-            await this.updatePoolROI(poolId, "ERROR", false, undefined, { withdrawalPending: false });
-            return { success: false, error: err.message };
+            return result;
+        } else {
+            SocketManager.emitLog(`[ERROR] Withdrawal failed: ${result.error}`, "error");
+
+            // Issue: Ghost Positions (Position gone from chain but in our JSON)
+            // If the error specifically says "No active position found", it means we can't manage this anymore.
+            // We should mark it as exited so the bot stops spamming SL/TP checks.
+            if (result.error?.includes("No active position found")) {
+                SocketManager.emitLog(`[RECOVERY] Pool position is gone from chain. Marking ${poolId.slice(0, 8)}... as EXITED.`, "warning");
+                await this.updatePoolROI(poolId, "GONE", true, undefined, { withdrawalPending: false });
+            } else {
+                // Clear pending flag so it can be re-tried for other errors
+                await this.updatePoolROI(poolId, "FAILED", false, undefined, { withdrawalPending: false });
+            }
+            return result;
         }
+    } catch (err: any) {
+        console.error("[WITHDRAW] Critical Error:", err);
+        await this.updatePoolROI(poolId, "ERROR", false, undefined, { withdrawalPending: false });
+        return { success: false, error: err.message };
     }
+}
 
     async increaseLiquidity(poolId: string, amountSol: number) {
-        SocketManager.emitLog(`[MANUAL] Increasing liquidity by ${amountSol} SOL in ${poolId.slice(0, 8)}...`, "warning");
-        const result = await this.strategy.addMeteoraLiquidity(poolId, amountSol);
-        if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Added more liquidity!`, "success");
-        } else {
-            SocketManager.emitLog(`[ERROR] Failed to add liquidity: ${result.error}`, "error");
-        }
-        return result;
+    SocketManager.emitLog(`[MANUAL] Increasing liquidity by ${amountSol} SOL in ${poolId.slice(0, 8)}...`, "warning");
+    const result = await this.strategy.addMeteoraLiquidity(poolId, amountSol);
+    if (result.success) {
+        SocketManager.emitLog(`[SUCCESS] Added more liquidity!`, "success");
+    } else {
+        SocketManager.emitLog(`[ERROR] Failed to add liquidity: ${result.error}`, "error");
     }
+    return result;
+}
 
     async claimFees(poolId: string) {
-        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)}...`, "warning");
-        const result = await this.strategy.claimMeteoraFees(poolId);
-        if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Fees harvested!`, "success");
-        } else {
-            SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
-        }
-        return result;
+    SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)}...`, "warning");
+    const result = await this.strategy.claimMeteoraFees(poolId);
+    if (result.success) {
+        SocketManager.emitLog(`[SUCCESS] Fees harvested!`, "success");
+    } else {
+        SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
     }
+    return result;
+}
 
     private async liquidatePoolToSol(tokenMint: string) {
-        // Only sell the sniped token back to SOL.
-        // IMPORTANT: Do NOT sell LPPP here. LPPP is a reserve asset used to seed
-        // future pools. Selling it would drain the entire wallet balance.
-        const getRawBalance = async (mintStr: string) => {
-            try {
-                const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mintStr) });
-                return accounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
-            } catch (e) { return 0n; }
-        };
+    // Only sell the sniped token back to SOL.
+    // IMPORTANT: Do NOT sell LPPP here. LPPP is a reserve asset used to seed
+    // future pools. Selling it would drain the entire wallet balance.
+    const getRawBalance = async (mintStr: string) => {
+        try {
+            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mintStr) });
+            return accounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+        } catch (e) { return 0n; }
+    };
 
-        const tokenBal = await getRawBalance(tokenMint);
-        if (tokenBal > 0n) {
-            SocketManager.emitLog(`[LIQUIDATE] Closing $${tokenMint.slice(0, 6)} and converting to SOL...`, "warning");
-            await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
-        } else {
-            SocketManager.emitLog(`[LIQUIDATE] No ${tokenMint.slice(0, 6)} balance to sell.`, "info");
-        }
+    const tokenBal = await getRawBalance(tokenMint);
+    if (tokenBal > 0n) {
+        SocketManager.emitLog(`[LIQUIDATE] Closing $${tokenMint.slice(0, 6)} and converting to SOL...`, "warning");
+        await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+    } else {
+        SocketManager.emitLog(`[LIQUIDATE] No ${tokenMint.slice(0, 6)} balance to sell.`, "info");
     }
+}
 
-    async getPortfolio(): Promise<PoolData[]> {
-        return await dbService.getAllPools();
-    }
+    async getPortfolio(): Promise < PoolData[] > {
+    return await dbService.getAllPools();
+}
 
     async updateWallet(privateKeyBs58: string) {
-        try {
-            const { Keypair } = require("@solana/web3.js");
-            const bs58 = require("bs58");
-            const newWallet = Keypair.fromSecretKey(bs58.decode(privateKeyBs58));
+    try {
+        const { Keypair } = require("@solana/web3.js");
+        const bs58 = require("bs58");
+        const newWallet = Keypair.fromSecretKey(bs58.decode(privateKeyBs58));
 
-            this.strategy.setKey(newWallet);
-            SocketManager.emitLog(`[WALLET] Updated to: ${newWallet.publicKey.toBase58()}`, "success");
-            return { success: true, publicKey: newWallet.publicKey.toBase58() };
-        } catch (error: any) {
-            console.error("[BOT] Wallet Update Failed:", error);
-            return { success: false, error: error.message };
-        }
+        this.strategy.setKey(newWallet);
+        SocketManager.emitLog(`[WALLET] Updated to: ${newWallet.publicKey.toBase58()}`, "success");
+        return { success: true, publicKey: newWallet.publicKey.toBase58() };
+    } catch (error: any) {
+        console.error("[BOT] Wallet Update Failed:", error);
+        return { success: false, error: error.message };
     }
+}
 
 }
