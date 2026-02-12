@@ -541,7 +541,27 @@ export class BotManager {
                             };
 
                             const initialPrice = tokenUiAmountChecked > 0 ? finalLpppUiAmount / tokenUiAmountChecked : 0;
-                            const initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
+                            // Estimated value in base units (LPPP) — will be overwritten by actual on-chain value
+                            let initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
+
+                            // Query ACTUAL on-chain position value as our true baseline
+                            try {
+                                await new Promise(r => setTimeout(r, 3000)); // Wait for chain to settle
+                                const onChainValue = await this.strategy.getPositionValue(
+                                    poolInfo.poolAddress || "",
+                                    result.mint.toBase58(),
+                                    poolInfo.positionAddress
+                                );
+                                if (onChainValue.success && onChainValue.totalSol > 0) {
+                                    console.log(`[BASELINE] ${result.symbol} | On-chain: ${onChainValue.totalSol.toFixed(4)} | Estimated: ${initialSolValue.toFixed(4)}`);
+                                    initialSolValue = onChainValue.totalSol;
+                                    SocketManager.emitLog(`[BASELINE] True position value: ${initialSolValue.toFixed(4)} base units`, "info");
+                                } else {
+                                    console.log(`[BASELINE] ${result.symbol} | On-chain query failed, using estimate: ${initialSolValue.toFixed(4)}`);
+                                }
+                            } catch (baselineErr: any) {
+                                console.warn(`[BASELINE] Could not fetch on-chain value: ${baselineErr.message}`);
+                            }
 
                             const fullPoolData: PoolData = {
                                 ...poolEvent,
@@ -713,9 +733,12 @@ export class BotManager {
                         const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
 
                         if (posValue.success) {
+                            // ═══ DEBUG: Show raw values for diagnosis ═══
+                            if (sweepCount < 10 || sweepCount % 5 === 0) {
+                                console.log(`[MONITOR RAW] ${pool.token} | totalSol: ${posValue.totalSol.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | fees: ${posValue.feesSol.toFixed(6)} | initialSolValue: ${pool.initialSolValue?.toFixed(6) || 'N/A'}`);
+                            }
+
                             // ═══ SANITY GUARD: Reject zero-value responses from RPC glitches ═══
-                            // If the RPC is overloaded (429s), it may return an empty position
-                            // which causes totalSol=0 and -100% ROI. We skip the update entirely.
                             if (posValue.totalSol <= 0 && pool.initialSolValue && pool.initialSolValue > 0) {
                                 console.log(`[MONITOR] ⚠️ ${pool.token}: RPC returned 0 value (likely 429/lag). Keeping last known ROI: ${pool.roi}`);
                                 await new Promise(r => setTimeout(r, 1000));
@@ -804,7 +827,10 @@ export class BotManager {
                             }
 
                             // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
-                            if (netRoiVal <= -30 && !pool.stopLossDone) {
+                            // 3-minute cooldown: don't trigger SL on pools younger than 3 minutes
+                            const poolAgeMs = Date.now() - new Date(pool.created).getTime();
+                            const SL_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
+                            if (netRoiVal <= -30 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
                                 SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${netRoiVal.toFixed(0)}% Net Loss! Withdrawing 80%...`, "error");
                                 const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
