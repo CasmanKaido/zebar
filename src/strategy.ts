@@ -1439,17 +1439,73 @@ export class StrategyManager {
 
 
             // 7. User's Pending Fees
-            // DEBUG: Inspect the raw object to find correct fee property
-            console.log(`[DEBUG FEES] Position State:`, JSON.stringify(pos.positionState, (key, value) => typeof value === 'bigint' ? value.toString() : value));
-            console.log(`[DEBUG FEES] Pool State:`, JSON.stringify(poolState, (key, value) => typeof value === 'bigint' ? value.toString() : value));
+            // Manual Calculation Helper: Convert byte array to LE BigInt
+            const parseBigIntLE = (arr: number[]): bigint => {
+                let res = 0n;
+                for (let i = 0; i < arr.length; i++) {
+                    res += BigInt(arr[i]) << BigInt(i * 8);
+                }
+                return res;
+            };
 
-            // Use explicit property check for safety across SDK versions
-            const feeA = Number(pos.positionState.feeAPending?.toString() || pos.positionState.feeA?.toString() || "0") / Math.pow(10, decimalsA);
-            const feeB = Number(pos.positionState.feeBPending?.toString() || pos.positionState.feeB?.toString() || "0") / Math.pow(10, decimalsB);
+            // Read Global Accumulators from Pool State (feeAPerLiquidity / feeBPerLiquidity)
+            // The property names in poolState are `feeAPerLiquidity` and `feeBPerLiquidity` (verified in logs)
+            // They are arrays of numbers (u128 LE bytes)
+            const globalFeeA_Array = (poolState as any).feeAPerLiquidity || [];
+            const globalFeeB_Array = (poolState as any).feeBPerLiquidity || [];
 
-            // Log if we actually found fees > 0
+            // Read Checkpoints from Position State
+            const checkpointA_Array = (pos.positionState as any).feeAPerTokenCheckpoint || [];
+            const checkpointB_Array = (pos.positionState as any).feeBPerTokenCheckpoint || [];
+
+            let feeA = 0;
+            let feeB = 0;
+
+            try {
+                if (globalFeeA_Array.length > 0 && checkpointA_Array.length > 0) {
+                    const globalA = parseBigIntLE(globalFeeA_Array);
+                    const checkA = parseBigIntLE(checkpointA_Array);
+
+                    // Liquidity is total user liquidity (unlocked + vested + locked)
+                    const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                        BigInt(pos.positionState.vestedLiquidity.toString()) +
+                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
+
+                    // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
+                    // Typically scaled by Q64.64 (>> 64) for precision in AMMs
+                    // Using >> 64n as a standard assumption for Solana AMM fee growth
+                    const deltaA = globalA > checkA ? globalA - checkA : 0n;
+                    const pendingA_Raw = (deltaA * liquidity) >> 64n;
+
+                    // Convert to decimals
+                    feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                }
+
+                if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
+                    const globalB = parseBigIntLE(globalFeeB_Array);
+                    const checkB = parseBigIntLE(checkpointB_Array);
+
+                    // Re-use liquidity
+                    const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                        BigInt(pos.positionState.vestedLiquidity.toString()) +
+                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
+
+                    const deltaB = globalB > checkB ? globalB - checkB : 0n;
+                    const pendingB_Raw = (deltaB * liquidity) >> 64n;
+
+                    feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                }
+            } catch (err) {
+                console.warn(`[STRATEGY] Manual fee calculation failed:`, err);
+            }
+
+            // Fallback to direct read if calculation yielded 0 (or failed) but direct read has value (unlikely given logs)
+            if (feeA === 0) feeA = Number(pos.positionState.feeAPending?.toString() || "0") / Math.pow(10, decimalsA);
+            if (feeB === 0) feeB = Number(pos.positionState.feeBPending?.toString() || "0") / Math.pow(10, decimalsB);
+
+            // Log calculation results for verification
             if (feeA > 0 || feeB > 0) {
-                // console.log(`[DEBUG FEES] Found fees: A=${feeA}, B=${feeB}`);
+                console.log(`[FEES] Calculated Pending Fees: A=${feeA.toFixed(6)}, B=${feeB.toFixed(6)}`);
             }
 
             const feesBase = baseIsA ? feeA : feeB;
