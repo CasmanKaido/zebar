@@ -60,11 +60,12 @@ export class BotManager {
         // 1. Migrate if needed
         await this.migrateFromJsonToSqlite();
 
-        // 2. Load and Monitor
-        await this.loadAndMonitor();
-
-        // 3. Sync with Blockchain (Recover missing positions)
+        // 2. Sync with Blockchain (Recover missing positions)
+        // Doing this BEFORE loadAndMonitor ensures they are in DB for the first monitor tick
         await this.syncActivePositions();
+
+        // 3. Load and Start Monitor
+        await this.loadAndMonitor();
     }
 
     private async loadAndMonitor() {
@@ -170,8 +171,8 @@ export class BotManager {
                     SocketManager.emitPool(recoveredPool);
                     recoveredCount++;
 
-                    // Throttling to prevent 429 (Too Many Requests)
-                    await new Promise(r => setTimeout(r, 500));
+                    // Throttling to prevent 429 (Too Many Requests) - Be aggressive for DRPC
+                    await new Promise(r => setTimeout(r, 1500));
                 }
             }
 
@@ -739,13 +740,14 @@ export class BotManager {
                                 pool.initialSolValue = calculatedInitial > 0 ? calculatedInitial : posValue.totalSol;
                             }
 
-                            const netProfit = posValue.totalSol - pool.initialSolValue;
-                            const netRoiVal = pool.initialSolValue > 0 ? (netProfit / pool.initialSolValue) * 100 : 0;
+                            const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
+                            const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
                             pool.netRoi = `${netRoiVal.toFixed(2)}%`;
 
-                            // Log detailed state for debugging
-                            if (netRoiVal !== 0 || roiVal !== 0 || Math.random() > 0.9) {
-                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} | Entry: ${pool.initialSolValue.toFixed(4)}`);
+                            // Log state for visibility
+                            // Always log if there's activity or periodic heartbeat
+                            if (netRoiVal !== 0 || roiVal !== 0 || sweepCount < 30 || sweepCount % 10 === 0) {
+                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} SOL | Entry: ${pool.initialSolValue?.toFixed(4)} SOL`);
                             }
 
                             // Update local state and emit
@@ -754,8 +756,8 @@ export class BotManager {
                                 initialSolValue: pool.initialSolValue
                             });
 
-                            // Small delay to prevent 429s in big loops
-                            await new Promise(r => setTimeout(r, 100));
+                            // Small delay to prevent 429s in big loops - Be aggressive for DRPC
+                            await new Promise(r => setTimeout(r, 1000));
 
                             // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
                             // We use Net ROI for all decisions to ensure real profit capture
