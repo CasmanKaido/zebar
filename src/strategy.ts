@@ -1312,7 +1312,7 @@ export class StrategyManager {
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
-    async getPositionValue(poolAddress: string, tokenMint: string): Promise<{ totalSol: number; feesSol: number; spotPrice: number; success: boolean }> {
+    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string): Promise<{ totalSol: number; feesSol: number; spotPrice: number; success: boolean }> {
         try {
             const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
             const cpAmm = new CpAmm(this.connection);
@@ -1349,13 +1349,26 @@ export class StrategyManager {
             // 4. Spot Price (Base per Token)
             const spotPrice = (tokenAmountTotal > 0) ? (baseAmountTotal / tokenAmountTotal) : 0;
 
-            // 5. Fetch User Position and Calculate Share
-            const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
-            if (userPositions.length === 0) {
-                return { totalSol: 0, feesSol: 0, spotPrice, success: true };
+            // 5. Fetch User Position (Directly via positionId or via scan)
+            let pos: any;
+            if (positionId) {
+                try {
+                    const posPubkey = new PublicKey(positionId);
+                    const posState = await cpAmm.fetchPositionState(posPubkey);
+                    pos = { position: posPubkey, positionState: posState };
+                } catch (e) {
+                    // console.warn(`[STRATEGY] Direct fetch failed for ${positionId}, falling back to scan.`);
+                }
             }
 
-            const pos = userPositions[0];
+            if (!pos) {
+                const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
+                if (userPositions.length === 0) {
+                    return { totalSol: 0, feesSol: 0, spotPrice, success: true };
+                }
+                pos = userPositions[0];
+            }
+
             const userLiquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
                 BigInt(pos.positionState.vestedLiquidity.toString()) +
                 BigInt(pos.positionState.permanentLockedLiquidity.toString());
@@ -1368,8 +1381,12 @@ export class StrategyManager {
             const userTokenInLp = tokenAmountTotal * userShare;
 
             // 7. User's Pending Fees
-            const feesBase = Number(pos.positionState[baseIsA ? 'feeAPending' : 'feeBPending'].toString()) / Math.pow(10, baseIsA ? decimalsA : decimalsB);
-            const feesToken = Number(pos.positionState[baseIsA ? 'feeBPending' : 'feeAPending'].toString()) / Math.pow(10, baseIsA ? decimalsB : decimalsA);
+            // Use explicit property check for safety across SDK versions
+            const feeA = Number(pos.positionState.feeAPending?.toString() || "0") / Math.pow(10, decimalsA);
+            const feeB = Number(pos.positionState.feeBPending?.toString() || "0") / Math.pow(10, decimalsB);
+
+            const feesBase = baseIsA ? feeA : feeB;
+            const feesToken = baseIsA ? feeB : feeA;
 
             // 8. Total Position Value in SOL units
             // (UserTokenLP + UserFeesToken) * Price + UserBaseLP + UserFeesBase

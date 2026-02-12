@@ -698,7 +698,7 @@ export class BotManager {
                         if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
                         if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
 
-                        const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint);
+                        const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
 
                         if (posValue.success) {
                             // 1. Update Fees
@@ -737,10 +737,13 @@ export class BotManager {
                             }
 
                             const netProfit = posValue.totalSol - pool.initialSolValue;
-                            const netRoiVal = (netProfit / pool.initialSolValue) * 100;
+                            const netRoiVal = pool.initialSolValue > 0 ? (netProfit / pool.initialSolValue) * 100 : 0;
                             pool.netRoi = `${netRoiVal.toFixed(2)}%`;
 
-                            console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | SolValue: ${posValue.totalSol.toFixed(4)}`);
+                            // Log detailed state for debugging
+                            if (netRoiVal !== 0 || roiVal !== 0 || Math.random() > 0.9) {
+                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} | Entry: ${pool.initialSolValue.toFixed(4)}`);
+                            }
 
                             // Update local state and emit
                             await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
