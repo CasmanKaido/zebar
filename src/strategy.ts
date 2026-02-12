@@ -199,7 +199,15 @@ export class StrategyManager {
                     const acc = await this.connection.getTokenAccountBalance(ata);
                     postBalance = BigInt(acc.value.amount);
                     postUiAmount = acc.value.uiAmount || 0;
-                } catch (e) { console.warn(`[STRATEGY] Failed to fetch post-balance: ${e}`); }
+                } catch (e) {
+                    // Fallback: try Token-2022 ATA
+                    try {
+                        const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
+                        const acc2 = await this.connection.getTokenAccountBalance(ata2022);
+                        postBalance = BigInt(acc2.value.amount);
+                        postUiAmount = acc2.value.uiAmount || 0;
+                    } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
+                }
 
                 const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
                 const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
@@ -226,7 +234,15 @@ export class StrategyManager {
                     const acc = await this.connection.getTokenAccountBalance(ata);
                     postBalance = BigInt(acc.value.amount);
                     postUiAmount = acc.value.uiAmount || 0;
-                } catch (e) { console.warn(`[STRATEGY] Failed to fetch post-balance: ${e}`); }
+                } catch (e) {
+                    // Fallback: try Token-2022 ATA
+                    try {
+                        const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
+                        const acc2 = await this.connection.getTokenAccountBalance(ata2022);
+                        postBalance = BigInt(acc2.value.amount);
+                        postUiAmount = acc2.value.uiAmount || 0;
+                    } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
+                }
 
                 const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
                 const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
@@ -811,12 +827,12 @@ export class StrategyManager {
 
     /**
      * Checks if a Meteora DAMM V2 pool already exists for a given token pair.
+     * Checks BOTH standard pool (seed "pool") and customizable pool (seed "cpool") PDAs.
      * Returns the pool address if it exists, null otherwise.
-     * This prevents wasting SOL on buys when pool creation would fail.
      */
     async checkMeteoraPoolExists(tokenMint: PublicKey, baseMint: PublicKey = LPPP_MINT): Promise<string | null> {
         try {
-            const { deriveConfigAddress, derivePoolAddress } = require("@meteora-ag/cp-amm-sdk");
+            const { deriveConfigAddress, derivePoolAddress, deriveCustomizablePoolAddress } = require("@meteora-ag/cp-amm-sdk");
             const BN = require("bn.js");
 
             // Sort tokens exactly like createMeteoraPool does
@@ -824,21 +840,28 @@ export class StrategyManager {
                 ? [tokenMint, baseMint]
                 : [baseMint, tokenMint];
 
-            // Check standard pool (config index 0)
+            // 1. Check customizable pool (seed "cpool") — this is what the bot creates with 200bps fee
+            const customPoolAddress = deriveCustomizablePoolAddress(tokenA, tokenB);
+            const customInfo = await this.connection.getAccountInfo(customPoolAddress);
+            if (customInfo) {
+                console.log(`[METEORA] Customizable pool already exists: ${customPoolAddress.toBase58()} for ${tokenA.toBase58().slice(0, 8)}/${tokenB.toBase58().slice(0, 8)}`);
+                return customPoolAddress.toBase58();
+            }
+
+            // 2. Check standard pool (seed "pool" + config index 0) — for completeness
             const configIndex = new BN(0);
             const configAddress = deriveConfigAddress(configIndex);
-            const poolAddress = derivePoolAddress(configAddress, tokenA, tokenB);
-
-            const accountInfo = await this.connection.getAccountInfo(poolAddress);
-            if (accountInfo) {
-                console.log(`[METEORA] Pool already exists: ${poolAddress.toBase58()} for ${tokenA.toBase58().slice(0, 8)}/${tokenB.toBase58().slice(0, 8)}`);
-                return poolAddress.toBase58();
+            const stdPoolAddress = derivePoolAddress(configAddress, tokenA, tokenB);
+            const stdInfo = await this.connection.getAccountInfo(stdPoolAddress);
+            if (stdInfo) {
+                console.log(`[METEORA] Standard pool already exists: ${stdPoolAddress.toBase58()} for ${tokenA.toBase58().slice(0, 8)}/${tokenB.toBase58().slice(0, 8)}`);
+                return stdPoolAddress.toBase58();
             }
 
             return null;
         } catch (err: any) {
             console.warn(`[METEORA] Pool existence check failed: ${err.message}`);
-            return null; // Assume no pool exists, let creation handle it
+            return null;
         }
     }
 

@@ -36,6 +36,7 @@ export class BotManager {
     private monitorInterval: NodeJS.Timeout | null = null;
     private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
     private activeTpSlActions: Set<string> = new Set(); // Guards against double TP/SL
+    private rejectedTokens: Map<string, { reason: string, expiry: number }> = new Map(); // Fix 5: Cache rejected tokens
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isUsingBackup: boolean = false;
     private settings: BotSettings = {
@@ -413,6 +414,13 @@ export class BotManager {
                 return;
             }
 
+            // Fix 5: Check rejected token cache (skip tokens that failed safety checks recently)
+            const cached = this.rejectedTokens.get(mintAddress);
+            if (cached && cached.expiry > Date.now()) {
+                return; // Silently skip — already failed safety within last 30 min
+            }
+            this.rejectedTokens.delete(mintAddress); // Clean up expired entries
+
             // Lock this mint to prevent duplicate buys during processing
             this.pendingMints.add(mintAddress);
 
@@ -424,6 +432,8 @@ export class BotManager {
                 const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
                 if (!safety.safe) {
                     SocketManager.emitLog(`[SAFETY] ❌ Skipped ${result.symbol}: ${safety.reason}`, "error");
+                    // Fix 5: Cache this rejection for 30 minutes
+                    this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });
                     return;
                 }
             } catch (safetyErr: any) {
@@ -557,21 +567,31 @@ export class BotManager {
                             // Estimated value in base units (LPPP) — will be overwritten by actual on-chain value
                             let initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
 
-                            // Query ACTUAL on-chain position value as our true baseline
+                            // Query ACTUAL on-chain position value as our true baseline (with retry)
                             try {
-                                await new Promise(r => setTimeout(r, 3000)); // Wait for chain to settle
-                                const onChainValue = await this.strategy.getPositionValue(
-                                    poolInfo.poolAddress || "",
-                                    result.mint.toBase58(),
-                                    poolInfo.positionAddress
-                                );
-                                if (onChainValue.success && onChainValue.totalSol > 0) {
-                                    console.log(`[BASELINE] ${result.symbol} | On-chain: ${onChainValue.totalSol.toFixed(4)} | Estimated: ${initialSolValue.toFixed(4)}`);
-                                    initialSolValue = onChainValue.totalSol;
-                                    SocketManager.emitLog(`[BASELINE] True position value: ${initialSolValue.toFixed(4)} base units`, "info");
-                                } else {
-                                    console.log(`[BASELINE] ${result.symbol} | On-chain query failed, using estimate: ${initialSolValue.toFixed(4)}`);
+                                const RETRY_DELAYS = [3000, 6000, 10000]; // Increasing delays for chain settlement
+                                const estimatedValue = initialSolValue;
+                                for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
+                                    await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
+                                    const onChainValue = await this.strategy.getPositionValue(
+                                        poolInfo.poolAddress || "",
+                                        result.mint.toBase58(),
+                                        poolInfo.positionAddress
+                                    );
+                                    if (onChainValue.success && onChainValue.totalSol > 0) {
+                                        initialSolValue = onChainValue.totalSol;
+                                        const gap = Math.abs(initialSolValue - estimatedValue) / estimatedValue;
+                                        console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} | On-chain: ${initialSolValue.toFixed(4)} | Estimated: ${estimatedValue.toFixed(4)} | Gap: ${(gap * 100).toFixed(0)}%`);
+                                        if (gap <= 0.5) break; // Gap <50% — value has settled
+                                        if (attempt === RETRY_DELAYS.length - 1) {
+                                            console.warn(`[BASELINE] ${result.symbol} | Gap still ${(gap * 100).toFixed(0)}% after ${RETRY_DELAYS.length} retries. Using best on-chain value.`);
+                                        }
+                                    } else {
+                                        console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} failed, ${attempt < RETRY_DELAYS.length - 1 ? 'retrying...' : 'using estimate.'}`);
+                                        if (attempt === RETRY_DELAYS.length - 1) initialSolValue = estimatedValue;
+                                    }
                                 }
+                                SocketManager.emitLog(`[BASELINE] True position value: ${initialSolValue.toFixed(4)} base units`, "info");
                             } catch (baselineErr: any) {
                                 console.warn(`[BASELINE] Could not fetch on-chain value: ${baselineErr.message}`);
                             }
@@ -800,7 +820,7 @@ export class BotManager {
                             // Log state for visibility
                             // Always log if there's activity or periodic heartbeat
                             if (netRoiVal !== 0 || roiVal !== 0 || sweepCount < 30 || sweepCount % 10 === 0) {
-                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} SOL | Entry: ${pool.initialSolValue?.toFixed(4)} SOL`);
+                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP | Entry: ${pool.initialSolValue?.toFixed(4)} LPPP`);
                             }
 
                             // Update local state and emit
