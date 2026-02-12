@@ -1359,13 +1359,6 @@ export class StrategyManager {
         const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
         try {
             const cpAmm = new CpAmm(this.connection);
-            // The SDK has a helper to get positions by owner
-            // Based on common patterns in Meteora SDKs
-            const positions = await cpAmm.getProgramAccounts(this.wallet.publicKey);
-
-            // If getProgramAccounts is too generic, we might need a more specific filter
-            // but usually the SDK provides a way to get user positions.
-            // Let's try the most likely method name or use the program accounts directly.
             const programId = cpAmm.program.programId;
             const accounts = await this.connection.getProgramAccounts(programId, {
                 filters: [
