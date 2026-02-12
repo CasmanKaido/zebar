@@ -196,6 +196,7 @@ function App() {
     const [logs, setLogs] = useState<Log[]>([]);
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
+    const [poolTab, setPoolTab] = useState<'bot' | 'recovered'>('bot');
 
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
@@ -844,56 +845,85 @@ function App() {
                 </div>
 
                 {/* Bottom Section: Pools */}
-                <div className="lg:col-span-3 space-y-8">
-                    {/* section 1: Bot Managed */}
-                    <div className="bg-card border border-border rounded-lg p-5">
-                        <div className="flex items-center gap-2 mb-4">
-                            <Zap size={18} className="text-pink-500" />
-                            <h2 className="text-sm font-semibold uppercase tracking-wider">Bot Managed Positions</h2>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                            {pools.filter(p => !p.exited && p.isBotCreated).map(pool => (
-                                <PoolCard
-                                    key={pool.poolId}
-                                    pool={pool}
-                                    isBot={true}
-                                    claimFees={claimFees}
-                                    increaseLiquidity={increaseLiquidity}
-                                    withdrawLiquidity={withdrawLiquidity}
-                                />
-                            ))}
-                            {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (
-                                <div className="col-span-full py-6 text-center text-muted-foreground/40 text-[11px] border border-dashed border-border rounded">
-                                    No active bot-managed snipes yet.
-                                </div>
-                            )}
-                        </div>
+                <div className="lg:col-span-3">
+                    <div className="flex items-center gap-6 border-b border-border mb-6 px-2">
+                        <button
+                            onClick={() => setPoolTab('bot')}
+                            className={`pb-3 text-xs font-black tracking-widest transition-all relative flex items-center gap-2 ${poolTab === 'bot' ? 'text-pink-500' : 'text-muted-foreground hover:text-foreground'}`}
+                        >
+                            <Zap size={14} />
+                            BOT MANAGED
+                            <span className="bg-pink-500/10 text-[10px] px-1.5 py-0.5 rounded-full border border-pink-500/20">
+                                {pools.filter(p => !p.exited && p.isBotCreated).length}
+                            </span>
+                            {poolTab === 'bot' && <motion.div layoutId="activePoolTab" className="absolute bottom-0 left-0 right-0 h-[3px] bg-pink-500 rounded-t-full shadow-[0_0_10px_rgba(236,72,153,0.5)]" />}
+                        </button>
+                        <button
+                            onClick={() => setPoolTab('recovered')}
+                            className={`pb-3 text-xs font-black tracking-widest transition-all relative flex items-center gap-2 ${poolTab === 'recovered' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                        >
+                            <ShieldAlert size={14} />
+                            RECOVERED
+                            <span className="bg-primary/10 text-[10px] px-1.5 py-0.5 rounded-full border border-primary/20">
+                                {pools.filter(p => !p.exited && !p.isBotCreated).length}
+                            </span>
+                            {poolTab === 'recovered' && <motion.div layoutId="activePoolTab" className="absolute bottom-0 left-0 right-0 h-[3px] bg-primary rounded-t-full shadow-[0_0_10px_rgba(16,185,129,0.5)]" />}
+                        </button>
                     </div>
 
-                    {/* section 2: Recovered / External */}
-                    <div className="bg-card border border-border rounded-lg p-5 opacity-80 hover:opacity-100 transition-opacity">
-                        <div className="flex items-center gap-2 mb-4">
-                            <ShieldAlert size={18} className="text-muted-foreground" />
-                            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Recovered / External Positions</h2>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                            {pools.filter(p => !p.exited && !p.isBotCreated).map(pool => (
-                                <PoolCard
-                                    key={pool.poolId}
-                                    pool={pool}
-                                    isBot={false}
-                                    claimFees={claimFees}
-                                    increaseLiquidity={increaseLiquidity}
-                                    withdrawLiquidity={withdrawLiquidity}
-                                />
-                            ))}
-                            {pools.filter(p => !p.exited && !p.isBotCreated).length === 0 && (
-                                <div className="col-span-full py-6 text-center text-muted-foreground/40 text-[11px] border border-dashed border-border rounded">
-                                    No recovered external positions found.
-                                </div>
-                            )}
-                        </div>
-                    </div>
+                    <AnimatePresence mode="wait">
+                        {poolTab === 'bot' ? (
+                            <motion.div
+                                key="bot-pools"
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 10 }}
+                                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+                            >
+                                {pools.filter(p => !p.exited && p.isBotCreated).map(pool => (
+                                    <PoolCard
+                                        key={pool.poolId}
+                                        pool={pool}
+                                        isBot={true}
+                                        claimFees={claimFees}
+                                        increaseLiquidity={increaseLiquidity}
+                                        withdrawLiquidity={withdrawLiquidity}
+                                    />
+                                ))}
+                                {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (
+                                    <div className="col-span-full py-12 text-center text-muted-foreground/40 bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3">
+                                        <Zap size={32} className="opacity-20" />
+                                        <p className="text-sm font-medium">No active bot snipes found</p>
+                                    </div>
+                                )}
+                            </motion.div>
+                        ) : (
+                            <motion.div
+                                key="recovered-pools"
+                                initial={{ opacity: 0, x: 10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: -10 }}
+                                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+                            >
+                                {pools.filter(p => !p.exited && !p.isBotCreated).map(pool => (
+                                    <PoolCard
+                                        key={pool.poolId}
+                                        pool={pool}
+                                        isBot={false}
+                                        claimFees={claimFees}
+                                        increaseLiquidity={increaseLiquidity}
+                                        withdrawLiquidity={withdrawLiquidity}
+                                    />
+                                ))}
+                                {pools.filter(p => !p.exited && !p.isBotCreated).length === 0 && (
+                                    <div className="col-span-full py-12 text-center text-muted-foreground/40 bg-white/[0.01] border border-dashed border-border/50 rounded-lg flex flex-col items-center gap-3">
+                                        <ShieldAlert size={32} className="opacity-20" />
+                                        <p className="text-sm font-medium">No recovered positions to track</p>
+                                    </div>
+                                )}
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </div>
             </main>
 
