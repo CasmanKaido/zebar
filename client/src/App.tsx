@@ -34,7 +34,7 @@ interface Pool {
     roi: string;
     netRoi?: string;     // Inventory-based ROI
     created: string;
-    unclaimedFees?: { sol: string; token: string };
+    unclaimedFees?: { sol: string; token: string; totalLppp?: string };
     exited?: boolean;
     isBotCreated?: boolean;
 }
@@ -43,7 +43,7 @@ interface PoolUpdate {
     poolId: string;
     roi?: string;
     netRoi?: string;
-    unclaimedFees?: { sol: string; token: string };
+    unclaimedFees?: { sol: string; token: string; totalLppp?: string };
     exited?: boolean;
 }
 
@@ -113,12 +113,13 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
     );
 };
 
-const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity }: {
+const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, lpppPrice }: {
     pool: Pool;
     isBot: boolean;
     claimFees: (id: string) => void;
     increaseLiquidity: (id: string) => void;
     withdrawLiquidity: (id: string, pct: number) => void;
+    lpppPrice: number | null;
 }) => (
     <div key={pool.poolId} className={`bg-secondary border p-4 rounded-md flex flex-col gap-4 group transition-all duration-300 ${isBot ? 'hover:border-pink-500/50 border-border shadow-[0_4px_12px_rgba(236,72,153,0.05)]' : 'hover:border-primary/50 border-border opacity-90'}`}>
         <div className="flex justify-between items-start">
@@ -158,35 +159,44 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
             </div>
         </div>
 
-        <div className="flex justify-between items-center py-2 px-3 bg-card/30 rounded border border-border/50">
-            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Unclaimed Fees</span>
-            <div className="text-right">
-                <p className="text-[11px] font-bold text-emerald-400">{(Number(pool.unclaimedFees?.sol || 0) / 1e9).toFixed(5)} SOL</p>
-                <p className="text-[9px] text-muted-foreground/60">{(Number(pool.unclaimedFees?.token || 0) / 1e9).toFixed(2)} {pool.token}</p>
+        {/* ═══ Fees from position ═══ */}
+        <div className="py-3 px-3 bg-card/30 rounded-lg border border-border/50">
+            <p className="text-[10px] text-muted-foreground/70 mb-1">Fees from position</p>
+            <div className="flex justify-between items-center">
+                <div>
+                    <p className="text-lg font-bold text-white">
+                        ${((Number(pool.unclaimedFees?.totalLppp || 0)) * (lpppPrice || 0)).toFixed(6)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        {Number(pool.unclaimedFees?.sol || 0).toFixed(6)} LPPP
+                        <span className="mx-1 text-muted-foreground/30">+</span>
+                        {Number(pool.unclaimedFees?.token || 0).toFixed(6)} {pool.token}
+                    </p>
+                </div>
+                <button
+                    onClick={() => claimFees(pool.poolId)}
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-bold rounded-lg transition-all shadow-lg shadow-emerald-500/20"
+                >
+                    Claim fees
+                </button>
             </div>
         </div>
 
         <div className="flex flex-col gap-2 mt-auto">
             <div className="grid grid-cols-2 gap-2">
                 <button
-                    onClick={() => claimFees(pool.poolId)}
-                    className="py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 text-[10px] font-black rounded border border-emerald-500/20 transition-all flex items-center justify-center gap-1"
-                >
-                    <Zap size={10} /> HARVEST
-                </button>
-                <button
                     onClick={() => increaseLiquidity(pool.poolId)}
                     className="py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-black rounded border border-primary/20 transition-all flex items-center justify-center gap-1"
                 >
                     <Droplets size={10} /> ADD LIQ
                 </button>
+                <button
+                    onClick={() => withdrawLiquidity(pool.poolId, 100)}
+                    className={`py-1.5 text-white text-[10px] font-black rounded shadow-lg transition-all ${isBot ? 'bg-pink-600 hover:bg-pink-700' : 'bg-red-600 hover:bg-red-700'}`}
+                >
+                    FULL CLOSE
+                </button>
             </div>
-            <button
-                onClick={() => withdrawLiquidity(pool.poolId, 100)}
-                className={`w-full mt-2 py-1.5 text-white text-[10px] font-black rounded shadow-lg transition-all ${isBot ? 'bg-pink-600 hover:bg-pink-700' : 'bg-red-600 hover:bg-red-700'}`}
-            >
-                FULL CLOSE
-            </button>
         </div>
     </div>
 );
@@ -865,6 +875,7 @@ function App() {
                                 claimFees={claimFees}
                                 increaseLiquidity={increaseLiquidity}
                                 withdrawLiquidity={withdrawLiquidity}
+                                lpppPrice={lpppPrice}
                             />
                         ))}
                         {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (

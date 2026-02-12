@@ -800,8 +800,13 @@ export class BotManager {
                                 continue;
                             }
 
-                            // 1. Update Fees
-                            pool.unclaimedFees = { sol: posValue.feesSol.toString(), token: "0" };
+                            // 1. Update Fees (pass both base + token fees for frontend display)
+                            const totalFeesLppp = posValue.feesSol + (posValue.feesToken * posValue.spotPrice);
+                            pool.unclaimedFees = {
+                                sol: posValue.feesSol.toString(),
+                                token: posValue.feesToken.toString(),
+                                totalLppp: totalFeesLppp.toString()
+                            };
 
                             // 2. Spot ROI (Price-based)
                             const normalizedPrice = posValue.spotPrice;
