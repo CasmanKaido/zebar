@@ -1466,34 +1466,41 @@ export class StrategyManager {
                     const globalA = parseBigIntLE(globalFeeA_Array);
                     const checkA = parseBigIntLE(checkpointA_Array);
 
-                    // Liquidity is total user liquidity (unlocked + vested + locked)
-                    const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
-                        BigInt(pos.positionState.vestedLiquidity.toString()) +
-                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
+                    // SAFETY: If checkpoint is 0 (uninitialized) but global is > 0, do NOT calculate.
+                    // (Global - 0) * Liquidity results in massive false fees (all historical fees).
+                    if (checkA > 0n) {
+                        // Liquidity is total user liquidity (unlocked + vested + locked)
+                        const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                            BigInt(pos.positionState.vestedLiquidity.toString()) +
+                            BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
-                    // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
-                    // Typically scaled by Q64.64 (>> 64) for precision in AMMs
-                    // Using >> 64n as a standard assumption for Solana AMM fee growth
-                    const deltaA = globalA > checkA ? globalA - checkA : 0n;
-                    const pendingA_Raw = (deltaA * liquidity) >> 64n;
+                        // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
+                        // Typically scaled by Q64.64 (>> 64) for precision in AMMs
+                        // Using >> 64n as a standard assumption for Solana AMM fee growth
+                        const deltaA = globalA > checkA ? globalA - checkA : 0n;
+                        const pendingA_Raw = (deltaA * liquidity) >> 64n;
 
-                    // Convert to decimals
-                    feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                        // Convert to decimals
+                        feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                    }
                 }
 
                 if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
                     const globalB = parseBigIntLE(globalFeeB_Array);
                     const checkB = parseBigIntLE(checkpointB_Array);
 
-                    // Re-use liquidity
-                    const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
-                        BigInt(pos.positionState.vestedLiquidity.toString()) +
-                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
+                    // SAFETY: If checkpoint is 0, skip.
+                    if (checkB > 0n) {
+                        // Re-use liquidity
+                        const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                            BigInt(pos.positionState.vestedLiquidity.toString()) +
+                            BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
-                    const deltaB = globalB > checkB ? globalB - checkB : 0n;
-                    const pendingB_Raw = (deltaB * liquidity) >> 64n;
+                        const deltaB = globalB > checkB ? globalB - checkB : 0n;
+                        const pendingB_Raw = (deltaB * liquidity) >> 64n;
 
-                    feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                        feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                    }
                 }
             } catch (err) {
                 console.warn(`[STRATEGY] Manual fee calculation failed:`, err);
