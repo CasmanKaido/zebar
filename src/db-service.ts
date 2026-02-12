@@ -42,8 +42,12 @@ export class DatabaseService {
                 priceReconstructed INTEGER NOT NULL DEFAULT 0,
                 netRoi TEXT,
                 initialSolValue REAL,
+                isBotCreated INTEGER NOT NULL DEFAULT 0,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Migration: Add isBotCreated if it doesn't exist
+            PRAGMA table_info(pools);
 
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +60,14 @@ export class DatabaseService {
                 FOREIGN KEY (poolId) REFERENCES pools (poolId)
             );
         `);
+
+        // Migration helper: Safely add isBotCreated if missing
+        try {
+            this.db.exec("ALTER TABLE pools ADD COLUMN isBotCreated INTEGER NOT NULL DEFAULT 0");
+            console.log("[DB] Migrated: Added isBotCreated column to pools table.");
+        } catch (e) {
+            // Error means column already exists, which is fine
+        }
     }
 
     // --- Pools Methods ---
@@ -77,13 +89,13 @@ export class DatabaseService {
                 initialTokenAmount, initialLpppAmount, exited, 
                 tp1Done, takeProfitDone, stopLossDone, positionId, 
                 fee_sol, fee_token, withdrawalPending, priceReconstructed,
-                netRoi, initialSolValue
+                netRoi, initialSolValue, isBotCreated
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
                 @tp1Done, @takeProfitDone, @stopLossDone, @positionId,
                 @fee_sol, @fee_token, @withdrawalPending, @priceReconstructed,
-                @netRoi, @initialSolValue
+                @netRoi, @initialSolValue, @isBotCreated
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
                 exited = excluded.exited,
@@ -97,6 +109,7 @@ export class DatabaseService {
                 priceReconstructed = excluded.priceReconstructed,
                 netRoi = excluded.netRoi,
                 initialSolValue = excluded.initialSolValue,
+                isBotCreated = excluded.isBotCreated,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -119,7 +132,8 @@ export class DatabaseService {
             withdrawalPending: pool.withdrawalPending ? 1 : 0,
             priceReconstructed: pool.priceReconstructed ? 1 : 0,
             netRoi: pool.netRoi || "0%",
-            initialSolValue: pool.initialSolValue || 0
+            initialSolValue: pool.initialSolValue || 0,
+            isBotCreated: pool.isBotCreated ? 1 : 0
         });
     }
 
@@ -175,7 +189,8 @@ export class DatabaseService {
             withdrawalPending: !!row.withdrawalPending,
             priceReconstructed: !!row.priceReconstructed,
             netRoi: row.netRoi,
-            initialSolValue: row.initialSolValue
+            initialSolValue: row.initialSolValue,
+            isBotCreated: !!row.isBotCreated
         };
     }
 

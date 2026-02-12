@@ -36,6 +36,7 @@ interface Pool {
     created: string;
     unclaimedFees?: { sol: string; token: string };
     exited?: boolean;
+    isBotCreated?: boolean;
 }
 
 interface PoolUpdate {
@@ -136,6 +137,7 @@ function App() {
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
+    const [showOnlyBotManaged, setShowOnlyBotManaged] = useState(false);
 
     // Modal State
     const [modalConfig, setModalConfig] = useState<{
@@ -766,13 +768,30 @@ function App() {
 
                 {/* Bottom Section: Pools */}
                 <div className="lg:col-span-3 bg-card border border-border rounded-lg p-5">
-                    <div className="flex items-center gap-2 mb-4">
-                        <Zap size={18} className="text-primary" />
-                        <h2 className="text-sm font-semibold">Active Liquidity Pools</h2>
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                            <Zap size={18} className="text-primary" />
+                            <h2 className="text-sm font-semibold">Active Liquidity Pools</h2>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <span className="text-[10px] font-bold text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-widest">Bot Managed Only</span>
+                                <div className="relative inline-block w-8 h-4">
+                                    <input
+                                        type="checkbox"
+                                        className="sr-only"
+                                        checked={showOnlyBotManaged}
+                                        onChange={() => setShowOnlyBotManaged(!showOnlyBotManaged)}
+                                    />
+                                    <div className={`block w-full h-full rounded-full transition-colors ${showOnlyBotManaged ? 'bg-primary' : 'bg-muted-foreground'}`}></div>
+                                    <div className={`absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition-transform ${showOnlyBotManaged ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                                </div>
+                            </label>
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {pools.filter(p => !p.exited).map(pool => (
+                        {pools.filter(p => !p.exited && (!showOnlyBotManaged || p.isBotCreated)).map(pool => (
                             <div key={pool.poolId} className="bg-secondary border border-border p-4 rounded-md flex flex-col gap-4 group hover:border-primary/50 transition-colors">
                                 <div className="flex justify-between items-start">
                                     <div>
@@ -788,6 +807,11 @@ function App() {
                                         </a>
                                         <div className="flex items-center gap-2 mt-2">
                                             <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[10px] rounded font-bold">{pool.token}</span>
+                                            {pool.isBotCreated && (
+                                                <span className="px-1.5 py-0.5 bg-pink-500/20 text-pink-500 text-[8px] rounded font-black border border-pink-500/30 flex items-center gap-1">
+                                                    <Zap size={8} /> BOT MANAGED
+                                                </span>
+                                            )}
                                             <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
                                         </div>
                                     </div>

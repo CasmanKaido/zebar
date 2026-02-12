@@ -164,7 +164,8 @@ export class BotManager {
                         initialLpppAmount: 0,
                         initialSolValue: posValue.totalSol, // Set baseline to current position value
                         exited: false,
-                        positionId: pos.positionId
+                        positionId: pos.positionId,
+                        isBotCreated: false // Recovered pools are not created by the bot
                     };
 
                     await dbService.savePool(recoveredPool);
@@ -553,7 +554,8 @@ export class BotManager {
                                 initialSolValue,
                                 exited: false,
                                 positionId: poolInfo.positionAddress,
-                                unclaimedFees: { sol: "0", token: "0" }
+                                unclaimedFees: { sol: "0", token: "0" },
+                                isBotCreated: true // High-priority tag for bot-created pools
                             };
 
                             SocketManager.emitPool(fullPoolData);
@@ -698,6 +700,13 @@ export class BotManager {
                 for (const pool of pools) {
                     try {
                         if (pool.exited) continue;
+
+                        // NEW: Filter: Skip manual/external pools if REQUIRE_BOT_MANAGED is enabled
+                        if (process.env.REQUIRE_BOT_MANAGED === 'true' && !pool.isBotCreated) {
+                            if (sweepCount % 20 === 0) console.log(`[MONITOR] Skipping external pool ${pool.token} (REQUIRE_BOT_MANAGED=true)`);
+                            continue;
+                        }
+
                         console.log(`[MONITOR DEBUG] Checking pool: ${pool.token} (${pool.poolId.slice(0, 8)}...)`);
                         if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
                         if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight

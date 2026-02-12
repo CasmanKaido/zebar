@@ -17,6 +17,7 @@ export interface PoolData {
     initialSolValue?: number; // Total SOL value at start
     withdrawalPending?: boolean; // Flag for atomicity (Issue 30)
     priceReconstructed?: boolean; // Flag: Entry price audit complete
+    isBotCreated?: boolean;      // Flag: Created by this bot (vs recovered from chain)
 }
 
 export interface TradeHistory {
