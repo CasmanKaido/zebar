@@ -11,6 +11,7 @@ import axios from "axios";
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { dbService } from "./db-service";
 import { PoolData, TradeHistory } from "./types";
+import { TokenMetadataService } from "./token-metadata-service";
 
 const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
@@ -140,23 +141,27 @@ export class BotManager {
                     const mintB = poolInfo.tokenB;
                     const targetMint = mintA === LPPP_MINT.toBase58() ? mintB : mintA;
 
-                    // Fetch token metadata (name)
-                    const metadata = await GeckoService.getTokenMetadata(targetMint);
-                    const tokenSymbol = metadata ? metadata.symbol : "UNKNOWN";
+                    // Fetch token metadata (name) - Use the new robust service
+                    const tokenSymbol = await TokenMetadataService.getSymbol(targetMint, connection);
 
                     const posValue = await this.strategy.getPositionValue(pos.poolAddress, targetMint);
+
+                    if (!posValue.success) {
+                        SocketManager.emitLog(`[RECOVERY] Could not fetch value for ${pos.poolAddress.slice(0, 8)}. Moving to next.`, "warning");
+                        continue;
+                    }
 
                     const recoveredPool: PoolData = {
                         poolId: pos.poolAddress,
                         token: tokenSymbol,
                         mint: targetMint,
-                        roi: "0%",
-                        netRoi: "0%",
+                        roi: "0.00%",
+                        netRoi: "0.00%",
                         created: new Date().toISOString(),
-                        initialPrice: posValue.spotPrice, // Using current as fallback
-                        initialTokenAmount: 0, // Unknown
-                        initialLpppAmount: 0, // Unknown
-                        initialSolValue: posValue.totalSol, // Current value as entry fallback
+                        initialPrice: posValue.spotPrice, // Using current as baseline to track from here
+                        initialTokenAmount: 0,
+                        initialLpppAmount: 0,
+                        initialSolValue: posValue.totalSol, // Set baseline to current position value
                         exited: false,
                         positionId: pos.positionId
                     };

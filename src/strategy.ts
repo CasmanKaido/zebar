@@ -1323,7 +1323,7 @@ export class StrategyManager {
             const mintA = poolState.tokenAMint;
             const mintB = poolState.tokenBMint;
 
-            // 2. Derive Vaults & Fetch Balances
+            // 2. Derive Vaults & Fetch Balances (Pool Reserves)
             const vaultA = deriveTokenVaultAddress(mintA, poolPubkey);
             const vaultB = deriveTokenVaultAddress(mintB, poolPubkey);
             const [balA, balB] = await Promise.all([
@@ -1334,29 +1334,41 @@ export class StrategyManager {
             const amountA = balA.value.uiAmount || 0;
             const amountB = balB.value.uiAmount || 0;
 
-            // 3. Determine which side is SOL (LPPP proxy)
+            // 3. Determine Side (LPPP proxy)
             const isLpppA = mintA.toBase58() === LPPP_MINT.toBase58();
-            const solAmount = isLpppA ? amountA : amountB;
-            const tokenAmount = isLpppA ? amountB : amountA;
+            const solAmountTotal = isLpppA ? amountA : amountB;
+            const tokenAmountTotal = isLpppA ? amountB : amountA;
 
-            // 4. Calculate Spot Price (LPPP per Token)
+            // 4. Spot Price (SOL per Token)
             const spotPrice = isLpppA ? (amountA / amountB) : (amountB / amountA);
 
-            // 5. Fetch Pending Fees
+            // 5. Fetch User Position and Calculate Share
             const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
-            let feesSol = 0;
-            if (userPositions.length > 0) {
-                const pos = userPositions[0];
-                const feeA = Number(pos.positionState.feeAPending.toString()) / 1e9; // Assuming 9 decimals for LPPP/SOL
-                const feeB = Number(pos.positionState.feeBPending.toString()) / 1e9; // Need to be careful with token decimals here
-
-                // For simplified ROI, we mostly care about the SOL-side fees
-                feesSol = isLpppA ? feeA : feeB;
+            if (userPositions.length === 0) {
+                return { totalSol: 0, feesSol: 0, spotPrice, success: true };
             }
 
-            // 6. Total Value in SOL units
-            // (Token Inventory * Price) + SOL Inventory + Fees
-            const totalSol = (tokenAmount * spotPrice) + solAmount + feesSol;
+            const pos = userPositions[0];
+            const userLiquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                BigInt(pos.positionState.vestedLiquidity.toString()) +
+                BigInt(pos.positionState.permanentLockedLiquidity.toString());
+
+            const totalLiquidity = BigInt(poolState.liquidity.toString());
+            const userShare = Number(userLiquidity) / Number(totalLiquidity);
+
+            // 6. User's share of reserves (The actual SOL/Token sitting in the LP)
+            const userSolInLp = solAmountTotal * userShare;
+            const userTokenInLp = tokenAmountTotal * userShare;
+
+            // 7. User's Pending Fees
+            const feeA = Number(pos.positionState.feeAPending.toString()) / 1e9;
+            const feeB = Number(pos.positionState.feeBPending.toString()) / (isLpppA ? 1e6 : 1e9); // Basic heuristic for token decimals
+            const feesSol = isLpppA ? feeA : feeB;
+            const feesToken = isLpppA ? feeB : feeA;
+
+            // 8. Total Position Value in SOL units
+            // (UserTokenLP + UserFeesToken) * Price + UserSolLP + UserFeesSol
+            const totalSol = ((userTokenInLp + feesToken) * spotPrice) + userSolInLp + feesSol;
 
             return {
                 totalSol,
