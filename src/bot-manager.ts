@@ -133,13 +133,11 @@ export class BotManager {
                     SocketManager.emitLog(`[RECOVERY] Found untracked pool: ${pos.poolAddress.slice(0, 8)}...`, "warning");
 
                     // Fetch pool details to reconstruct entry
-                    // Actually, we need the mints. We can get them from the pool state.
-                    const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
-                    const cpAmm = new CpAmm(connection);
-                    const poolState = await cpAmm.fetchPoolState(new PublicKey(pos.poolAddress));
+                    const poolInfo = await this.strategy.getPoolMints(pos.poolAddress);
+                    if (!poolInfo) continue;
 
-                    const mintA = poolState.tokenAMint.toBase58();
-                    const mintB = poolState.tokenBMint.toBase58();
+                    const mintA = poolInfo.tokenA;
+                    const mintB = poolInfo.tokenB;
                     const targetMint = mintA === LPPP_MINT.toBase58() ? mintB : mintA;
 
                     // Fetch token metadata (name)
@@ -538,6 +536,8 @@ export class BotManager {
                             const fullPoolData: PoolData = {
                                 ...poolEvent,
                                 mint: result.mint.toBase58(),
+                                roi: "0%",
+                                netRoi: "0%",
                                 initialPrice,
                                 initialTokenAmount: tokenUiAmountChecked,
                                 initialLpppAmount: finalLpppUiAmount,

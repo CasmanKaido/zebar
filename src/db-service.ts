@@ -101,15 +101,25 @@ export class DatabaseService {
         `);
 
         stmt.run({
-            ...pool,
+            poolId: pool.poolId,
+            token: pool.token,
+            mint: pool.mint,
+            roi: pool.roi || "0%",
+            created: pool.created,
+            initialPrice: pool.initialPrice,
+            initialTokenAmount: pool.initialTokenAmount,
+            initialLpppAmount: pool.initialLpppAmount,
             exited: pool.exited ? 1 : 0,
             tp1Done: pool.tp1Done ? 1 : 0,
             takeProfitDone: pool.takeProfitDone ? 1 : 0,
             stopLossDone: pool.stopLossDone ? 1 : 0,
+            positionId: pool.positionId || null,
+            fee_sol: pool.unclaimedFees?.sol || "0",
+            fee_token: pool.unclaimedFees?.token || "0",
             withdrawalPending: pool.withdrawalPending ? 1 : 0,
             priceReconstructed: pool.priceReconstructed ? 1 : 0,
-            fee_sol: pool.unclaimedFees?.sol || "0",
-            fee_token: pool.unclaimedFees?.token || "0"
+            netRoi: pool.netRoi || "0%",
+            initialSolValue: pool.initialSolValue || 0
         });
     }
 

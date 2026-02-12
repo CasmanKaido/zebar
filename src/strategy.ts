@@ -1360,32 +1360,52 @@ export class StrategyManager {
             const CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
             const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
-            const [cpAccounts, dlmmAccounts] = await Promise.all([
-                this.connection.getProgramAccounts(CP_AMM_PROGRAM_ID, {
-                    filters: [
-                        { memcmp: { offset: 40, bytes: this.wallet.publicKey.toBase58() } }
-                    ]
-                }),
-                this.connection.getProgramAccounts(DLMM_PROGRAM_ID, {
-                    filters: [
-                        { memcmp: { offset: 40, bytes: this.wallet.publicKey.toBase58() } }
-                    ]
-                })
-            ]);
+            // 1. DLMM scan (Owner is at offset 40)
+            const dlmmAccounts = await this.connection.getProgramAccounts(DLMM_PROGRAM_ID, {
+                filters: [
+                    { memcmp: { offset: 40, bytes: this.wallet.publicKey.toBase58() } }
+                ]
+            });
+
+            // 2. CP-AMM (DAMM v2) scan
+            // Since CP-AMM positions are NFT-based, the owner is the NFT holder.
+            // We fetch all Token-2022 accounts owned by the user.
+            let potentialMints: PublicKey[] = [];
+            try {
+                const token2022Accounts = await this.connection.getParsedTokenAccountsByOwner(
+                    this.wallet.publicKey,
+                    { programId: new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb") }
+                );
+                potentialMints = token2022Accounts.value
+                    .filter(acc => acc.account.data.parsed.info.tokenAmount.amount === "1")
+                    .map(acc => new PublicKey(acc.account.data.parsed.info.mint));
+            } catch (err) {
+                console.error("[RECOVERY] Failed to scan Token-2022 accounts:", err);
+            }
 
             const results: { poolAddress: string; positionId: string }[] = [];
 
-            // Process CP-AMM
-            cpAccounts.forEach(acc => {
-                const poolAddress = new PublicKey(acc.account.data.slice(8, 40)).toBase58();
-                results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
-            });
-
-            // Process DLMM
+            // Process DLMM Results
             dlmmAccounts.forEach(acc => {
                 const poolAddress = new PublicKey(acc.account.data.slice(8, 40)).toBase58();
                 results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
             });
+
+            // Process Potential CP-AMM positions (Max 10 at a time to stay under RPC limits)
+            for (let i = 0; i < potentialMints.length; i += 10) {
+                const batch = potentialMints.slice(i, i + 10);
+                await Promise.all(batch.map(async (mint) => {
+                    const accounts = await this.connection.getProgramAccounts(CP_AMM_PROGRAM_ID, {
+                        filters: [
+                            { memcmp: { offset: 40, bytes: mint.toBase58() } } // NFT Mint offset in DAMM v2
+                        ]
+                    });
+                    accounts.forEach(acc => {
+                        const poolAddress = new PublicKey(acc.account.data.slice(8, 40)).toBase58();
+                        results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
+                    });
+                }));
+            }
 
             return results;
         } catch (e) {
