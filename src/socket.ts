@@ -62,13 +62,14 @@ export class SocketManager {
         }
     }
 
-    static emitPoolUpdate(update: { poolId: string, roi?: string, netRoi?: string, unclaimedFees?: any, exited?: boolean }) {
+    static emitPoolUpdate(update: { poolId: string, roi?: string, netRoi?: string, unclaimedFees?: any, positionValue?: any, exited?: boolean }) {
         // Update history
         const index = this.poolHistory.findIndex(p => p.poolId === update.poolId);
         if (index !== -1) {
             if (update.roi) this.poolHistory[index].roi = update.roi;
             if (update.netRoi) this.poolHistory[index].netRoi = update.netRoi;
             if (update.unclaimedFees) this.poolHistory[index].unclaimedFees = update.unclaimedFees;
+            if (update.positionValue) this.poolHistory[index].positionValue = update.positionValue;
             if (update.exited !== undefined) this.poolHistory[index].exited = update.exited;
         }
 
