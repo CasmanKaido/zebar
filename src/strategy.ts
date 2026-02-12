@@ -1356,26 +1356,38 @@ export class StrategyManager {
      * Scans the blockchain for all active CP-AMM positions owned by the wallet.
      */
     async fetchAllUserPositions(): Promise<{ poolAddress: string; positionId: string }[]> {
-        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
         try {
-            // Constant Program ID for Meteora CP-AMM (DAMM v2)
             const CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+            const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
-            const accounts = await this.connection.getProgramAccounts(CP_AMM_PROGRAM_ID, {
-                filters: [
-                    { dataSize: 112 }, // Position account size for CP-AMM
-                    { memcmp: { offset: 8 + 32, bytes: this.wallet.publicKey.toBase58() } } // Owner offset
-                ]
-            });
+            const [cpAccounts, dlmmAccounts] = await Promise.all([
+                this.connection.getProgramAccounts(CP_AMM_PROGRAM_ID, {
+                    filters: [
+                        { memcmp: { offset: 40, bytes: this.wallet.publicKey.toBase58() } }
+                    ]
+                }),
+                this.connection.getProgramAccounts(DLMM_PROGRAM_ID, {
+                    filters: [
+                        { memcmp: { offset: 40, bytes: this.wallet.publicKey.toBase58() } }
+                    ]
+                })
+            ]);
 
-            return accounts.map(acc => {
-                // Decode pool address from position data (offset 8)
+            const results: { poolAddress: string; positionId: string }[] = [];
+
+            // Process CP-AMM
+            cpAccounts.forEach(acc => {
                 const poolAddress = new PublicKey(acc.account.data.slice(8, 40)).toBase58();
-                return {
-                    poolAddress,
-                    positionId: acc.pubkey.toBase58()
-                };
+                results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
             });
+
+            // Process DLMM
+            dlmmAccounts.forEach(acc => {
+                const poolAddress = new PublicKey(acc.account.data.slice(8, 40)).toBase58();
+                results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
+            });
+
+            return results;
         } catch (e) {
             console.error("[RECOVERY] Failed to fetch user positions:", e);
             return [];
