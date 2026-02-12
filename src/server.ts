@@ -184,5 +184,5 @@ const PORT = process.env.PORT || 3001;
 
 httpServer.listen(PORT, () => {
     console.log(`LPPP BOT Unified Server running on port ${PORT}`);
-    console.log(`LPPP BOT Version: v1.5.1 (CP-AMM NFT Recovery + DB Fix)`);
+    console.log(`LPPP BOT Version: v1.5.2 (PDA Optimized Recovery)`);
 });

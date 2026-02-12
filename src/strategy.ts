@@ -4,7 +4,7 @@ import bs58 from "bs58";
 import { PumpFunHandler } from "./pumpfun";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
 import BN from "bn.js";
-import { deriveTokenVaultAddress } from "@meteora-ag/cp-amm-sdk";
+import { deriveTokenVaultAddress, derivePositionAddress } from "@meteora-ag/cp-amm-sdk";
 import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID, SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk";
 import { Market } from "@project-serum/serum";
 import axios from "axios";
@@ -1409,19 +1409,26 @@ export class StrategyManager {
                 results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
             });
 
-            // Process Potential CP-AMM positions (Max 10 at a time to stay under RPC limits)
+            // Process Potential CP-AMM positions (PDA derivation)
+            // This is MUCH faster and avoids "Large Dataset" RPC errors.
             for (let i = 0; i < potentialMints.length; i += 10) {
                 const batch = potentialMints.slice(i, i + 10);
                 await Promise.all(batch.map(async (mint) => {
-                    const accounts = await this.connection.getProgramAccounts(CP_AMM_PROGRAM_ID, {
-                        filters: [
-                            { memcmp: { offset: 40, bytes: mint.toBase58() } } // NFT Mint offset in DAMM v2
-                        ]
-                    });
-                    accounts.forEach(acc => {
-                        const poolAddress = new PublicKey(acc.account.data.slice(8, 40)).toBase58();
-                        results.push({ poolAddress, positionId: acc.pubkey.toBase58() });
-                    });
+                    try {
+                        const positionAddress = derivePositionAddress(mint);
+                        const accountInfo = await this.connection.getAccountInfo(positionAddress);
+
+                        if (accountInfo) {
+                            // Pool address is at offset 8 (32 bytes)
+                            const poolAddress = new PublicKey(accountInfo.data.slice(8, 40)).toBase58();
+                            results.push({
+                                poolAddress,
+                                positionId: positionAddress.toBase58()
+                            });
+                        }
+                    } catch (e) {
+                        // Skip if one failed
+                    }
                 }));
             }
 
