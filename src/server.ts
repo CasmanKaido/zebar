@@ -104,12 +104,12 @@ app.get("/api/price", async (req, res) => {
             }
         }
 
-        // 2. Fetch LPPP Price (DexScreener)
+        // 2. Fetch LPPP Price (Jupiter v2 - Reliable)
         try {
-            const lpppRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+            const lpppRes = await fetch("https://api.jup.ag/price/v2?ids=44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
             const lpppData = await lpppRes.json();
-            if (lpppData?.pairs?.[0]?.priceUsd) {
-                prices.lppp = parseFloat(lpppData.pairs[0].priceUsd);
+            if (lpppData?.data?.['44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV']?.price) {
+                prices.lppp = parseFloat(lpppData.data['44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV'].price);
             }
         } catch (e) {
             console.error("LPPP Price fetch failed:", e);

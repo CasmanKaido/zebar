@@ -1379,18 +1379,19 @@ export class StrategyManager {
             const mintA = poolState.tokenAMint;
             const mintB = poolState.tokenBMint;
 
-            // 2. Derive Vaults & Fetch Balances (Pool Reserves)
-            const vaultA = deriveTokenVaultAddress(mintA, poolPubkey);
-            const vaultB = deriveTokenVaultAddress(mintB, poolPubkey);
-            const [balA, balB] = await Promise.all([
-                this.connection.getTokenAccountBalance(vaultA),
-                this.connection.getTokenAccountBalance(vaultB)
+            // 2. Fetch Reserves from Pool State (True reserves without unclaimed fees)
+            const [mintAInfo, mintBInfo] = await Promise.all([
+                cpAmm.fetchMint(mintA),
+                cpAmm.fetchMint(mintB)
             ]);
 
-            const amountA = balA.value.uiAmount || 0;
-            const amountB = balB.value.uiAmount || 0;
-            const decimalsA = balA.value.decimals;
-            const decimalsB = balB.value.decimals;
+            // PoolState has tokenAAmount and tokenBAmount as u64 (BN)
+            const amountA = Number(poolState.tokenAAmount) / (10 ** mintAInfo.decimals);
+            const amountB = Number(poolState.tokenBAmount) / (10 ** mintBInfo.decimals);
+
+            // Define decimals for fee calculation later
+            const decimalsA = mintAInfo.decimals;
+            const decimalsB = mintBInfo.decimals;
 
             // 3. Determine Side (Which one is SOL/LPPP/Base?)
             const baseMints = [LPPP_MINT.toBase58(), SOL_MINT.toBase58(), USDC_MINT.toBase58()];
