@@ -1381,8 +1381,8 @@ export class StrategyManager {
 
             // 2. Fetch Reserves from Pool State (True reserves without unclaimed fees)
             const [mintAInfo, mintBInfo] = await Promise.all([
-                cpAmm.fetchMint(mintA),
-                cpAmm.fetchMint(mintB)
+                getMint(this.connection, mintA),
+                getMint(this.connection, mintB)
             ]);
 
             // PoolState has tokenAAmount and tokenBAmount as u64 (BN)
