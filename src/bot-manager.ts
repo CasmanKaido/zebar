@@ -714,6 +714,15 @@ export class BotManager {
                         const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
 
                         if (posValue.success) {
+                            // ═══ SANITY GUARD: Reject zero-value responses from RPC glitches ═══
+                            // If the RPC is overloaded (429s), it may return an empty position
+                            // which causes totalSol=0 and -100% ROI. We skip the update entirely.
+                            if (posValue.totalSol <= 0 && pool.initialSolValue && pool.initialSolValue > 0) {
+                                console.log(`[MONITOR] ⚠️ ${pool.token}: RPC returned 0 value (likely 429/lag). Keeping last known ROI: ${pool.roi}`);
+                                await new Promise(r => setTimeout(r, 1000));
+                                continue;
+                            }
+
                             // 1. Update Fees
                             pool.unclaimedFees = { sol: posValue.feesSol.toString(), token: "0" };
 
@@ -723,7 +732,7 @@ export class BotManager {
 
                             // ═══ AUTO-RECALIBRATION (Simplified) ═══
                             if (roiVal < -90) {
-                                if (roiVal < -95 && pool.roi === "0%") {
+                                if (roiVal < -95 && (pool.roi === "0%" || pool.roi === "0.00%")) {
                                     const invertedInitial = 1 / pool.initialPrice;
                                     const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
                                     if (Math.abs(newRoi) < 50) {
