@@ -61,6 +61,9 @@ export class BotManager {
 
         // 2. Load and Monitor
         await this.loadAndMonitor();
+
+        // 3. Sync with Blockchain (Recover missing positions)
+        await this.syncActivePositions();
     }
 
     private async loadAndMonitor() {
@@ -111,6 +114,68 @@ export class BotManager {
             } catch (err) {
                 console.error(`[RECOVERY] Failed to reconcile pool ${pool.poolId}:`, err);
             }
+        }
+    }
+
+    /**
+     * Scans the blockchain and re-registers any active Meteora positions missing from the DB.
+     */
+    private async syncActivePositions() {
+        SocketManager.emitLog("[RECOVERY] Scanning blockchain for lost positions...", "info");
+        try {
+            const onChainPositions = await this.strategy.fetchAllUserPositions();
+            const dbPools = await dbService.getAllPools();
+            const dbIds = new Set(dbPools.map(p => p.poolId));
+
+            let recoveredCount = 0;
+            for (const pos of onChainPositions) {
+                if (!dbIds.has(pos.poolAddress)) {
+                    SocketManager.emitLog(`[RECOVERY] Found untracked pool: ${pos.poolAddress.slice(0, 8)}...`, "warning");
+
+                    // Fetch pool details to reconstruct entry
+                    // Actually, we need the mints. We can get them from the pool state.
+                    const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+                    const cpAmm = new CpAmm(connection);
+                    const poolState = await cpAmm.fetchPoolState(new PublicKey(pos.poolAddress));
+
+                    const mintA = poolState.tokenAMint.toBase58();
+                    const mintB = poolState.tokenBMint.toBase58();
+                    const targetMint = mintA === LPPP_MINT.toBase58() ? mintB : mintA;
+
+                    // Fetch token metadata (name)
+                    const metadata = await GeckoService.getTokenMetadata(targetMint);
+                    const tokenSymbol = metadata ? metadata.symbol : "UNKNOWN";
+
+                    const posValue = await this.strategy.getPositionValue(pos.poolAddress, targetMint);
+
+                    const recoveredPool: PoolData = {
+                        poolId: pos.poolAddress,
+                        token: tokenSymbol,
+                        mint: targetMint,
+                        roi: "0%",
+                        netRoi: "0%",
+                        created: new Date().toISOString(),
+                        initialPrice: posValue.spotPrice, // Using current as fallback
+                        initialTokenAmount: 0, // Unknown
+                        initialLpppAmount: 0, // Unknown
+                        initialSolValue: posValue.totalSol, // Current value as entry fallback
+                        exited: false,
+                        positionId: pos.positionId
+                    };
+
+                    await dbService.savePool(recoveredPool);
+                    SocketManager.emitPool(recoveredPool);
+                    recoveredCount++;
+                }
+            }
+
+            if (recoveredCount > 0) {
+                SocketManager.emitLog(`[RECOVERY] Successfully restored ${recoveredCount} pools to dashboard.`, "success");
+            } else {
+                SocketManager.emitLog("[RECOVERY] Scan complete. Database is already in sync.", "info");
+            }
+        } catch (e: any) {
+            console.error("[RECOVERY] Sync failed:", e.message);
         }
     }
 
