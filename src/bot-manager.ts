@@ -730,9 +730,10 @@ export class BotManager {
                             pool.roi = roiString;
 
                             // 3. NET ROI (Inventory-based)
-                            // Initialize initialSolValue if missing (for legacy positions)
-                            if (!pool.initialSolValue) {
-                                pool.initialSolValue = pool.initialLpppAmount + (pool.initialTokenAmount * pool.initialPrice);
+                            // Initialize initialSolValue if missing (for legacy or recovered positions)
+                            if (!pool.initialSolValue || pool.initialSolValue <= 0) {
+                                const calculatedInitial = (pool.initialLpppAmount || 0) + ((pool.initialTokenAmount || 0) * pool.initialPrice);
+                                pool.initialSolValue = calculatedInitial > 0 ? calculatedInitial : posValue.totalSol;
                             }
 
                             const netProfit = posValue.totalSol - pool.initialSolValue;
