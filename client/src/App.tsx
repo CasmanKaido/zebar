@@ -35,6 +35,7 @@ interface Pool {
     netRoi?: string;     // Inventory-based ROI
     created: string;
     unclaimedFees?: { sol: string; token: string; totalLppp?: string };
+    positionValue?: { baseLp: string; tokenLp: string; totalLppp: string };
     exited?: boolean;
     isBotCreated?: boolean;
 }
@@ -44,6 +45,7 @@ interface PoolUpdate {
     roi?: string;
     netRoi?: string;
     unclaimedFees?: { sol: string; token: string; totalLppp?: string };
+    positionValue?: { baseLp: string; tokenLp: string; totalLppp: string };
     exited?: boolean;
 }
 
@@ -146,17 +148,19 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                     <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
                 </div>
             </div>
-            <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Spot / Net ROI</p>
-                <div className="flex flex-col items-end">
-                    <p className={`text-sm font-mono transition-colors ${pool.roi.startsWith('-') ? 'text-red-400/70' : 'text-emerald-400/70'}`}>
-                        {pool.roi}
-                    </p>
-                    <p className={`text-xl font-bold transition-colors ${pool.netRoi?.startsWith('-') ? 'text-red-400' : 'text-emerald-400'}`}>
-                        {pool.netRoi || '---'}
-                    </p>
-                </div>
-            </div>
+        </div>
+
+        {/* ═══ Position value ═══ */}
+        <div className="py-3 px-3 bg-card/30 rounded-lg border border-border/50">
+            <p className="text-[10px] text-muted-foreground/70 mb-1">Position value</p>
+            <p className="text-lg font-bold text-white">
+                ${((Number(pool.positionValue?.totalLppp || 0)) * (lpppPrice || 0)).toFixed(6)}
+            </p>
+            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                {Number(pool.positionValue?.baseLp || 0).toFixed(9)} LPPP
+                <span className="mx-1 text-muted-foreground/30">+</span>
+                {Number(pool.positionValue?.tokenLp || 0).toFixed(6)} {pool.token}
+            </p>
         </div>
 
         {/* ═══ Fees from position ═══ */}
@@ -303,6 +307,7 @@ function App() {
                 roi: update.roi || p.roi,
                 netRoi: update.netRoi || p.netRoi,
                 unclaimedFees: update.unclaimedFees || p.unclaimedFees,
+                positionValue: update.positionValue || p.positionValue,
                 exited: update.exited !== undefined ? update.exited : p.exited
             } : p));
         });

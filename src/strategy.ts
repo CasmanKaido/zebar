@@ -1368,7 +1368,7 @@ export class StrategyManager {
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
-    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; success: boolean }> {
+    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; userBaseInLp: number; userTokenInLp: number; success: boolean }> {
         try {
             const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
             const cpAmm = new CpAmm(this.connection);
@@ -1421,7 +1421,7 @@ export class StrategyManager {
                 const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
                 if (userPositions.length === 0) {
                     // console.warn(`[STRATEGY] No position found for pool ${poolPubkey.toBase58()}. Marking as fetch failure.`);
-                    return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice, success: false };
+                    return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice, userBaseInLp: 0, userTokenInLp: 0, success: false };
                 }
                 pos = userPositions[0];
             }
@@ -1521,11 +1521,13 @@ export class StrategyManager {
                 feesSol: feesBase,
                 feesToken: feesToken,
                 spotPrice,
+                userBaseInLp,
+                userTokenInLp,
                 success: true
             };
         } catch (error) {
             console.error(`[STRATEGY] getPositionValue Failed:`, error);
-            return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, success: false };
+            return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false };
         }
     }
 

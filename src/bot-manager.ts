@@ -350,7 +350,8 @@ export class BotManager {
                 roi,
                 netRoi: updatedPool.netRoi,
                 exited,
-                unclaimedFees: updatedPool.unclaimedFees
+                unclaimedFees: updatedPool.unclaimedFees,
+                positionValue: updatedPool.positionValue
             });
         } catch (e) {
             console.error("[DB] Update ROI Failed:", e);
@@ -808,6 +809,14 @@ export class BotManager {
                                 totalLppp: totalFeesLppp.toString()
                             };
 
+                            // 1b. Update Position Value (LP tokens only, no fees)
+                            const posValueLppp = posValue.userBaseInLp + (posValue.userTokenInLp * posValue.spotPrice);
+                            pool.positionValue = {
+                                baseLp: posValue.userBaseInLp.toString(),
+                                tokenLp: posValue.userTokenInLp.toString(),
+                                totalLppp: posValueLppp.toString()
+                            };
+
                             // 2. Spot ROI (Price-based)
                             const normalizedPrice = posValue.spotPrice;
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
@@ -853,7 +862,8 @@ export class BotManager {
                             // Update local state and emit
                             await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
                                 netRoi: pool.netRoi,
-                                initialSolValue: pool.initialSolValue
+                                initialSolValue: pool.initialSolValue,
+                                positionValue: pool.positionValue
                             });
 
                             // Small delay to prevent 429s in big loops - Be aggressive for DRPC
