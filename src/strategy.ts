@@ -10,7 +10,6 @@ import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
 import { JitoExecutor } from "./jito";
-import { MeteoraApiService } from "./services/meteora-api.service";
 
 export class StrategyManager {
     private connection: Connection;
@@ -1439,42 +1438,71 @@ export class StrategyManager {
             const userTokenInLp = tokenAmountTotal * userShare;
 
 
-            // 7. User's Pending Fees (VIA API)
-            // Use external API for accurate fee data (avoiding local math issues)
+            // 7. User's Pending Fees (Manual Calculation for DAMM v2)
+            // DLMM API does not work for DAMM (Dynamic AMM). Using on-chain state.
+
+            // Manual Calculation Helper: Convert byte array to LE BigInt
+            const parseBigIntLE = (arr: number[]): bigint => {
+                let res = 0n;
+                for (let i = 0; i < arr.length; i++) {
+                    res += BigInt(arr[i]) << BigInt(i * 8);
+                }
+                return res;
+            };
+
+            // Read Global Accumulators from Pool State (feeAPerLiquidity / feeBPerLiquidity)
+            const globalFeeA_Array = (poolState as any).feeAPerLiquidity || [];
+            const globalFeeB_Array = (poolState as any).feeBPerLiquidity || [];
+
+            // Read Checkpoints from Position State
+            const checkpointA_Array = (pos.positionState as any).feeAPerTokenCheckpoint || [];
+            const checkpointB_Array = (pos.positionState as any).feeBPerTokenCheckpoint || [];
+
             let feeA = 0;
             let feeB = 0;
 
             try {
-                // Call Meteora API
-                const apiFees = await MeteoraApiService.getUnclaimedFees(positionAddress);
+                if (globalFeeA_Array.length > 0 && checkpointA_Array.length > 0) {
+                    const globalA = parseBigIntLE(globalFeeA_Array);
+                    const checkA = parseBigIntLE(checkpointA_Array);
 
-                // API returns raw token amounts as strings/numbers?
-                // Service returns numbers. We assume they are RAW amounts if they look large, or decimal if small.
-                // Wait, service implementation: "Number(fee.token_x_amount)".
-                // If the API returns "1000000" (raw), then we need to divide by decimals.
-                // Let's log one sample to be sure, but generally APIs return consistent units.
-                // The dlmm-api usually returns human-readable? 
-                // Documentation says "token_x_usd_amount" is USD. "token_x_amount" is likely raw or decimal.
-                // Let's assume RAW for safety, but check magnitude.
+                    // SAFETY: If checkpoint is 0 (uninitialized) but global is > 0, do NOT calculate.
+                    if (checkA > 0n) {
+                        const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                            BigInt(pos.positionState.vestedLiquidity.toString()) +
+                            BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
-                // Actually, let's use the Service to normalise? 
-                // No, sticking to raw calc here.
+                        // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
+                        const deltaA = globalA > checkA ? globalA - checkA : 0n;
+                        const pendingA_Raw = (deltaA * liquidity) >> 64n;
 
-                if (apiFees.feeX > 0 || apiFees.feeY > 0) {
-                    // If the API returns "1000000", dividing by 10^6 gives 1.
-                    // The service sum is raw.
-                    feeA = apiFees.feeX / Math.pow(10, decimalsA);
-                    feeB = apiFees.feeY / Math.pow(10, decimalsB);
-
-                    // Console log for verification
-                    console.log(`[METEORA API] Fees: A=${feeA.toFixed(6)} | B=${feeB.toFixed(6)} ($${(apiFees.feeXUsd + apiFees.feeYUsd).toFixed(4)})`);
-                } else {
-                    // Fallback to manual/direct read IF api fails?
-                    // No, manual read was failing (0).
+                        feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                    }
                 }
-            } catch (apiErr) {
-                console.warn(`[STRATEGY] API Fee fetch failed:`, apiErr);
+
+                if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
+                    const globalB = parseBigIntLE(globalFeeB_Array);
+                    const checkB = parseBigIntLE(checkpointB_Array);
+
+                    // SAFETY: If checkpoint is 0, skip.
+                    if (checkB > 0n) {
+                        const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                            BigInt(pos.positionState.vestedLiquidity.toString()) +
+                            BigInt(pos.positionState.permanentLockedLiquidity.toString());
+
+                        const deltaB = globalB > checkB ? globalB - checkB : 0n;
+                        const pendingB_Raw = (deltaB * liquidity) >> 64n;
+
+                        feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                    }
+                }
+            } catch (err) {
+                console.warn(`[STRATEGY] Manual fee calculation failed:`, err);
             }
+
+            // Fallback to direct read if calculation yielded 0 (or failed) but direct read has value (unlikely given logs)
+            if (feeA === 0) feeA = Number(pos.positionState.feeAPending?.toString() || "0") / Math.pow(10, decimalsA);
+            if (feeB === 0) feeB = Number(pos.positionState.feeBPending?.toString() || "0") / Math.pow(10, decimalsB);
 
             // Log calculation results for verification
             if (feeA > 0 || feeB > 0) {
