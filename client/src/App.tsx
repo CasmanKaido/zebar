@@ -298,7 +298,11 @@ function App() {
             } : p));
         });
         socket.on('pool', (pool: Pool) => {
-            setPools(prev => [...prev.slice(-19), pool]);
+            setPools(prev => {
+                const exists = prev.find(p => p.poolId === pool.poolId);
+                if (exists) return prev;
+                return [...prev, pool];
+            });
         });
         return () => {
             socket.off('connect');
