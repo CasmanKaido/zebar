@@ -785,9 +785,9 @@ export class BotManager {
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
-                                // ALWAYS mark tp1Done to prevent infinite retry
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                                // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions)
                                 this.activeTpSlActions.delete(pool.poolId);
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
                             }
 
                             // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
@@ -798,9 +798,9 @@ export class BotManager {
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
-                                // ALWAYS mark takeProfitDone to prevent infinite retry
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                                // Clear lock BEFORE updatePoolROI
                                 this.activeTpSlActions.delete(pool.poolId);
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
                             }
 
                             // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
@@ -811,7 +811,8 @@ export class BotManager {
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
-                                // ALWAYS mark stopLossDone to prevent infinite retry loop
+                                // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions and returns early!)
+                                this.activeTpSlActions.delete(pool.poolId);
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
                                 // If position is essentially dead (-95%+), mark as exited entirely
@@ -819,7 +820,6 @@ export class BotManager {
                                     SocketManager.emitLog(`[CLEANUP] ${pool.token} position is dead (${netRoiVal.toFixed(0)}%). Marking as EXITED.`, "warning");
                                     await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                 }
-                                this.activeTpSlActions.delete(pool.poolId);
                             }
                         }
                     } catch (poolErr: any) {
