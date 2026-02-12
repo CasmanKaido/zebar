@@ -405,9 +405,10 @@ export class BotManager {
             // Guard: Skip if already being processed (prevents race condition duplicate buys)
             if (this.pendingMints.has(mintAddress)) return;
 
-            // Exclusion Logic: Don't buy if already active in portfolio
+            // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
+            // The on-chain pool address is deterministic — even exited pools can't be re-created.
             const activePools: PoolData[] = await this.getPortfolio();
-            if (activePools.some((p: PoolData) => p.mint === mintAddress && !p.exited)) {
+            if (activePools.some((p: PoolData) => p.mint === mintAddress)) {
                 // Silently skip to keep logs clean
                 return;
             }
