@@ -1437,10 +1437,19 @@ export class StrategyManager {
             const userBaseInLp = baseAmountTotal * userShare;
             const userTokenInLp = tokenAmountTotal * userShare;
 
+
             // 7. User's Pending Fees
+            // DEBUG: Inspect the raw object to find correct fee property
+            // console.log(`[DEBUG FEES] Position State:`, JSON.stringify(pos.positionState, (key, value) => typeof value === 'bigint' ? value.toString() : value));
+
             // Use explicit property check for safety across SDK versions
-            const feeA = Number(pos.positionState.feeAPending?.toString() || "0") / Math.pow(10, decimalsA);
-            const feeB = Number(pos.positionState.feeBPending?.toString() || "0") / Math.pow(10, decimalsB);
+            const feeA = Number(pos.positionState.feeAPending?.toString() || pos.positionState.feeA?.toString() || "0") / Math.pow(10, decimalsA);
+            const feeB = Number(pos.positionState.feeBPending?.toString() || pos.positionState.feeB?.toString() || "0") / Math.pow(10, decimalsB);
+
+            // Log if we actually found fees > 0
+            if (feeA > 0 || feeB > 0) {
+                // console.log(`[DEBUG FEES] Found fees: A=${feeA}, B=${feeB}`);
+            }
 
             const feesBase = baseIsA ? feeA : feeB;
             const feesToken = baseIsA ? feeB : feeA;
