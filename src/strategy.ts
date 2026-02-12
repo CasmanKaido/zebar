@@ -1291,6 +1291,24 @@ export class StrategyManager {
     }
 
     /**
+     * Helper to fetch token mints for a pool.
+     */
+    async getPoolMints(poolAddress: string): Promise<{ tokenA: string; tokenB: string } | null> {
+        try {
+            const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+            const cpAmm = new CpAmm(this.connection);
+            const poolState = await cpAmm.fetchPoolState(new PublicKey(poolAddress));
+            return {
+                tokenA: poolState.tokenAMint.toBase58(),
+                tokenB: poolState.tokenBMint.toBase58()
+            };
+        } catch (e) {
+            console.error(`[STRATEGY] Failed to fetch pool mints for ${poolAddress}:`, e);
+            return null;
+        }
+    }
+
+    /**
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
