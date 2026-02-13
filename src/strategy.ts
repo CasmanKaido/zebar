@@ -1393,8 +1393,12 @@ export class StrategyManager {
             ]);
 
             // PoolState has tokenAAmount and tokenBAmount as u64 (BN)
-            const amountA = Number(poolState.tokenAAmount) / (10 ** mintAInfo.decimals);
-            const amountB = Number(poolState.tokenBAmount) / (10 ** mintBInfo.decimals);
+            // Fix: BN.js object to Number can fail. Use toString() first.
+            const rawAmountA = poolState.tokenAAmount ? poolState.tokenAAmount.toString() : "0";
+            const rawAmountB = poolState.tokenBAmount ? poolState.tokenBAmount.toString() : "0";
+
+            const amountA = Number(rawAmountA) / (10 ** mintAInfo.decimals);
+            const amountB = Number(rawAmountB) / (10 ** mintBInfo.decimals);
 
             // Define decimals for fee calculation later
             const decimalsA = mintAInfo.decimals;
