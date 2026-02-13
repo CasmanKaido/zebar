@@ -112,7 +112,21 @@ app.get("/api/price", async (req, res) => {
                 prices.lppp = parseFloat(lpppData.data['44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV'].price);
             }
         } catch (e) {
-            console.error("LPPP Price fetch failed:", e);
+            console.error("LPPP Price fetch failed (Jupiter):", e);
+        }
+
+        // Fallback: DexScreener if Jupiter failed
+        if (!prices.lppp) {
+            try {
+                const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+                const dexData = await dexRes.json();
+                if (dexData?.pairs?.[0]?.priceUsd) {
+                    prices.lppp = parseFloat(dexData.pairs[0].priceUsd);
+                    console.log(`[PRICE] Fetched LPPP from DexScreener: $${prices.lppp}`);
+                }
+            } catch (e) {
+                console.error("LPPP Price fetch failed (DexScreener):", e);
+            }
         }
 
         priceCache = prices;
