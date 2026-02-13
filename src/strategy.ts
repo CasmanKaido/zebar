@@ -1376,7 +1376,6 @@ export class StrategyManager {
 
             // 1. Fetch Pool State & Sorted Mints
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
-            console.log(`[STRATEGY DEBUG] PoolState Keys: ${Object.keys(poolState).join(", ")}`);
             const mintA = poolState.tokenAMint;
             const mintB = poolState.tokenBMint;
 
