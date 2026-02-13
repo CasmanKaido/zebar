@@ -25,6 +25,8 @@ export interface ScannerCriteria {
     volume24h: NumericRange;
     liquidity: NumericRange;
     mcap: NumericRange;
+    pumpFunSupport: boolean;
+    minBondingCurveProgress: number; // 0-100
 }
 
 export class MarketScanner {
@@ -201,9 +203,27 @@ export class MarketScanner {
                 console.warn(`[BIRDEYE] Error: ${e}`);
             }
 
+            // 4. NEW: Pump.fun Bonding Curve Sweep
+            if (this.criteria.pumpFunSupport) {
+                try {
+                    console.log(`[PUMP.FUN] Scanning for high-progress bonding curves...`);
+                    // Use Birdeye to find tokens with 'pump.fun' status or keyword
+                    const pumpTokens = await BirdeyeService.fetchHighVolumeTokens({
+                        ...this.criteria,
+                        // Override for earlier stage discovery if needed
+                        volume24h: { min: 5000, max: 0 }
+                    });
+
+                    for (const pt of pumpTokens) {
+                        if (pt.pairAddress.includes("pump")) { // Heuristic check
+                            allPairs.push(pt);
+                        }
+                    }
+                } catch (e) { console.error("[PUMP ERROR] Sweep failed"); }
+            }
 
 
-            // 4. NEW: DexScreener Boosted Tokens
+            // 5. NEW: DexScreener Boosted Tokens
             try {
                 const boostedRes = await axios.get("https://api.dexscreener.com/token-boosts/latest/v1", { timeout: 5000 });
                 if (Array.isArray(boostedRes.data)) {

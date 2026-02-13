@@ -96,6 +96,38 @@ export class StrategyManager {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
 
+            // ═══ SPECIAL CASE: Pump.fun Bonding Curve ═══
+            // If the token is on Pump.fun, we use the direct bonding curve buy instruction.
+            const pumpState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
+            if (pumpState) {
+                console.log(`[PUMP.FUN] Token detected on Bonding Curve! Executing direct buy...`);
+                const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(pumpState, amountSol, slippageBps);
+
+                const { instruction, createAtaInstruction } = await PumpFunHandler.createBuyInstruction(
+                    this.wallet.publicKey,
+                    mint,
+                    new BN(amountTokens.toString()),
+                    new BN(maxSolCost.toString())
+                );
+
+                const tx = new Transaction();
+                if (createAtaInstruction) tx.add(createAtaInstruction);
+                tx.add(instruction);
+
+                // Add priority fee
+                const fee = await this.getPriorityFee();
+                tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: fee }));
+
+                const sig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], { commitment: "confirmed" });
+                console.log(`[PUMP.FUN] Buy Success! Signature: ${sig}`);
+
+                return {
+                    success: true,
+                    amount: BigInt(amountTokens.toString()),
+                    uiAmount: Number(amountTokens) / 1e6 // Assuming 6 decimals for pump tokens
+                };
+            }
+
             // 0. Pre-Swap Balance Check (To calculate actual received amount)
             const ata = await getAssociatedTokenAddress(mint, this.wallet.publicKey);
             let preBalance = BigInt(0);
