@@ -20,19 +20,19 @@ export class BirdeyeService {
         let nextScrollId: string | null = null;
         const seenMints = new Set<string>();
 
-        // Limit pages to stay within free tier limits
-        const MAX_PAGES = Number(process.env.BIRDEYE_MAX_PAGES) || 2;
+        // Limit pages to stay within free tier limits. 0 = Infinite.
+        const MAX_PAGES = Number(process.env.BIRDEYE_MAX_PAGES) || 0;
+        const REQUEST_DELAY = 1500; // 1.5s delay to avoid rate limits
 
         try {
-            for (let page = 0; page < MAX_PAGES; page++) {
+            let page = 0;
+            while (MAX_PAGES === 0 || page < MAX_PAGES) {
                 const headers = {
                     "X-API-KEY": BIRDEYE_API_KEY,
                     "x-chain": "solana",
                     "accept": "application/json"
                 };
 
-                // Build query params from frontend criteria
-                // Birdeye supports: min_volume_1h, min_volume_24h, min_liquidity, min_market_cap
                 const queryParts: string[] = [
                     `sort_by=volume_24h_usd`,
                     `sort_type=desc`,
@@ -43,17 +43,39 @@ export class BirdeyeService {
                 if (criteria.liquidity.min > 0) queryParts.push(`min_liquidity=${criteria.liquidity.min}`);
                 if (criteria.mcap.min > 0) queryParts.push(`min_market_cap=${criteria.mcap.min}`);
 
-                // For scroll: first request uses filters, subsequent use scroll_id only
                 const requestUrl: string = nextScrollId
                     ? `${BIRDEYE_BASE_URL}?scroll_id=${nextScrollId}`
                     : `${BIRDEYE_BASE_URL}?${queryParts.join("&")}`;
 
-                const response = await axios.get(requestUrl, { headers, timeout: 5000 });
+                let response;
+                let retries = 0;
+                const maxRetries = 5;
 
-                if (!response.data?.success) break;
+                // Retry loop for Rate Limits (429)
+                while (retries < maxRetries) {
+                    try {
+                        response = await axios.get(requestUrl, { headers, timeout: 5000 });
+                        break; // Success!
+                    } catch (err: any) {
+                        if (err.response?.status === 429) {
+                            retries++;
+                            const backoff = Math.pow(2, retries) * 2000; // 4s, 8s, 16s...
+                            console.warn(`[BIRDEYE] Rate limited (429). Retrying in ${backoff / 1000}s... (Attempt ${retries}/${maxRetries})`);
+                            await new Promise(r => setTimeout(r, backoff));
+                            continue;
+                        }
+                        throw err; // Real error
+                    }
+                }
+
+                if (!response || !response.data?.success) break;
 
                 const tokens = response.data.data?.items || [];
                 nextScrollId = response.data.data?.next_scroll_id;
+
+                if (tokens.length > 0) {
+                    console.log(`[BIRDEYE] Page ${page + 1}: Found ${tokens.length} tokens.`);
+                }
 
                 for (const t of tokens) {
                     if (!t.address) continue;
@@ -62,7 +84,7 @@ export class BirdeyeService {
 
                     scanResults.push({
                         mint: new PublicKey(t.address),
-                        pairAddress: t.address, // Note: Birdeye often returns mint as address. Scanner handles this.
+                        pairAddress: t.address,
                         dexId: "birdeye",
                         volume24h: t.volume_24h_usd || 0,
                         liquidity: t.liquidity || 0,
@@ -73,6 +95,10 @@ export class BirdeyeService {
                 }
 
                 if (!nextScrollId) break;
+
+                // Stagger requests
+                page++;
+                await new Promise(r => setTimeout(r, REQUEST_DELAY));
             }
         } catch (error: any) {
             console.warn(`[BIRDEYE] Fetch failed: ${error.message}`);
