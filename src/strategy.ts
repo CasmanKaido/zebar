@@ -1456,15 +1456,6 @@ export class StrategyManager {
                 const Q64 = BigInt(1) << BigInt(64);
 
                 // Calculate Price = (sqrtPriceX64 / 2^64)^2
-                const ratio = Number(sqrtPriceX64) / Number(Q64);
-                const rawPrice = ratio * ratio;
-
-                // Adjust for decimals: Price is usually Base / Token (or Token / Base depending on pool)
-                // Assumption: sqrtPriceX64 tracks sqrt(AmountA / AmountB)
-                // If rawPrice = AmountA / AmountB (Price of B in A)
-                // Then Adjusted Price = rawPrice * (10 ** (decimalsA - decimalsB))
-
-                // If rawPrice = AmountB / AmountA (Price of A in B)
                 // Then Adjusted Price = rawPrice * (10 ** (decimalsB - decimalsA))
 
                 // Let's stick to the observed behavior:
@@ -1684,10 +1675,11 @@ export class StrategyManager {
             const feesToken = baseIsA ? feeB : feeA;
 
             // 7. Net Position (Active Liquidity only, excluding fees)
-            // userBaseInLp currently includes the fees because it's derived from Vault Balance (which holds fees).
-            // We must subtract the user's pending fees to get the "Principal" amount.
-            const netBaseInLp = Math.max(0, userBaseInLp - feesBase);
-            const netTokenInLp = Math.max(0, userTokenInLp - feesToken);
+            // Correction: userBaseInLp / userTokenInLp derived from Active Liquidity 
+            // ALREADY represent the Principal (net of fees). 
+            // Subtracting fees again was causing Snowball principal to hit 0.
+            const netBaseInLp = userBaseInLp;
+            const netTokenInLp = userTokenInLp;
 
             // 8. Total Position Value in SOL units (Equity + Fees)
             const totalSol = ((netTokenInLp + feesToken) * spotPrice) + netBaseInLp + feesBase;
