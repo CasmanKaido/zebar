@@ -27,6 +27,8 @@ export interface BotSettings {
     volume24h: { min: number; max: number };
     liquidity: { min: number; max: number };
     mcap: { min: number; max: number };
+    pumpFunSupport: boolean;
+    minBondingCurveProgress: number;
 }
 
 export class BotManager {
@@ -52,7 +54,9 @@ export class BotManager {
         volume1h: { min: 100000, max: 0 },
         volume24h: { min: 1000000, max: 0 },
         liquidity: { min: 60000, max: 0 },
-        mcap: { min: 60000, max: 0 }
+        mcap: { min: 60000, max: 0 },
+        pumpFunSupport: true,
+        minBondingCurveProgress: 80
     };
 
     constructor() {
@@ -421,7 +425,9 @@ export class BotManager {
             volume1h: this.settings.volume1h,
             volume24h: this.settings.volume24h,
             liquidity: this.settings.liquidity,
-            mcap: this.settings.mcap
+            mcap: this.settings.mcap,
+            pumpFunSupport: this.settings.pumpFunSupport,
+            minBondingCurveProgress: this.settings.minBondingCurveProgress
         };
 
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
@@ -531,7 +537,7 @@ export class BotManager {
                     }
 
                     // Apply the same 99% buffer to LPPP side to preserve ratio
-                    const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e6));
+                    const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e9));
                     let finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
                     let finalLpppUiAmount = (targetLpppAmount * 99) / 100;
 
@@ -539,7 +545,7 @@ export class BotManager {
                     // The LPPP token is Token-2022, which has transfer fees.
                     // We MUST verify the wallet has enough LPPP before creating the pool.
                     let effectiveTokenAmount = tokenAmount;
-                    const LPPP_DECIMALS = 6;
+                    const LPPP_DECIMALS = 9;
                     try {
                         const lpppAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
                         const lpppBalanceRaw = lpppAccounts.value.reduce(
