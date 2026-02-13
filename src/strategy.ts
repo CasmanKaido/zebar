@@ -1438,63 +1438,19 @@ export class StrategyManager {
             let spotPrice = 0;
 
             if (poolState.sqrtPrice) {
-                // Use SqrtPrice (Q64.64) for accurate pricing
-                // Price = (sqrtPrice / 2^64)^2
-                const sqrtPriceBN = new BN(poolState.sqrtPrice.toString());
-                const fitSqrtPrice = sqrtPriceBN.div(new BN(2).pow(new BN(64))); // Integer division loses precision?
-                // Better precision: Convert BN to Number first then divide
-                // limit: 2^64 is ~1.8e19. Javascript Number safe integer is 9e15.
-                // We need to be careful.
-                // Alternative: value = sqrtPrice / 2^64
-                // value^2 = price.
-                // Let's use the raw string and BigInt for precision if environment supports it, or approximation.
-                // sqrtPrice is X64.
-                // price = (sqrtPrice / Q64) ** 2
-
-                // Convert BN to native BigInt for precision
                 const sqrtPriceX64 = BigInt(poolState.sqrtPrice.toString());
                 const Q64 = BigInt(1) << BigInt(64);
 
-                // Calculate Price = (sqrtPriceX64 / 2^64)^2
-                // Then Adjusted Price = rawPrice * (10 ** (decimalsB - decimalsA))
+                const scale = Number(sqrtPriceX64) / Number(Q64);
+                const priceRatio = scale * scale; // Result is B_raw / A_raw (approx)
 
-                // Let's stick to the observed behavior:
-                // We want price of Token (Snowball) in terms of Base (LPPP).
-                // If TokenA is Base (LPPP), TokenB is Snowball.
-                // DecA = 9, DecB = 6.
+                // We want "How many Base tokens (LPPP) per 1 Target token (Snowball)".
+                // Price = A_ui / B_ui = (A_raw / B_raw) * 10^(decimalsB - decimalsA)
+                // Since priceRatio = B_raw / A_raw, A_raw / B_raw = 1 / priceRatio.
+                spotPrice = (1 / priceRatio) * (10 ** (decimalsB - decimalsA));
 
-                // If rawPrice = A/B. Price = rawPrice * 10^(9-6) = rawPrice * 1000.
-
-                spotPrice = rawPrice * (10 ** (decimalsA - decimalsB)); // Correct for typical AMM
-
-                // Inversion Check:
-                // Vault Ratio (with fees included) was ~1.7 (LPPP per Snowball?)
-                // If this new spotPrice is radically different (e.g. 0.002), we might be inverted.
-
-                // Just use the derived price.
-
-                // Invert if needed?
-                // If the resulting price is radically different from Vault Price (e.g. inverted), flip it.
-                // Vault Price = 1.7. 
-                // If this comes out as 0.5 or 3.0 -> OK.
-                // If it comes out as 0.0001 -> Inverted.
-
-                const vaultPrice = (amountA > 0 && amountB > 0) ? (amountA / amountB) : 0;
-                if (vaultPrice > 0) {
-                    const ratio = spotPrice / vaultPrice;
-                    if (ratio < 0.01 || ratio > 100) {
-                        // Likely inverted direction
-                        spotPrice = (1 / rawPrice) * (10 ** (decimalsB - decimalsA)); // Wait, re-derive math if inverted?
-                        // If sqrtPrice was B/A. rawPrice = B/A.
-                        // Price of B in A = A/B = 1/rawPrice.
-                        // Adjusted = (1/rawPrice) * (10^DecB / 10^DecA).
-
-                        // Let's just blindly assume A/B first.
-                    }
-                }
-
-                // If we differ by factor of 10-20% from vault price (due to fees), that's exactly what we want.
-                // If we differ by 10000000x, we handle it.
+                // Logging for verification
+                console.log(`[SPOT-PRICE] sqrtPriceX64: ${sqrtPriceX64}, priceRatio: ${priceRatio}, spotPrice: ${spotPrice}`);
             }
 
             // Fallback if sqrtPrice processing failed or yielded NaN
