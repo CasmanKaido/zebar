@@ -70,63 +70,47 @@ app.post("/api/stop", (req, res) => {
 });
 
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
-// Price cache to prevent CoinGecko rate limiting (15s TTL)
-let priceCache: { sol: number; lppp: number } | null = null;
+// Price cache to prevent rate limiting (15s TTL)
+let priceCache: { sol: number; lppp: number; bonk: number } | null = null;
 let priceCacheTime = 0;
-const PRICE_CACHE_TTL = 15000; // 15 seconds
+const PRICE_CACHE_TTL = 15000;
 
 app.get("/api/price", async (req, res) => {
     if (priceCache && Date.now() - priceCacheTime < PRICE_CACHE_TTL) {
         return res.json(priceCache);
     }
-    const prices = { sol: 0, lppp: 0 };
+    const prices = { sol: 0, lppp: 0, bonk: 0 };
 
     try {
-        // 1. Fetch SOL Price (CoinGecko)
-        try {
-            const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
-            const solData = await solRes.json();
-            if (solData?.solana?.usd) prices.sol = solData.solana.usd;
-        } catch (e) {
-            console.error("SOL Price fetch failed (CoinGecko):", e);
-        }
+        // 1. Fetch Prices via Jupiter Service
+        const { SOL_MINT, LPPP_MINT, BONK_MINT } = require("./config");
+        const { JupiterPriceService } = require("./jupiter-price-service");
 
-        // Fallback: Fetch SOL Price (Jupiter V2 - Real Data)
+        const jupPrices = await JupiterPriceService.getPrices([
+            SOL_MINT.toBase58(),
+            LPPP_MINT.toBase58(),
+            BONK_MINT.toBase58()
+        ]);
+
+        prices.sol = jupPrices.get(SOL_MINT.toBase58()) || 0;
+        prices.lppp = jupPrices.get(LPPP_MINT.toBase58()) || 0;
+        prices.bonk = jupPrices.get(BONK_MINT.toBase58()) || 0;
+
+        // 2. Fallbacks
         if (!prices.sol) {
             try {
-                const jupRes = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112");
-                const jupData = await jupRes.json();
-                if (jupData?.data?.['So11111111111111111111111111111111111111112']?.price) {
-                    prices.sol = parseFloat(jupData.data['So11111111111111111111111111111111111111112'].price);
-                }
-            } catch (e) {
-                console.error("SOL Price fetch failed (Jupiter):", e);
-            }
+                const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
+                const solData = await solRes.json();
+                if (solData?.solana?.usd) prices.sol = solData.solana.usd;
+            } catch (e) { console.error("SOL Price CG Fallback failed"); }
         }
 
-        // 2. Fetch LPPP Price (Jupiter v2 - Reliable)
-        try {
-            const lpppRes = await fetch("https://api.jup.ag/price/v2?ids=44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
-            const lpppData = await lpppRes.json();
-            if (lpppData?.data?.['44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV']?.price) {
-                prices.lppp = parseFloat(lpppData.data['44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV'].price);
-            }
-        } catch (e) {
-            console.error("LPPP Price fetch failed (Jupiter):", e);
-        }
-
-        // Fallback: DexScreener if Jupiter failed
         if (!prices.lppp) {
             try {
-                const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+                const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + LPPP_MINT.toBase58());
                 const dexData = await dexRes.json();
-                if (dexData?.pairs?.[0]?.priceUsd) {
-                    prices.lppp = parseFloat(dexData.pairs[0].priceUsd);
-                    console.log(`[PRICE] Fetched LPPP from DexScreener: $${prices.lppp}`);
-                }
-            } catch (e) {
-                console.error("LPPP Price fetch failed (DexScreener):", e);
-            }
+                if (dexData?.pairs?.[0]?.priceUsd) prices.lppp = parseFloat(dexData.pairs[0].priceUsd);
+            } catch (e) { console.error("LPPP Price DexScreener Fallback failed"); }
         }
 
         priceCache = prices;
