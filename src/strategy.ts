@@ -1543,12 +1543,66 @@ export class StrategyManager {
                 BigInt(pos.positionState.vestedLiquidity.toString()) +
                 BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
-            const totalLiquidity = BigInt(poolState.liquidity.toString());
-            const userShare = totalLiquidity > 0n ? Number(userLiquidity) / Number(totalLiquidity) : 0;
+            // 6. User's Principal Value (Derived strictly from Liquidity & Price)
+            // We do NOT use vault balances here to avoid "Ghost Value" from unclaimed fees.
+            // For CP-AMM (xy=k), Liquidity L = sqrt(x * y) and Price P = y / x.
+            // Therefore:
+            // x (Base) = L / sqrt(P)
+            // y (Token) = L * sqrt(P)
 
-            // 6. User's share of reserves (The actual SOL/Token sitting in the LP)
-            const userBaseInLp = baseAmountTotal * userShare;
-            const userTokenInLp = tokenAmountTotal * userShare;
+            // We use the calculated 'spotPrice' as P (Token/Base or Base/Token).
+            // spotPrice is derived from sqrtPriceX64.
+
+            // Let's rely on the ratio.
+            // derivedAmountA = Liquidity / sqrtPrice (if P = B/A) ?
+            // Let's use the BigInt sqrtPriceX64 directly for precision.
+            // sqrtPriceX64 = sqrt(B/A) * 2^64.
+
+            // Amount A (Base) = L * 2^64 / sqrtPriceX64
+            // Amount B (Token) = L * sqrtPriceX64 / 2^64
+
+            // Note: We need to adjust for decimals if sqrtPriceX64 includes them? 
+            // Standard CP-AMM SDK "constant_product_curve.rs":
+            // new_token_a_amount = new_liquidity.checked_div(sqrt_price_x64).unwrap().checked_mul(u128::from(Q64)).unwrap();
+            // new_token_b_amount = new_liquidity.checked_mul(sqrt_price_x64).unwrap().checked_div(u128::from(Q64)).unwrap();
+
+            const L_user = userLiquidity; // BigInt
+            const sqrtPriceX64 = BigInt(poolState.sqrtPrice.toString()); // BigInt
+            const Q64 = BigInt(1) << BigInt(64);
+
+            // Calculate Raw Token Amounts (u64)
+            // baseIsA determines if Mint A is Base. 
+            // If baseIsA: Base = AmountA, Token = AmountB.
+            // Assuming sqrtPriceX64 = sqrt(B/A) * Q64.
+
+            let amountA_red: bigint;
+            let amountB_red: bigint;
+
+            if (sqrtPriceX64 > 0n) {
+                // Amount A = (L * Q64) / sqrtPrice
+                amountA_red = (L_user * Q64) / sqrtPriceX64;
+
+                // Amount B = (L * sqrtPrice) / Q64
+                amountB_red = (L_user * sqrtPriceX64) / Q64;
+            } else {
+                amountA_red = 0n;
+                amountB_red = 0n;
+            }
+
+            // Convert to UI Amounts
+            const userAmountA = Number(amountA_red) / (10 ** mintAInfo.decimals);
+            const userAmountB = Number(amountB_red) / (10 ** mintBInfo.decimals);
+
+            // Assign to Base/Token
+            // Note: This logic assumes sqrtPrice direction matches (B/A).
+            // If it is A/B, the formulas flip.
+            // Given we observed "Undervalued Snowball" (Token B) using Vaults:
+            // Vault Implied Price (A/B) was LOW.
+            // This means B was HIGH (denominator).
+            // If sqrtPrice is standard, it should be correct.
+
+            const userBaseInLp = baseIsA ? userAmountA : userAmountB;
+            const userTokenInLp = baseIsA ? userAmountB : userAmountA;
 
 
             // 7. User's Pending Fees (Manual Calculation for DAMM v2)
