@@ -1380,9 +1380,16 @@ export class StrategyManager {
             const mintB = poolState.tokenBMint;
 
             // 2. Fetch Reserves from Pool State (True reserves without unclaimed fees)
+            const getRobustMint = async (mint: PublicKey) => {
+                const info = await this.connection.getAccountInfo(mint);
+                if (!info) throw new Error(`Mint not found: ${mint.toBase58()}`);
+                const programId = info.owner;
+                return getMint(this.connection, mint, "confirmed", programId);
+            };
+
             const [mintAInfo, mintBInfo] = await Promise.all([
-                getMint(this.connection, mintA),
-                getMint(this.connection, mintB)
+                getRobustMint(mintA),
+                getRobustMint(mintB)
             ]);
 
             // PoolState has tokenAAmount and tokenBAmount as u64 (BN)
