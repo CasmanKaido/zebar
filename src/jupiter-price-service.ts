@@ -41,7 +41,15 @@ export class JupiterPriceService {
         try {
             // 2. Fetch from Jupiter
             const ids = toFetch.join(",");
-            const response = await axios.get<JupiterPriceResponse>(`${this.BASE_URL}?ids=${ids}`, { timeout: 5000 });
+            const headers: Record<string, string> = {};
+            if (process.env.JUPITER_API_KEY) {
+                headers["x-api-key"] = process.env.JUPITER_API_KEY;
+            }
+
+            const response = await axios.get<JupiterPriceResponse>(`${this.BASE_URL}?ids=${ids}`, {
+                timeout: 5000,
+                headers
+            });
 
             if (response.data && response.data.data) {
                 for (const mint of toFetch) {
