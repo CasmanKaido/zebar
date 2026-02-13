@@ -40,6 +40,7 @@ export class BotManager {
     private lastMonitorHeartbeat: number = Date.now(); // Watchdog: Track monitor activity
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isUsingBackup: boolean = false;
+    private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
@@ -761,6 +762,13 @@ export class BotManager {
         let sweepCount = 0;
         const runMonitor = async () => {
             this.lastMonitorHeartbeat = Date.now(); // Watchdog: I'm alive!
+            const currentLpppPrice = await this.getLpppPrice();
+
+            if (currentLpppPrice === 0) {
+                console.warn("[MONITOR] LPPP Price unavailable. Skipping this sweep to avoid false SL/TP triggers.");
+                this.monitorInterval = setTimeout(runMonitor, 30000);
+                return;
+            }
 
             let pools: PoolData[] = [];
             try {
@@ -817,6 +825,12 @@ export class BotManager {
                                 totalLppp: posValueLppp.toString()
                             };
 
+                            // ═══ DEBUG: Position Value + Fees breakdown ═══
+                            if (sweepCount < 10 || sweepCount % 5 === 0) {
+                                console.log(`[POS-VALUE] ${pool.token} | baseLp: ${posValue.userBaseInLp.toFixed(6)} | tokenLp: ${posValue.userTokenInLp.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | posLppp: ${posValueLppp.toFixed(6)}`);
+                                console.log(`[FEES-DBG]  ${pool.token} | feesSol: ${posValue.feesSol.toFixed(6)} | feesToken: ${posValue.feesToken.toFixed(6)} | feesLppp: ${totalFeesLppp.toFixed(6)}`);
+                            }
+
                             // 2. Spot ROI (Price-based)
                             const normalizedPrice = posValue.spotPrice;
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
@@ -842,79 +856,101 @@ export class BotManager {
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
                             pool.roi = roiString;
 
-                            // 3. NET ROI (Inventory-based)
-                            // Initialize initialSolValue if missing (for legacy or recovered positions)
-                            if (!pool.initialSolValue || pool.initialSolValue <= 0) {
-                                const calculatedInitial = (pool.initialLpppAmount || 0) + ((pool.initialTokenAmount || 0) * pool.initialPrice);
-                                pool.initialSolValue = calculatedInitial > 0 ? calculatedInitial : posValue.totalSol;
+                            // 3. USD STRATEGY (4x/7x Take Profit, 0.7x Stop Loss)
+                            // Initialize entryUsdValue if missing (backfill for existing/legacy positions)
+                            if (!pool.entryUsdValue || pool.entryUsdValue <= 0) {
+                                pool.entryUsdValue = (pool.initialSolValue || 0) * currentLpppPrice;
+                                console.log(`[STRATEGY] Backfilled entryUsdValue for ${pool.token}: $${pool.entryUsdValue.toFixed(4)}`);
                             }
 
+                            const currentUsdValue = posValue.totalSol * currentLpppPrice;
+                            const usdMultiplier = pool.entryUsdValue > 0 ? (currentUsdValue / pool.entryUsdValue) : 1;
+
+                            // Keep Net ROI for UI display only
                             const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
                             const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
                             pool.netRoi = `${netRoiVal.toFixed(2)}%`;
 
                             // Log state for visibility
-                            // Always log if there's activity or periodic heartbeat
-                            if (netRoiVal !== 0 || roiVal !== 0 || sweepCount < 30 || sweepCount % 10 === 0) {
-                                console.log(`[MONITOR] ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP | Entry: ${pool.initialSolValue?.toFixed(4)} LPPP`);
+                            if (sweepCount < 30 || sweepCount % 5 === 0 || usdMultiplier !== 1) {
+                                console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(2)}x | Value: $${currentUsdValue.toFixed(4)} | Entry: $${pool.entryUsdValue.toFixed(4)}`);
+                                console.log(`[MONITOR]  ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP`);
                             }
 
                             // Update local state and emit
                             await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
                                 netRoi: pool.netRoi,
                                 initialSolValue: pool.initialSolValue,
-                                positionValue: pool.positionValue
+                                positionValue: pool.positionValue,
+                                entryUsdValue: pool.entryUsdValue
                             });
 
                             // Small delay to prevent 429s in big loops - Be aggressive for DRPC
                             await new Promise(r => setTimeout(r, 1000));
 
-                            // ── Take Profit Stage 1: +300% (3x) → Close 40% ──
-                            // We use Net ROI for all decisions to ensure real profit capture
-                            if (netRoiVal >= 300 && !pool.tp1Done) {
+                            // ── Take Profit Stage 1: 4x Value → Close 40% ──
+                            if (usdMultiplier >= 4.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} hit 3x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                                SocketManager.emitLog(`[TP1] ${pool.token} reached 4x Value ($${currentUsdValue.toFixed(2)})! Withdrawing 40%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
-                                // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions)
                                 this.activeTpSlActions.delete(pool.poolId);
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
                             }
 
-                            // ── Take Profit Stage 2: +600% (6x) → Close another 40% ──
-                            if (netRoiVal >= 600 && pool.tp1Done && !pool.takeProfitDone) {
+                            // ── Take Profit Stage 2: 7x Value → Close another 40% ──
+                            if (usdMultiplier >= 7.0 && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} hit 6x Net Profit (+${netRoiVal.toFixed(0)}%)! Withdrawing 40%...`, "success");
+                                SocketManager.emitLog(`[TP2] ${pool.token} reached 7x Value ($${currentUsdValue.toFixed(2)})! Withdrawing 40%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
-                                // Clear lock BEFORE updatePoolROI
                                 this.activeTpSlActions.delete(pool.poolId);
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
                             }
 
-                            // ── Stop Loss: -30% → Close 80% (keep 20% running) ──
+                            // ── Stop Loss: 0.7x Value (-30%) → Close 80% ──
                             // 3-minute cooldown: don't trigger SL on pools younger than 3 minutes
                             const poolAgeMs = Date.now() - new Date(pool.created).getTime();
-                            const SL_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
-                            if (netRoiVal <= -30 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
-                                this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${netRoiVal.toFixed(0)}% Net Loss! Withdrawing 80%...`, "error");
-                                const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
-                                if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                }
-                                // Clear lock BEFORE updatePoolROI (it checks activeTpSlActions and returns early!)
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                            const SL_COOLDOWN_MS = 3 * 60 * 1000;
 
-                                // If position is essentially dead (-95%+), mark as exited entirely
-                                if (netRoiVal <= -95) {
-                                    SocketManager.emitLog(`[CLEANUP] ${pool.token} position is dead (${netRoiVal.toFixed(0)}%). Marking as EXITED.`, "warning");
-                                    await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                            if (usdMultiplier <= 0.7 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
+                                // 1. Internal Math Check (Glitch Protection Layer A)
+                                // If the token-to-lppp ratio (spotPrice) hasn't dropped but USD has, it's an LPPP price glitch.
+                                const priceRatioMultiplier = pool.initialPrice > 0 ? (posValue.spotPrice / pool.initialPrice) : 1;
+
+                                if (priceRatioMultiplier > 0.8 && currentLpppPrice < 0.00001) {
+                                    console.warn(`[GLITCH PREVENT] ${pool.token} USD dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible LPPP Price Glitch. Skipping SL strike.`);
+                                } else {
+                                    // 2. Wait and See (Glitch Protection Layer B - 3 consecutive strikes)
+                                    const strikes = (this.slStrikeCount.get(pool.poolId) || 0) + 1;
+                                    this.slStrikeCount.set(pool.poolId, strikes);
+
+                                    if (strikes < 3) {
+                                        console.warn(`[STOP LOSS STRIKE] ${pool.token} hit ${strikes}/3 strikes (Value: ${usdMultiplier.toFixed(2)}x). Waiting for confirmation...`);
+                                    } else {
+                                        this.activeTpSlActions.add(pool.poolId);
+                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} confirmed 0.7x Value drop! Withdrawing 80%...`, "error");
+                                        const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
+                                        if (result.success) {
+                                            await this.liquidatePoolToSol(pool.mint);
+                                        }
+                                        this.activeTpSlActions.delete(pool.poolId);
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+
+                                        if (usdMultiplier <= 0.05) {
+                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x). Marking as EXITED.`, "warning");
+                                            await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Reset strikes if we recover above 0.7x
+                                if (this.slStrikeCount.has(pool.poolId)) {
+                                    this.slStrikeCount.delete(pool.poolId);
                                 }
                             }
                         }
