@@ -1544,17 +1544,22 @@ export class StrategyManager {
             const feesBase = baseIsA ? feeA : feeB;
             const feesToken = baseIsA ? feeB : feeA;
 
-            // 8. Total Position Value in SOL units
-            // (UserTokenLP + UserFeesToken) * Price + UserBaseLP + UserFeesBase
-            const totalSol = ((userTokenInLp + feesToken) * spotPrice) + userBaseInLp + feesBase;
+            // 7. Net Position (Active Liquidity only, excluding fees)
+            // userBaseInLp currently includes the fees because it's derived from Vault Balance (which holds fees).
+            // We must subtract the user's pending fees to get the "Principal" amount.
+            const netBaseInLp = Math.max(0, userBaseInLp - feesBase);
+            const netTokenInLp = Math.max(0, userTokenInLp - feesToken);
+
+            // 8. Total Position Value in SOL units (Equity + Fees)
+            const totalSol = ((netTokenInLp + feesToken) * spotPrice) + netBaseInLp + feesBase;
 
             return {
                 totalSol,
                 feesSol: feesBase,
                 feesToken: feesToken,
                 spotPrice,
-                userBaseInLp,
-                userTokenInLp,
+                userBaseInLp: netBaseInLp,   // Now strictly Principal
+                userTokenInLp: netTokenInLp, // Now strictly Principal
                 success: true
             };
         } catch (error) {
