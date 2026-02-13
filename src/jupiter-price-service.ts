@@ -1,15 +1,18 @@
 import axios from "axios";
 
 export interface JupiterPrice {
-    usdPrice: number;
-    decimals: number;
-    liquidity?: number;
+    id: string;
+    type: string;
+    price: string;
 }
 
-export type JupiterPriceResponse = Record<string, JupiterPrice>;
+export interface JupiterPriceResponse {
+    data: Record<string, JupiterPrice>;
+    timeTaken: number;
+}
 
 export class JupiterPriceService {
-    private static BASE_URL = "https://lite-api.jup.ag/price/v3";
+    private static BASE_URL = "https://api.jup.ag/price/v2";
     private static cache = new Map<string, { price: number; timestamp: number }>();
     private static CACHE_TTL = 30000; // 30 seconds
 
@@ -48,18 +51,18 @@ export class JupiterPriceService {
                 headers
             });
 
-            if (response.data) {
+            if (response.data && response.data.data) {
                 for (const mint of toFetch) {
-                    const priceData = response.data[mint];
-                    if (priceData && priceData.usdPrice !== undefined) {
-                        const price = priceData.usdPrice;
+                    const priceData = response.data.data[mint];
+                    if (priceData && priceData.price) {
+                        const price = parseFloat(priceData.price);
                         results.set(mint, price);
                         this.cache.set(mint, { price, timestamp: now });
                     }
                 }
             }
         } catch (error: any) {
-            console.error(`[JUPITER-PRICE-V3] Fetch failed: ${error.message}`);
+            console.error(`[JUPITER-PRICE] Fetch failed: ${error.message} (URL: ${this.BASE_URL})`);
         }
 
         return results;

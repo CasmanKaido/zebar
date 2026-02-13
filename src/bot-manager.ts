@@ -964,6 +964,12 @@ export class BotManager {
                                 if (this.slStrikeCount.has(pool.poolId)) {
                                     this.slStrikeCount.delete(pool.poolId);
                                 }
+
+                                // Visibility: Why didn't it strike? 
+                                // Helps user understand that a -76% ROI pool is skipped because SL already happened.
+                                if (usdMultiplier <= 0.7 && pool.stopLossDone) {
+                                    if (sweepCount % 10 === 0) console.log(`[SL-SKIP] ${pool.token} is at ${usdMultiplier.toFixed(2)}x but SL was already completed.`);
+                                }
                             }
                         }
                     } catch (poolErr: any) {
