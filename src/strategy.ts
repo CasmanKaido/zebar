@@ -1593,6 +1593,9 @@ export class StrategyManager {
             const userAmountA = Number(amountA_red) / (10 ** mintAInfo.decimals);
             const userAmountB = Number(amountB_red) / (10 ** mintBInfo.decimals);
 
+            console.log(`[DEBUG-MATH] L_user: ${L_user}, sqrtPriceX64: ${sqrtPriceX64}, AmtA_raw: ${amountA_red}, AmtB_raw: ${amountB_red}`);
+            console.log(`[DEBUG-MATH] UserAmtA: ${userAmountA}, UserAmtB: ${userAmountB}`);
+
             // Assign to Base/Token
             // Note: This logic assumes sqrtPrice direction matches (B/A).
             // If it is A/B, the formulas flip.
