@@ -1431,6 +1431,9 @@ export class StrategyManager {
             // If neither is a known base, default to Mint A as base
             const baseIsA = isBaseA || !baseMints.includes(mintB.toBase58());
 
+            const baseAmountTotal = baseIsA ? amountA : amountB;
+            const tokenAmountTotal = baseIsA ? amountB : amountA;
+
             // 4. Spot Price (Base per Token)
             let spotPrice = 0;
 
