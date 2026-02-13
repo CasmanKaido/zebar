@@ -871,7 +871,11 @@ export class BotManager {
                             }
 
                             // Calculate Total Position USD matching Meteora UI strategy
-                            const currentUsdValue = (posValue.tokenAAmount * tokenPrice) + (posValue.tokenBAmount * lpppPrice);
+                            // Total = (Token Principal + Token Fees) * Price + (Base Principal + Base Fees) * LPPP_Price
+                            const totalTokenAmount = posValue.userTokenInLp + posValue.feesToken;
+                            const totalBaseAmount = posValue.userBaseInLp + posValue.feesSol;
+
+                            const currentUsdValue = (totalTokenAmount * tokenPrice) + (totalBaseAmount * lpppPrice);
                             const usdMultiplier = pool.entryUsdValue > 0 ? (currentUsdValue / pool.entryUsdValue) : 1;
 
                             // Keep Net ROI for UI display only
