@@ -1,3 +1,0 @@
-FOUND ERROR 6052:
-Name: AlreadyPassActivationPoint
-Message: Already activated
