@@ -1579,11 +1579,12 @@ export class StrategyManager {
             let amountB_red: bigint;
 
             if (sqrtPriceX64 > 0n) {
-                // Amount A = (L * Q64) / sqrtPrice
-                amountA_red = (L_user * Q64) / sqrtPriceX64;
+                // Corrected Formula: L_user is already Q64 scaled.
+                // Amount A = (L_scaled / Q64) / sqrt(P) = L_scaled / sqrtPX64
+                amountA_red = L_user / sqrtPriceX64;
 
-                // Amount B = (L * sqrtPrice) / Q64
-                amountB_red = (L_user * sqrtPriceX64) / Q64;
+                // Amount B = (L_scaled / Q64) * sqrt(P) = (L_scaled * sqrtPX64) / Q128
+                amountB_red = (L_user * sqrtPriceX64) >> 128n;
             } else {
                 amountA_red = 0n;
                 amountB_red = 0n;
