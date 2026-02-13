@@ -1393,17 +1393,37 @@ export class StrategyManager {
                 getRobustMint(mintB)
             ]);
 
-            // PoolState has tokenAAmount and tokenBAmount as u64 (BN)
-            // Fix: BN.js object to Number can fail. Use toString() first.
-            const rawAmountA = poolState.tokenAAmount ? poolState.tokenAAmount.toString() : "0";
-            const rawAmountB = poolState.tokenBAmount ? poolState.tokenBAmount.toString() : "0";
+            // 2. Fetch Reserves from Pool State via Vaults (Fallback as tokenAAmount is missing)
+            // We must subtract protocol/partner fees from the vault balance to get "effective" LP reserves.
+            const vaultA = poolState.tokenAVault;
+            const vaultB = poolState.tokenBVault;
 
-            const amountA = Number(rawAmountA) / (10 ** mintAInfo.decimals);
-            const amountB = Number(rawAmountB) / (10 ** mintBInfo.decimals);
+            const [balA, balB] = await Promise.all([
+                this.connection.getTokenAccountBalance(vaultA),
+                this.connection.getTokenAccountBalance(vaultB)
+            ]);
+
+            const protocolAFee = poolState.protocolAFee ? new BN(poolState.protocolAFee) : new BN(0);
+            const partnerAFee = poolState.partnerAFee ? new BN(poolState.partnerAFee) : new BN(0);
+            const protocolBFee = poolState.protocolBFee ? new BN(poolState.protocolBFee) : new BN(0);
+            const partnerBFee = poolState.partnerBFee ? new BN(poolState.partnerBFee) : new BN(0);
+
+            // Vault Amount (UI) -> BN
+            // Note: getTokenAccountBalance returns uiAmount. We need raw amount for BN subtraction.
+            // Using value.amount which is the string representation of u64
+            const vaultAmountA_BN = new BN(balA.value.amount);
+            const vaultAmountB_BN = new BN(balB.value.amount);
+
+            const effectiveReserveA_BN = vaultAmountA_BN.sub(protocolAFee).sub(partnerAFee);
+            const effectiveReserveB_BN = vaultAmountB_BN.sub(protocolBFee).sub(partnerBFee);
+
+            // Convert to UI Amount
+            const amountA = effectiveReserveA_BN.toNumber() / (10 ** balA.value.decimals);
+            const amountB = effectiveReserveB_BN.toNumber() / (10 ** balB.value.decimals);
 
             // Define decimals for fee calculation later
-            const decimalsA = mintAInfo.decimals;
-            const decimalsB = mintBInfo.decimals;
+            const decimalsA = balA.value.decimals;
+            const decimalsB = balB.value.decimals;
 
             // 3. Determine Side (Which one is SOL/LPPP/Base?)
             const baseMints = [LPPP_MINT.toBase58(), SOL_MINT.toBase58(), USDC_MINT.toBase58()];
