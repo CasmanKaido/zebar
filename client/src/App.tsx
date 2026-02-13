@@ -221,10 +221,19 @@ function App() {
     const [slippage, setSlippage] = useState(10); // Default 10%
 
     const [minVolume5m, setMinVolume5m] = useState(10000);
+    const [maxVolume5m, setMaxVolume5m] = useState(0);
+
     const [minVolume, setMinVolume] = useState(100000);
+    const [maxVolume, setMaxVolume] = useState(0);
+
     const [minVolume24h, setMinVolume24h] = useState(1000000);
+    const [maxVolume24h, setMaxVolume24h] = useState(0);
+
     const [minLiquidity, setMinLiquidity] = useState(60000);
+    const [maxLiquidity, setMaxLiquidity] = useState(0);
+
     const [minMcap, setMinMcap] = useState(60000);
+    const [maxMcap, setMaxMcap] = useState(0);
 
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
@@ -383,11 +392,11 @@ function App() {
                 meteoraFeeBps,
                 maxPools,
                 slippage,
-                minVolume5m,
-                minVolume1h: minVolume,
-                minVolume24h,
-                minLiquidity,
-                minMcap
+                volume5m: { min: minVolume5m, max: maxVolume5m },
+                volume1h: { min: minVolume, max: maxVolume },
+                volume24h: { min: minVolume24h, max: maxVolume24h },
+                liquidity: { min: minLiquidity, max: maxLiquidity },
+                mcap: { min: minMcap, max: maxMcap }
             })
         });
     };
@@ -637,15 +646,42 @@ function App() {
 
                         <div className="mt-4 pt-4 border-t border-border">
                             <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-4">Scanner Criteria</p>
-                            <div className="grid grid-cols-2 gap-x-4 gap-y-5">
-                                <SettingInput label="Slippage" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
-                                <SettingInput label="5m Vol ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
-                                <SettingInput label="1h Vol ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
-                                <SettingInput label="24h Vol ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
-                                <SettingInput label="Liquidity ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
-                                <SettingInput label="Mcap ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
-                                <div className="col-span-2">
-                                    <SettingInput label="Session Limit (Pools)" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <SettingInput label="Slippage" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
+                                    <SettingInput label="Session Limits" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
+                                </div>
+
+                                <div className="h-[1px] bg-border/40 my-2"></div>
+
+                                {/* 5m Volume Range */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <SettingInput label="5m Vol Min ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
+                                    <SettingInput label="5m Vol Max ($)" value={maxVolume5m} onChange={setMaxVolume5m} disabled={running} prefix="$" subtext="0 = No limit" />
+                                </div>
+
+                                {/* 1h Volume Range */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <SettingInput label="1h Vol Min ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
+                                    <SettingInput label="1h Vol Max ($)" value={maxVolume} onChange={setMaxVolume} disabled={running} prefix="$" subtext="0 = No limit" />
+                                </div>
+
+                                {/* 24h Volume Range */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <SettingInput label="24h Vol Min ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
+                                    <SettingInput label="24h Vol Max ($)" value={maxVolume24h} onChange={setMaxVolume24h} disabled={running} prefix="$" subtext="0 = No limit" />
+                                </div>
+
+                                {/* Liquidity Range */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <SettingInput label="Liquidity Min ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
+                                    <SettingInput label="Liquidity Max ($)" value={maxLiquidity} onChange={setMaxLiquidity} disabled={running} prefix="$" subtext="0 = No limit" />
+                                </div>
+
+                                {/* Mcap Range */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <SettingInput label="Mcap Min ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
+                                    <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" subtext="0 = No limit" />
                                 </div>
                             </div>
                         </div>

@@ -38,10 +38,10 @@ export class BirdeyeService {
                     `sort_type=desc`,
                 ];
 
-                if (criteria.minVolume1h > 0) queryParts.push(`min_volume_1h=${criteria.minVolume1h}`);
-                if (criteria.minVolume24h > 0) queryParts.push(`min_volume_24h=${criteria.minVolume24h}`);
-                if (criteria.minLiquidity > 0) queryParts.push(`min_liquidity=${criteria.minLiquidity}`);
-                if (criteria.minMcap > 0) queryParts.push(`min_market_cap=${criteria.minMcap}`);
+                if (criteria.volume1h.min > 0) queryParts.push(`min_volume_1h=${criteria.volume1h.min}`);
+                if (criteria.volume24h.min > 0) queryParts.push(`min_volume_24h=${criteria.volume24h.min}`);
+                if (criteria.liquidity.min > 0) queryParts.push(`min_liquidity=${criteria.liquidity.min}`);
+                if (criteria.mcap.min > 0) queryParts.push(`min_market_cap=${criteria.mcap.min}`);
 
                 // For scroll: first request uses filters, subsequent use scroll_id only
                 const requestUrl: string = nextScrollId

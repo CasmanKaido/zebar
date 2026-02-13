@@ -22,11 +22,11 @@ export interface BotSettings {
     meteoraFeeBps: number; // in Basis Points (e.g. 200 = 2%)
     maxPools: number; // Max pools to create before auto-stop
     slippage: number; // in % (e.g. 10)
-    minVolume5m: number;
-    minVolume1h: number;
-    minVolume24h: number;
-    minLiquidity: number;
-    minMcap: number;
+    volume5m: { min: number; max: number };
+    volume1h: { min: number; max: number };
+    volume24h: { min: number; max: number };
+    liquidity: { min: number; max: number };
+    mcap: { min: number; max: number };
 }
 
 export class BotManager {
@@ -48,11 +48,11 @@ export class BotManager {
         meteoraFeeBps: 200, // Default 2%
         maxPools: 5, // Default 5 pools
         slippage: 10,
-        minVolume5m: 10000, // Default 10k
-        minVolume1h: 100000,
-        minVolume24h: 1000000, // Default 1M
-        minLiquidity: 60000,
-        minMcap: 60000
+        volume5m: { min: 10000, max: 0 },
+        volume1h: { min: 100000, max: 0 },
+        volume24h: { min: 1000000, max: 0 },
+        liquidity: { min: 60000, max: 0 },
+        mcap: { min: 60000, max: 0 }
     };
 
     constructor() {
@@ -414,14 +414,14 @@ export class BotManager {
 
         this.isRunning = true;
         SocketManager.emitStatus(true);
-        SocketManager.emitLog(`LPPP BOT Streamer Active (Vol5m > $${this.settings.minVolume5m}, Vol1h > $${this.settings.minVolume1h}, Vol24h > $${this.settings.minVolume24h}, Liq > $${this.settings.minLiquidity}, MCAP > $${this.settings.minMcap})...`, "info");
+        SocketManager.emitLog(`LPPP BOT Streamer Active (Vol5m: $${this.settings.volume5m.min}-$${this.settings.volume5m.max}, Vol1h: $${this.settings.volume1h.min}-$${this.settings.volume1h.max}, Vol24h: $${this.settings.volume24h.min}-$${this.settings.volume24h.max}, Liq: $${this.settings.liquidity.min}-$${this.settings.liquidity.max}, MCAP: $${this.settings.mcap.min}-$${this.settings.mcap.max})...`, "info");
 
         const criteria: ScannerCriteria = {
-            minVolume5m: this.settings.minVolume5m,
-            minVolume1h: this.settings.minVolume1h,
-            minVolume24h: this.settings.minVolume24h,
-            minLiquidity: this.settings.minLiquidity,
-            minMcap: this.settings.minMcap
+            volume5m: this.settings.volume5m,
+            volume1h: this.settings.volume1h,
+            volume24h: this.settings.volume24h,
+            liquidity: this.settings.liquidity,
+            mcap: this.settings.mcap
         };
 
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {

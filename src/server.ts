@@ -194,7 +194,7 @@ app.use((req, res) => {
     res.sendFile(path.join(clientPath, "index.html"));
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT) || 3000;
 
 httpServer.listen(PORT, () => {
     console.log(`LPPP BOT Unified Server running on port ${PORT}`);

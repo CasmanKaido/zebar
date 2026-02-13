@@ -14,12 +14,17 @@ export interface ScanResult {
     priceUsd: number;
 }
 
+export interface NumericRange {
+    min: number;
+    max: number; // 0 means no upper limit
+}
+
 export interface ScannerCriteria {
-    minVolume5m: number;
-    minVolume1h: number;
-    minVolume24h: number;
-    minLiquidity: number;
-    minMcap: number;
+    volume5m: NumericRange;
+    volume1h: NumericRange;
+    volume24h: NumericRange;
+    liquidity: NumericRange;
+    mcap: NumericRange;
 }
 
 export class MarketScanner {
@@ -294,12 +299,18 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // Check Criteria (Zero means disabled/bypassed)
-                const meetsVol5m = Number(this.criteria.minVolume5m) === 0 || Number(volume5m) >= Number(this.criteria.minVolume5m);
-                const meetsVol1h = Number(this.criteria.minVolume1h) === 0 || Number(volume1h) >= Number(this.criteria.minVolume1h);
-                const meetsVol24h = Number(this.criteria.minVolume24h) === 0 || Number(volume24h) >= Number(this.criteria.minVolume24h);
-                const meetsLiquidity = Number(this.criteria.minLiquidity) === 0 || Number(liquidity) >= Number(this.criteria.minLiquidity);
-                const meetsMcap = Number(this.criteria.minMcap) === 0 || Number(mcap) >= Number(this.criteria.minMcap);
+                // Range validation helper
+                const inRange = (val: number, range: NumericRange) => {
+                    const minMatch = Number(range.min) === 0 || val >= Number(range.min);
+                    const maxMatch = Number(range.max) === 0 || val <= Number(range.max);
+                    return minMatch && maxMatch;
+                };
+
+                const meetsVol5m = inRange(volume5m, this.criteria.volume5m);
+                const meetsVol1h = inRange(volume1h, this.criteria.volume1h);
+                const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
+                const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
+                const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
                     const matchMsg = `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics!`;
