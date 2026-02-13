@@ -1,18 +1,15 @@
 import axios from "axios";
 
 export interface JupiterPrice {
-    id: string;
-    type: string;
-    price: string;
+    usdPrice: number;
+    decimals: number;
+    priceChange24h?: number;
 }
 
-export interface JupiterPriceResponse {
-    data: Record<string, JupiterPrice>;
-    timeTaken: number;
-}
+export type JupiterPriceResponse = Record<string, JupiterPrice> | { data: Record<string, JupiterPrice> };
 
 export class JupiterPriceService {
-    private static BASE_URL = "https://api.jup.ag/price/v2";
+    private static BASE_URL = "https://api.jup.ag/price/v3";
     private static cache = new Map<string, { price: number; timestamp: number }>();
     private static CACHE_TTL = 30000; // 30 seconds
 
@@ -46,23 +43,26 @@ export class JupiterPriceService {
                 headers["x-api-key"] = process.env.JUPITER_API_KEY;
             }
 
-            const response = await axios.get<JupiterPriceResponse>(`${this.BASE_URL}?ids=${ids}`, {
+            const response = await axios.get<any>(`${this.BASE_URL}?ids=${ids}`, {
                 timeout: 5000,
                 headers
             });
 
-            if (response.data && response.data.data) {
+            // Handle both { data: { ... } } and direct { ... } response formats
+            const priceMap = response.data?.data || response.data;
+
+            if (priceMap) {
                 for (const mint of toFetch) {
-                    const priceData = response.data.data[mint];
-                    if (priceData && priceData.price) {
-                        const price = parseFloat(priceData.price);
+                    const priceData = priceMap[mint];
+                    if (priceData && priceData.usdPrice !== undefined) {
+                        const price = typeof priceData.usdPrice === 'string' ? parseFloat(priceData.usdPrice) : priceData.usdPrice;
                         results.set(mint, price);
                         this.cache.set(mint, { price, timestamp: now });
                     }
                 }
             }
         } catch (error: any) {
-            console.error(`[JUPITER-PRICE] Fetch failed: ${error.message} (URL: ${this.BASE_URL})`);
+            console.error(`[JUPITER-PRICE-V3] Fetch failed: ${error.message} (URL: ${this.BASE_URL})`);
         }
 
         return results;
