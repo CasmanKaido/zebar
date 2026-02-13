@@ -1447,92 +1447,40 @@ export class StrategyManager {
                 // We need to be careful.
                 // Alternative: value = sqrtPrice / 2^64
                 // value^2 = price.
-
                 // Let's use the raw string and BigInt for precision if environment supports it, or approximation.
                 // sqrtPrice is X64.
                 // price = (sqrtPrice / Q64) ** 2
 
-                // Convert BN to native BigInt
-                const sqrtPrice = BigInt(poolState.sqrtPrice.toString());
+                // Convert BN to native BigInt for precision
+                const sqrtPriceX64 = BigInt(poolState.sqrtPrice.toString());
                 const Q64 = BigInt(1) << BigInt(64);
 
-                // We want price = (sqrtPrice / Q64)^2
-                // To maintain precision in floating point:
-                const scale = Number(sqrtPrice) / Number(Q64);
-                let rawPrice = scale * scale;
+                // Calculate Price = (sqrtPriceX64 / 2^64)^2
+                const ratio = Number(sqrtPriceX64) / Number(Q64);
+                const rawPrice = ratio * ratio;
 
-                // Adjust for decimals: Price is usually (AmountA / AmountB) raw * (10^DecB / 10^DecA)
-                // If Token A is Base: Price = AmountA / AmountB
-                // curvePrice = (AmountA_Raw / AmountB_Raw) ? No, CP-AMM sqrtPrice is usually sqrt(TokenB / TokenA) or vice versa.
-                // Meteoras SDK: 
-                // price = getPrice(poolState, decimalsA, decimalsB)
-                // Default assumption: sqrtPrice = sqrt(AmountToken1 / AmountToken0) Q64.64
+                // Adjust for decimals: Price is usually Base / Token (or Token / Base depending on pool)
+                // Assumption: sqrtPriceX64 tracks sqrt(AmountA / AmountB)
+                // If rawPrice = AmountA / AmountB (Price of B in A)
+                // Then Adjusted Price = rawPrice * (10 ** (decimalsA - decimalsB))
 
-                // Let's assume standard Q64.64 implies sqrt(AmountA / AmountB) ?
-                // If Base is A. Price = AmountA / AmountB.
-                // If sqrtPrice is sqrt(Price) * Q64.
+                // If rawPrice = AmountB / AmountA (Price of A in B)
+                // Then Adjusted Price = rawPrice * (10 ** (decimalsB - decimalsA))
 
-                // Let's calculate price from reserves and see which way it aligns.
-                // Vaults: A=0.6, B=6.5. A/B = 0.1. B/A = 10.
-                // Our calculated spot from vaults was 1.7. This means vaults are NOT A=0.6, B=6.5.
-                // Vaults were ~39 Total Sol Value? No.
+                // Let's stick to the observed behavior:
+                // We want price of Token (Snowball) in terms of Base (LPPP).
+                // If TokenA is Base (LPPP), TokenB is Snowball.
+                // DecA = 9, DecB = 6.
 
-                // Let's stick to the vault calculation derived price for safety BUT
-                // The user's issue is that Snowball (Token B) is undervalued.
-                // Vaults: Lots of Snowball fees (inflated B).
-                // A/B (Price of B in A) = small / big = VERY SMALL.
-                // Converting to Price of B (Snowball):
-                // If Price = A / B.
-                // Inflated B -> Lower Price. This matches the issue!
-                // So we need accurate A/B ratio. 
+                // If rawPrice = A/B. Price = rawPrice * 10^(9-6) = rawPrice * 1000.
 
-                // Using sqrtPrice is safer.
-                // Assuming Meteora standard: sqrtPriceX64 = sqrt(amount1/amount0) * 2^64 ? 
-                // Actually usually it's sqrt(TokenB/TokenA)
+                spotPrice = rawPrice * (10 ** (decimalsA - decimalsB)); // Correct for typical AMM
 
-                // Let's rely on the previous calculation logic as a FALLBACK, and try to use sqrtPrice if we can ensure direction.
-                // Given the ambiguity of sqrtPrice direction without SDK docs/testing, 
-                // A better fix might be to deduct ESTIMATED unclaimed fees from the vault balance.
-                // We know OUR unclaimed fees. 
-                // Can we extrapolate? No.
+                // Inversion Check:
+                // Vault Ratio (with fees included) was ~1.7 (LPPP per Snowball?)
+                // If this new spotPrice is radically different (e.g. 0.002), we might be inverted.
 
-                // Let's trust the Curve's Current Price if we can derive it.
-                // Actually, simply using the ratio of "Effective Reserves" (Vault - Unclaimed) is correct IF we subtract ALL unclaimed fees.
-                // Since we can't...
-
-                // Let's try to infer the skew.
-
-                // ACTUALLY: The safest bet is:
-                // Vaults are "Solvent".
-                // The price shouldn't deviate massively unless fees are huge.
-                // Fees are 6.5 Snowball vs 1.6 Position Snowball. Fees are HUGE.
-
-                // Let's try standard Raydium/Uniswap logic: sqrtPriceX64.
-                // price = (sqrtPrice / 2^64) ** 2 * (10**(decA - decB))
-
-                // But verifying direction:
-                // If A is Base. 
-                // If price should be higher, and our calc is low.
-
-                const p = Number(sqrtPrice) / Number(Q64);
-                rawPrice = p * p;
-
-                // Adjust decimals
-                // rawPrice is usually AmountB / AmountA or AmountA / AmountB (Raw units)
-                // If it is A/B (Price of B in terms of A):
-                // price = rawPrice * (10^DecA / 10^DecB)
-
-                // If it is B/A (Price of A in terms of B):
-                // price = rawPrice * (10^DecB / 10^DecA)
-
-                // Let's check "tokenAmountTotal" (Snowball) vs "baseAmountTotal" (LPPP).
-                // We want Price of Snowball in LPPP. (LPPP per Snowball).
-
-                // If rawPrice = AmountA / AmountB. 
-                // Then Adjusted Price = rawPrice * (10^(DecB - DecA)) ? No. 
-                // Price = (AmtA/10^DecA) / (AmtB/10^DecB) = (AmtA/AmtB) * (10^DecB / 10^DecA).
-
-                spotPrice = rawPrice * (10 ** (decimalsB - decimalsA));
+                // Just use the derived price.
 
                 // Invert if needed?
                 // If the resulting price is radically different from Vault Price (e.g. inverted), flip it.
