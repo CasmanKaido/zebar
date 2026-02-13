@@ -12,6 +12,7 @@ import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { dbService } from "./db-service";
 import { PoolData, TradeHistory } from "./types";
 import { TokenMetadataService } from "./token-metadata-service";
+import { JupiterPriceService } from "./jupiter-price-service";
 
 const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
@@ -360,15 +361,18 @@ export class BotManager {
     }
 
     private async getLpppPrice(): Promise<number> {
+        // Primary: Jupiter Price API
+        const jupPrice = await JupiterPriceService.getPrice(LPPP_MINT_ADDR);
+        if (jupPrice > 0) return jupPrice;
+
+        // Fallback: DexScreener
         try {
-            const res = await fetch("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
-            const data: any = await res.json();
+            const res = await axios.get("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+            const data: any = res.data;
             const price = parseFloat(data?.pairs?.[0]?.priceUsd || "0");
-            // No floor check — LPPP is a micro-cap token that can legitimately trade at very low prices.
-            // parseFloat already returns 0 for invalid data, which is the only case we reject.
             return price;
         } catch (e) {
-            console.warn("[BOT] Failed to fetch LPPP price:", e);
+            console.warn("[BOT] Failed to fetch LPPP price from DexScreener:", e);
             return 0;
         }
     }
@@ -762,37 +766,38 @@ export class BotManager {
         let sweepCount = 0;
         const runMonitor = async () => {
             this.lastMonitorHeartbeat = Date.now(); // Watchdog: I'm alive!
-            const currentLpppPrice = await this.getLpppPrice();
-
-            if (currentLpppPrice === 0) {
-                console.warn("[MONITOR] LPPP Price unavailable. Skipping this sweep to avoid false SL/TP triggers.");
-                this.monitorInterval = setTimeout(runMonitor, 30000);
-                return;
-            }
 
             let pools: PoolData[] = [];
             try {
                 pools = await dbService.getAllPools();
-                if (pools.length > 0) {
-                    console.log(`[MONITOR DEBUG] Checking ${pools.length} pools from SQLite...`);
-                } else {
-                    if (sweepCount % 10 === 0) {
-                        console.log(`[MONITOR DEBUG] No active pools found.`);
-                    }
+                const activePools = pools.filter(p => !p.exited && p.isBotCreated);
+
+                if (activePools.length === 0) {
+                    if (sweepCount % 10 === 0) console.log(`[MONITOR DEBUG] No active bot pools found.`);
+                    this.monitorInterval = setTimeout(runMonitor, 60000);
+                    return;
                 }
 
-                for (const pool of pools) {
+                // ═══ JUPITER BATCH PRICING Integration ═══
+                const mintsToFetch = [LPPP_MINT_ADDR, ...activePools.map(p => p.mint)];
+                const jupPrices = await JupiterPriceService.getPrices(mintsToFetch);
+
+                let lpppPrice = jupPrices.get(LPPP_MINT_ADDR) || 0;
+                if (lpppPrice === 0) {
+                    console.log("[MONITOR] Jupiter LPPP price missing, falling back to DexScreener...");
+                    lpppPrice = await this.getLpppPrice();
+                }
+
+                if (lpppPrice === 0) {
+                    console.warn("[MONITOR] All price sources failed. Skipping this sweep.");
+                    this.monitorInterval = setTimeout(runMonitor, 30000);
+                    return;
+                }
+
+                for (const pool of activePools) {
                     try {
-                        if (pool.exited) continue;
-
-                        // HARDCODED: Only monitor bot-created pools. Skip all recovered/external.
-                        if (!pool.isBotCreated) {
-                            continue;
-                        }
-
-                        console.log(`[MONITOR DEBUG] Checking pool: ${pool.token} (${pool.poolId.slice(0, 8)}...)`);
-                        if (pool.withdrawalPending) continue; // Skip if withdrawal in progress (Issue 30)
-                        if (this.activeTpSlActions.has(pool.poolId)) continue; // Skip if TP/SL in flight
+                        if (pool.withdrawalPending) continue;
+                        if (this.activeTpSlActions.has(pool.poolId)) continue;
 
                         const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
 
@@ -857,13 +862,16 @@ export class BotManager {
                             pool.roi = roiString;
 
                             // 3. USD STRATEGY (4x/7x Take Profit, 0.7x Stop Loss)
-                            // Initialize entryUsdValue if missing (backfill for existing/legacy positions)
+                            const tokenPrice = jupPrices.get(pool.mint) || (posValue.spotPrice * lpppPrice);
+
+                            // Initialize entryUsdValue if missing
                             if (!pool.entryUsdValue || pool.entryUsdValue <= 0) {
-                                pool.entryUsdValue = (pool.initialSolValue || 0) * currentLpppPrice;
+                                pool.entryUsdValue = (pool.initialSolValue || 0) * lpppPrice;
                                 console.log(`[STRATEGY] Backfilled entryUsdValue for ${pool.token}: $${pool.entryUsdValue.toFixed(4)}`);
                             }
 
-                            const currentUsdValue = posValue.totalSol * currentLpppPrice;
+                            // Calculate Total Position USD matching Meteora UI strategy
+                            const currentUsdValue = (posValue.tokenAAmount * tokenPrice) + (posValue.tokenBAmount * lpppPrice);
                             const usdMultiplier = pool.entryUsdValue > 0 ? (currentUsdValue / pool.entryUsdValue) : 1;
 
                             // Keep Net ROI for UI display only
@@ -873,7 +881,7 @@ export class BotManager {
 
                             // Log state for visibility
                             if (sweepCount < 30 || sweepCount % 5 === 0 || usdMultiplier !== 1) {
-                                console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(2)}x | Value: $${currentUsdValue.toFixed(4)} | Entry: $${pool.entryUsdValue.toFixed(4)}`);
+                                console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(2)}x | Value: $${currentUsdValue.toFixed(4)} (Token:$${tokenPrice.toFixed(6)}, LPPP:$${lpppPrice.toFixed(6)})`);
                                 console.log(`[MONITOR]  ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP`);
                             }
 
@@ -922,7 +930,7 @@ export class BotManager {
                                 // If the token-to-lppp ratio (spotPrice) hasn't dropped but USD has, it's an LPPP price glitch.
                                 const priceRatioMultiplier = pool.initialPrice > 0 ? (posValue.spotPrice / pool.initialPrice) : 1;
 
-                                if (priceRatioMultiplier > 0.8 && currentLpppPrice < 0.00001) {
+                                if (priceRatioMultiplier > 0.8 && lpppPrice < 0.00001) {
                                     console.warn(`[GLITCH PREVENT] ${pool.token} USD dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible LPPP Price Glitch. Skipping SL strike.`);
                                 } else {
                                     // 2. Wait and See (Glitch Protection Layer B - 3 consecutive strikes)
