@@ -23,12 +23,14 @@ export class PumpFunHandler {
      * @param mint Token mint address
      * @param amountTokens Number of tokens to buy (in raw units, e.g. 1 token = 1e6 units if decimals=6)
      * @param maxSolCost Max SOL willing to spend (in lamports)
+     * @param tokenProgram Optional token program (defaults to standard SPL Token)
      */
     static async createBuyInstruction(
         buyer: PublicKey,
         mint: PublicKey,
         amountTokens: BN, // u64
-        maxSolCost: BN    // u64
+        maxSolCost: BN,   // u64
+        tokenProgram: PublicKey = TOKEN_PROGRAM_ID
     ): Promise<{
         instruction: TransactionInstruction;
         associatedUser: PublicKey;
@@ -45,14 +47,16 @@ export class PumpFunHandler {
         const associatedBondingCurve = await getAssociatedTokenAddress(
             mint,
             bondingCurve,
-            true // allow owner off curve
+            true, // allow owner off curve
+            tokenProgram
         );
 
         // 3. associatedUser (ATA of the buyer)
         const associatedUser = await getAssociatedTokenAddress(
             mint,
             buyer,
-            false
+            false,
+            tokenProgram
         );
 
         // Check if ATA needs creation? (Handled at usage site usually, but let's return instruction just in case)
@@ -80,7 +84,7 @@ export class PumpFunHandler {
             { pubkey: associatedUser, isSigner: false, isWritable: true },
             { pubkey: buyer, isSigner: true, isWritable: true },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            { pubkey: tokenProgram, isSigner: false, isWritable: false },
             { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
             // { pubkey: eventAuthority, isSigner: false, isWritable: false }, // Some IDLs have event authority
             { pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false } // Program itself? No, standard program call.
@@ -121,7 +125,7 @@ export class PumpFunHandler {
             associatedUser,
             // Helper to create ATA if needed (Idempotent prevents "Already Exists" crash)
             createAtaInstruction: createAssociatedTokenAccountIdempotentInstruction(
-                buyer, associatedUser, buyer, mint
+                buyer, associatedUser, buyer, mint, tokenProgram
             )
         };
     }

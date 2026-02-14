@@ -117,13 +117,22 @@ export class StrategyManager {
             const pumpState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
             if (pumpState) {
                 console.log(`[PUMP.FUN] Token detected on Bonding Curve! Executing direct buy...`);
+
+                // Issue Fix: Detect Token vs Token-2022 to avoid IncorrectProgramId
+                const mintAcc = await this.connection.getAccountInfo(mint);
+                const tokenProgram = mintAcc ? mintAcc.owner : TOKEN_PROGRAM_ID;
+                if (tokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {
+                    console.log(`[PUMP.FUN] Token-2022 detected for Pump.fun token. Adapting instructions.`);
+                }
+
                 const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(pumpState, amountSol, slippageBps);
 
                 const { instruction, createAtaInstruction } = await PumpFunHandler.createBuyInstruction(
                     this.wallet.publicKey,
                     mint,
                     new BN(amountTokens.toString()),
-                    new BN(maxSolCost.toString())
+                    new BN(maxSolCost.toString()),
+                    tokenProgram
                 );
 
                 const tx = new Transaction();
@@ -170,17 +179,34 @@ export class StrategyManager {
                     outputMint: mint.toBase58(),
                     amount: amountLamports.toString(),
                     taker: this.wallet.publicKey.toBase58(),
-                    // Optional: slippageBps could be added if needed, but Ultra handles it.
-                    // Ultra is "Recommended" because it manages routing/slippage automatically.
                 });
 
-                orderResponse = (await axios.get(`https://api.jup.ag/ultra/v1/order?${params}`, { headers })).data;
+                // Issue Fix: Add retry logic for DNS/Network Glitches (Jupiter Ultra API)
+                let retryCount = 0;
+                while (retryCount < 3) {
+                    try {
+                        const response = await axios.get(`https://api.jup.ag/ultra/v1/order?${params}`, {
+                            headers,
+                            timeout: 10000 // 10s timeout
+                        });
+                        orderResponse = response.data;
+                        break;
+                    } catch (err: any) {
+                        retryCount++;
+                        if (retryCount >= 3) {
+                            if (axios.isAxiosError(err) && err.response?.data) {
+                                throw new Error(`Ultra API Error (Attempt ${retryCount}): ${JSON.stringify(err.response.data)}`);
+                            }
+                            throw err;
+                        }
+                        console.warn(`[JUPITER] Ultra Sync retry ${retryCount}/3 due to glitch: ${err.message}`);
+                        await new Promise(resolve => setTimeout(resolve, 2000)); // 2s backoff
+                    }
+                }
 
             } catch (err: any) {
-                if (axios.isAxiosError(err) && err.response?.data) {
-                    throw new Error(`Ultra API Error: ${JSON.stringify(err.response.data)}`);
-                }
-                throw err;
+                if (err.message.includes('Ultra API Error')) throw err;
+                throw new Error(`Jupiter Ultra Connection Failed: ${err.message}`);
             }
 
             const { transaction: swapTransaction, requestId } = orderResponse;
