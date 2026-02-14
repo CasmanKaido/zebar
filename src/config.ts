@@ -10,11 +10,11 @@ export const BACKUP_RPC_URL = process.env.BACKUP_RPC_URL;
 export const WSS_URL = process.env.WSS_URL || "wss://api.mainnet-beta.solana.com";
 
 // Jupiter API Key (Ultra/V6)
-export const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
+export const JUPITER_API_KEY = (process.env.JUPITER_API_KEY || "").trim();
 export const JUPITER_API_URL = "https://api.jup.ag/ultra/v1/order";
 
 // Birdeye API Key
-export const BIRDEYE_API_KEY = process.env.BIRDEYE_API_KEY || "";
+export const BIRDEYE_API_KEY = (process.env.BIRDEYE_API_KEY || "").trim();
 
 // Paths
 import * as path from "path";

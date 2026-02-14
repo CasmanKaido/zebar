@@ -1,7 +1,8 @@
-
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { SocketManager } from "./socket";
+import { safeRpc } from "./rpc-utils";
+import { IGNORED_MINTS } from "./config";
 
 /**
  * On-chain token safety checker.
@@ -52,29 +53,7 @@ export interface SafetyResult {
 }
 
 export class OnChainSafetyChecker {
-    /**
-     * Helper to retry RPC calls on 429 rate limits.
-     */
-    private static async rpc<T>(fn: () => Promise<T>, desc: string): Promise<T> {
-        let retries = 0;
-        const maxRetries = 5;
-        while (true) {
-            try {
-                return await fn();
-            } catch (err: any) {
-                const errStr = (err.message || err.toString()).toLowerCase();
-                if (errStr.includes("429") || errStr.includes("deprioritized") || errStr.includes("too many requests")) {
-                    if (retries >= maxRetries) throw err;
-                    retries++;
-                    const backoff = Math.pow(2, retries) * 500;
-                    // console.log(`[RPC-RETRY] ${desc} (Attempt ${retries})`);
-                    await new Promise(r => setTimeout(r, backoff));
-                    continue;
-                }
-                throw err;
-            }
-        }
-    }
+    // (rpc method was here, now replaced by safeRpc import)
     /**
      * Performs on-chain safety checks for a token.
      * 1. Mint Authority — Can more tokens be minted?
@@ -101,9 +80,9 @@ export class OnChainSafetyChecker {
         try {
             let mintInfo;
             try {
-                mintInfo = await this.rpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
+                mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
             } catch {
-                mintInfo = await this.rpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
+                mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
             }
 
             if (mintInfo.mintAuthority !== null) {
@@ -152,14 +131,14 @@ export class OnChainSafetyChecker {
             }
 
             // Fallback: Check largest accounts of the token itself (Heuristic)
-            const largestAccounts = await this.rpc(
+            const largestAccounts = await safeRpc(
                 () => connection.getTokenLargestAccounts(mint),
                 "largestAccounts"
             );
             const topAccounts = largestAccounts.value.slice(0, 20);
 
             if (topAccounts.length > 0) {
-                const accountInfos = await this.rpc(
+                const accountInfos = await safeRpc(
                     () => connection.getMultipleAccountsInfo(topAccounts.map(a => a.address)),
                     "accountInfos"
                 );
@@ -195,13 +174,10 @@ export class OnChainSafetyChecker {
 
                 // ═══ BUNDLE CHECK DISABLED PER USER REQUEST ═══
                 // if (maxDuplicates >= 3) {
-                //     result.safe = false;
-                //     result.reason = `Bundle Detected! ${maxDuplicates} wallets have identical balances.`;
-                //     SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Bundle Detected (${maxDuplicates} identical wallets)`, "error");
-                //     return result;
+                // ...
                 // }
 
-                const mintInfo = await this.rpc(() => getMint(connection, mint), "getMint-Supply");
+                const mintInfo = await safeRpc(() => getMint(connection, mint), "getMint-Supply");
                 const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
                 const divisor = totalSupply > 0 ? totalSupply : totalSupplyChecked;
                 const concentrationRatio = devConcentration / divisor;
@@ -238,7 +214,7 @@ export class OnChainSafetyChecker {
      */
     private static async checkLpLock(connection: Connection, pairAddress: string): Promise<boolean> {
         const pairPubkey = new PublicKey(pairAddress);
-        const info = await this.rpc(() => connection.getAccountInfo(pairPubkey), "getPairInfo");
+        const info = await safeRpc(() => connection.getAccountInfo(pairPubkey), "getPairInfo");
         if (!info) return false;
 
         const owner = info.owner.toBase58();
@@ -259,13 +235,13 @@ export class OnChainSafetyChecker {
         if (!lpMint || lpMint === "11111111111111111111111111111111") return false;
 
         // Check holders of the LP Mint
-        const largestLpAccounts = await this.rpc(
+        const largestLpAccounts = await safeRpc(
             () => connection.getTokenLargestAccounts(new PublicKey(lpMint!)),
             "largestLpAccounts"
         );
         const topLpAccounts = largestLpAccounts.value.slice(0, 5);
-        const lpAccountInfos = await this.rpc(
-            () => connection.getMultipleAccountsInfo(topLpAccounts.map(a => a.address)),
+        const lpAccountInfos = await safeRpc(
+            () => connection.getMultipleAccountsInfo(topLpAccounts.map((a: any) => a.address)),
             "lpAccounts"
         );
 

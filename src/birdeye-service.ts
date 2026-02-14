@@ -20,6 +20,8 @@ export class BirdeyeService {
             return [];
         }
 
+        console.log(`[BIRDEYE] Starting market-wide scan... (API Key: ${BIRDEYE_API_KEY.slice(0, 4)}****)`);
+
         const scanResults: ScanResult[] = [];
         let nextScrollId: string | null = null;
         const seenMints = new Set<string>();

@@ -13,6 +13,7 @@ import { dbService } from "./db-service";
 import { PoolData, TradeHistory } from "./types";
 import { TokenMetadataService } from "./token-metadata-service";
 import { JupiterPriceService } from "./jupiter-price-service";
+import { safeRpc } from "./rpc-utils";
 
 const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
@@ -740,9 +741,12 @@ export class BotManager {
 
     async getWalletBalance() {
         try {
-            const solBalance = await connection.getBalance(wallet.publicKey);
+            const solBalance = await safeRpc(() => connection.getBalance(wallet.publicKey), "getSolBalance");
 
-            const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
+            const tokenAccounts = await safeRpc(() =>
+                connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT }),
+                "getLpppBalance"
+            );
 
             let lpppBalance = 0;
             if (tokenAccounts.value.length > 0) {

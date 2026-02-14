@@ -144,7 +144,7 @@ export class MarketScanner {
             let allPairs: any[] = [];
 
             // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Pools (Paginated)
-            for (let page = 1; page <= 10; page++) {
+            for (let page = 1; page <= 6; page++) {
                 try {
                     // We use /pools to find tokens with activity.
                     const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
@@ -174,13 +174,13 @@ export class MarketScanner {
                     }
                 } catch (e: any) {
                     if (e.response?.status === 429) {
-                        console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. Halting sweep to protect IP.`);
+                        console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. IP throttled. Halting.`);
                         break;
                     }
                     console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
-                // Rate limit protection: Slow 5.0s between pages
-                if (page < 10) await new Promise(r => setTimeout(r, 5000));
+                // Rate limit protection: Slow 15s between pages to avoid IP throttling
+                if (page < 6) await new Promise(r => setTimeout(r, 15000));
             }
 
             // 2. Add Broad DexScreener Search (Meteora specifically)
