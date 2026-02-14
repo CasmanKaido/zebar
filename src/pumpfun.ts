@@ -109,9 +109,10 @@ export class PumpFunHandler {
         // 11. program
 
         // I will add event authority just in case.
-        const eventAuthority = new PublicKey("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjxc7UyGZtPN");
-        keys.push({ pubkey: eventAuthority, isSigner: false, isWritable: false });
-        // keys.push({ pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false }); // Redundant - removed per audit
+        // CORRECTION: The "eventAuthority" or "program" account for Anchor event emission
+        // This MUST be the Pump.fun Program ID itself.
+        // The error "InvalidProgramId" (Left: Ce6..., Right: 6EF8...) confirmed it expects itself.
+        keys.push({ pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false });
 
         const instruction = new TransactionInstruction({
             keys,

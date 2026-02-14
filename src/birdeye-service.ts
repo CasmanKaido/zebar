@@ -4,6 +4,7 @@ import { ScanResult, ScannerCriteria } from "./scanner";
 import { BIRDEYE_API_KEY } from "./config";
 
 const BIRDEYE_BASE_URL = "https://public-api.birdeye.so/defi/v3/token/list/scroll";
+const BIRDEYE_NEW_LISTING_URL = "https://public-api.birdeye.so/defi/v3/token/new_listing";
 
 export class BirdeyeService {
     /**
@@ -104,6 +105,54 @@ export class BirdeyeService {
             console.warn(`[BIRDEYE] Fetch failed: ${error.message}`);
         }
 
+        return scanResults;
+    }
+
+    /**
+     * Fetches brand new token listings (inc. Pump.fun, Moonshot).
+     * This captures tokens that might not have high volume yet but are "fresh".
+     */
+    static async fetchNewTokenListings(limit: number = 20): Promise<ScanResult[]> {
+        if (!BIRDEYE_API_KEY) return [];
+
+        const scanResults: ScanResult[] = [];
+        try {
+            const response = await axios.get(BIRDEYE_NEW_LISTING_URL, {
+                headers: {
+                    "X-API-KEY": BIRDEYE_API_KEY,
+                    "x-chain": "solana",
+                    "accept": "application/json"
+                },
+                params: {
+                    limit,
+                    meme_platform_enabled: true // Explicitly enable meme platforms
+                },
+                timeout: 5000
+            });
+
+            if (response.data?.success) {
+                const items = response.data.data.items || [];
+                for (const t of items) {
+                    if (!t.address) continue;
+                    scanResults.push({
+                        mint: new PublicKey(t.address),
+                        pairAddress: t.address, // New listings might not have a pair yet, use mint as placeholder
+                        dexId: "birdeye-new",
+                        volume24h: t.volume_24h_usd || 0,
+                        liquidity: t.liquidity || 0,
+                        mcap: t.fdv || 0, // FDV often better proxy for new tokens
+                        symbol: t.symbol || "NEW",
+                        priceUsd: t.price || 0
+                    });
+                }
+                if (items.length > 0) {
+                    console.log(`[BIRDEYE] Found ${items.length} NEWLY LISTED tokens.`);
+                }
+            }
+
+        } catch (error: any) {
+            console.warn(`[BIRDEYE] New Listing Fetch failed: ${error.message}`);
+        }
         return scanResults;
     }
 }

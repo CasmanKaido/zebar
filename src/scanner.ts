@@ -203,6 +203,16 @@ export class MarketScanner {
                 console.warn(`[BIRDEYE] Error: ${e}`);
             }
 
+            // 3.5. NEW: Birdeye 'New Listing' Feed (Pump.fun, Moonshot, etc.)
+            try {
+                const newTokens = await BirdeyeService.fetchNewTokenListings(20); // Get latest 20
+                if (newTokens.length > 0) {
+                    allPairs = [...allPairs, ...newTokens];
+                }
+            } catch (e) {
+                console.warn(`[BIRDEYE] New Listing Error: ${e}`);
+            }
+
             // 4. NEW: Pump.fun Bonding Curve Sweep
             if (this.criteria.pumpFunSupport) {
                 try {
@@ -250,22 +260,22 @@ export class MarketScanner {
                         pairAddress: address,
                         dexId: dexId,
                         baseToken: p.baseToken || {
-                            address: p.relationships?.base_token?.data?.id?.split("_")[1],
-                            symbol: p.attributes?.name?.split(" / ")[0]
+                            address: p.mint ? p.mint.toBase58() : p.relationships?.base_token?.data?.id?.split("_")[1],
+                            symbol: p.symbol || p.attributes?.name?.split(" / ")[0]
                         },
                         quoteToken: p.quoteToken || {
                             address: p.relationships?.quote_token?.data?.id?.split("_")[1],
                             symbol: p.attributes?.name?.split(" / ")[1]
                         },
-                        priceUsd: p.priceUsd || p.attributes?.base_token_price_usd,
+                        priceUsd: p.priceUsd || Number(p.attributes?.base_token_price_usd || 0),
                         volume: p.volume || {
                             m5: Number(p.attributes?.volume_usd?.m5 || 0),
                             h1: Number(p.attributes?.volume_usd?.h1 || 0),
-                            h24: Number(p.attributes?.volume_usd?.h24 || 0)
+                            h24: Number(p.volume24h || p.attributes?.volume_usd?.h24 || 0)
                         },
-                        volume24h: p.volume24h, // Allow direct volume24h passing (Birdeye)
-                        liquidity: p.liquidity || { usd: Number(p.attributes?.reserve_in_usd || 0) },
-                        marketCap: p.marketCap || p.fdv || p.attributes?.fdv_usd || 0
+                        volume24h: p.volume24h || Number(p.attributes?.volume_usd?.h24 || 0),
+                        liquidity: p.liquidity ? (typeof p.liquidity === 'object' ? p.liquidity : { usd: p.liquidity }) : { usd: Number(p.attributes?.reserve_in_usd || 0) },
+                        marketCap: p.marketCap || p.fdv || Number(p.attributes?.fdv_usd || 0)
                     });
                 }
             });
