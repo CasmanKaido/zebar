@@ -59,12 +59,14 @@ export function updateConnection(newUrl: string) {
     });
 }
 
-// Load wallet from private key in .env or a default dummy
+// Load wallet from private key in .env
 // WARNING: NEVER COMMIT REAL PRIVATE KEYS
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-export const wallet = PRIVATE_KEY
-    ? Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY))
-    : Keypair.generate(); // fallback to random wallet for safety if env missing
+if (!PRIVATE_KEY) {
+    throw new Error("CRITICAL ERROR: PRIVATE_KEY is missing from .env. Please provide a valid private key to use the bot.");
+}
+
+export const wallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
 
 console.log("Wallet Public Key:", wallet.publicKey.toBase58());
 

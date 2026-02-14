@@ -1,6 +1,6 @@
 
 import { PublicKey, TransactionInstruction, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction } from "@solana/spl-token";
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction, createAssociatedTokenAccountIdempotentInstruction } from "@solana/spl-token";
 import { PUMP_FUN_PROGRAM_ID } from "./config";
 import BN from "bn.js";
 
@@ -107,7 +107,7 @@ export class PumpFunHandler {
         // I will add event authority just in case.
         const eventAuthority = new PublicKey("Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjxc7UyGZtPN");
         keys.push({ pubkey: eventAuthority, isSigner: false, isWritable: false });
-        keys.push({ pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false });
+        // keys.push({ pubkey: PUMP_FUN_PROGRAM_ID, isSigner: false, isWritable: false }); // Redundant - removed per audit
 
         const instruction = new TransactionInstruction({
             keys,
@@ -119,8 +119,8 @@ export class PumpFunHandler {
         return {
             instruction,
             associatedUser,
-            // Helper to create ATA if needed
-            createAtaInstruction: createAssociatedTokenAccountInstruction(
+            // Helper to create ATA if needed (Idempotent prevents "Already Exists" crash)
+            createAtaInstruction: createAssociatedTokenAccountIdempotentInstruction(
                 buyer, associatedUser, buyer, mint
             )
         };
