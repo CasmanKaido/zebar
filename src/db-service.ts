@@ -3,7 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { PoolData, TradeHistory } from "./types";
 
-const DB_PATH = path.join(process.cwd(), "data", "zebar.db");
+const DB_PATH = path.join(process.cwd(), "data", "lppp-bot.db");
 
 export class DatabaseService {
     private db: Database.Database;

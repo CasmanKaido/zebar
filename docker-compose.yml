@@ -1,7 +1,7 @@
 services:
-  zebar-bot:
+  lppp-bot:
     build: .
-    container_name: zebar_bot_container
+    container_name: lppp-bot-container
     restart: always
     ports:
       - "3000:3000"

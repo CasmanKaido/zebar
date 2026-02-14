@@ -1,9 +1,9 @@
-# ZEBAR: Automated Liquidity & Volume Bot
+# LPPP Bot: Automated Liquidity & Volume Bot
 
-**ZEBAR** is a high-performance Solana trading and liquidity bot designed to maximize the utility of **$LPPP**. It uses advanced market scanning to identify tokens meeting a specific "Golden Ratio" of volume, liquidity, and market cap, immediately provides dual-sided liquidity on Meteora DLMM, and manages positions for automated profit-taking.
+**LPPP Bot** is a high-performance Solana trading and liquidity bot designed to maximize the utility of **$LPPP**. It uses advanced market scanning to identify tokens meeting a specific "Golden Ratio" of volume, liquidity, and market cap, immediately provides dual-sided liquidity on Meteora DLMM, and manages positions for automated profit-taking.
 
 ## 🚀 Core Strategy
-ZEBAR pivots away from high-risk sniping and focuses on "Validated Momentum" tokens.
+LPPP Bot pivots away from high-risk sniping and focuses on "Validated Momentum" tokens.
 
 1. **Market Scanning**: Polls Solana DEX pairs (Raydium/Meteora) via DexScreener API.
 2. **Golden Ratio Filters**:
@@ -15,7 +15,7 @@ ZEBAR pivots away from high-risk sniping and focuses on "Validated Momentum" tok
 5. **Position Management**: Monitors the position for target ROI (e.g., 8x) and executes automated exits.
 
 ## 🖥️ Command Center
-ZEBAR features a premium, cyberpunk-themed dashboard built with **React**, **Tailwind CSS v4**, and **Framer Motion**.
+LPPP Bot features a premium, cyberpunk-themed dashboard built with **React**, **Tailwind CSS v4**, and **Framer Motion**.
 
 - **Real-time Terminal**: Live log stream of scanner activity and transaction status.
 - **Dynamic Configuration**: Tune scan parameters (buy size, thresholds) on the fly without restarts.

@@ -1,4 +1,4 @@
-# Technical Specification: ZEBAR Ecosystem Sweeper & Liquidity Optimization Engine
+# Technical Specification: LPPP Bot Ecosystem Sweeper & Liquidity Optimization Engine
 **Date:** February 8, 2026  
 **Version:** 2.1.0-PRO  
 **Document Status:** Final Delivery  
@@ -6,7 +6,7 @@
 ---
 
 ## 1. Executive Summary
-The ZEBAR Engine is a state-of-the-art Solana-native algorithmic trading and liquidity provisioning (LP) platform. Designed for professional-grade market interaction, ZEBAR utilizes decentralized liquidity market makers (Meteora DLMM/CP-AMM) to execute a dual-phase strategy: high-frequency ecosystem "sweeping" and yield-optimized liquidity initialization. 
+The LPPP Bot Engine is a state-of-the-art Solana-native algorithmic trading and liquidity provisioning (LP) platform. Designed for professional-grade market interaction, LPPP Bot utilizes decentralized liquidity market makers (Meteora DLMM/CP-AMM) to execute a dual-phase strategy: high-frequency ecosystem "sweeping" and yield-optimized liquidity initialization. 
 
 The platform is engineered to minimize slippage, eliminate front-running risk via MEV-protected bundles, and maximize LP revenue through a customizable 2.0% fee architecture.
 

@@ -1,7 +1,7 @@
-# PRD: ZEBAR – Advanced Market Sweeper & Auto-LP Engine
+# PRD: LPPP Bot – Advanced Market Sweeper & Auto-LP Engine
 
 ## 1. Project Overview
-**ZEBAR** is a high-performance Solana trading bot designed to bridge the gap between aggressive market sweeping and strategic liquidity provisioning. It automates the lifecycle of a high-growth token play: from ecosystem-wide detection to optimal entry, and finally, seeding a high-yield **2% Fee** liquidity pool on Meteora CP-AMM.
+**LPPP Bot** is a high-performance Solana trading bot designed to bridge the gap between aggressive market sweeping and strategic liquidity provisioning. It automates the lifecycle of a high-growth token play: from ecosystem-wide detection to optimal entry, and finally, seeding a high-yield **2% Fee** liquidity pool on Meteora CP-AMM.
 
 ---
 

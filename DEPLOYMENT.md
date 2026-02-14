@@ -1,6 +1,6 @@
-# ZEBAR Unified Deployment Guide (Railway) 🚀
+# LPPP Bot Unified Deployment Guide (Railway) 🚀
 
-You can now host **both** the ZEBAR Bot and the Command Center on a single Railway service. This is cheaper, easier to manage, and more stable.
+You can now host **both** the LPPP Bot and the Command Center on a single Railway service. This is cheaper, easier to manage, and more stable.
 
 ## 1. Prepare your Repository
 Ensure your latest code is pushed to GitHub. I have already updated the project to:
@@ -12,7 +12,7 @@ Ensure your latest code is pushed to GitHub. I have already updated the project 
 1.  **Create a New Project**: 
     - Go to [Railway.app](https://railway.app/).
     - Click **New Project** > **Deploy from GitHub repo**.
-    - Select your `zebar` repository.
+    - Select your `lppp-bot` repository.
 2.  **Add Environment Variables**:
     In the Railway dashboard, go to the **Variables** tab and add your secure credentials:
     - `RPC_URL`: Your Solana RPC.
@@ -24,7 +24,7 @@ Ensure your latest code is pushed to GitHub. I have already updated the project 
     - This will be the only URL you need for both the Dashboard and the Bot!
 
 ## 3. How to Access
-- **Dashboard**: Visit the URL Railway gave you (e.g., `https://zebar-production.up.railway.app`).
+- **Dashboard**: Visit the URL Railway gave you (e.g., `https://lppp-bot.up.railway.app`).
 - **Bot Control**: Everything is already linked. Just click **INITIALIZE SYSTEM** in the dashboard.
 
 ---

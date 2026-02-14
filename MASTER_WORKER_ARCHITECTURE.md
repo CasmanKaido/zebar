@@ -1,6 +1,6 @@
-# ZEBAR Master/Worker Architecture (Non-Custodial Sniper)
+# LPPP Bot Master/Worker Architecture (Non-Custodial Sniper)
 
-This document outlines the architecture for integrating **WalletConnect** into the ZEBAR bot while maintaining the speed required for sniping and removing the "approval bottleneck."
+This document outlines the architecture for integrating **WalletConnect** into the LPPP Bot while maintaining the speed required for sniping and removing the "approval bottleneck."
 
 ---
 
@@ -25,7 +25,7 @@ Instead of the bot acting as a "Wallet Viewer" that needs a signature for every 
 ## 2. Interactive Workflow
 
 ### **Phase A: Onboarding**
-1. User connects their **Master Wallet** via the ZEBAR Dashboard (WalletConnect).
+1. User connects their **Master Wallet** via the LPPP Bot Dashboard (WalletConnect).
 2. The Dashboard displays:
    - **Master Balance:** (e.g., 50.5 SOL)
    - **Worker Balance:** (e.g., 0.0 SOL)
