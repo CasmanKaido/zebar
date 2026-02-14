@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import { createServer } from "http";
 import cors from "cors";
@@ -5,7 +8,7 @@ import path from "path";
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { GeckoService } from "./gecko-service";
-import { POOL_DATA_FILE, SOL_MINT, LPPP_MINT, BONK_MINT } from "./config";
+import { SOL_MINT, LPPP_MINT, BONK_MINT } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 
 const app = express();
@@ -21,12 +24,16 @@ if (!API_SECRET) {
 }
 
 app.use("/api", (req, res, next) => {
+    // console.log(`[API] ${req.method} ${req.path}`);
+
     // Skip auth for webhook endpoints (they use their own auth)
     if (req.path.startsWith("/webhooks")) return next();
 
     // PUBLIC ENDPOINTS: Allow access without API Key
     const publicEndpoints = ["/status", "/price", "/portfolio", "/wallet"];
-    if (publicEndpoints.includes(req.path)) return next();
+    // Strip trailing slash if present for robustness
+    const cleanPath = req.path.replace(/\/$/, "");
+    if (publicEndpoints.includes(cleanPath)) return next();
 
     // Skip auth if no API_SECRET is configured (backward compatible)
     if (!API_SECRET) return next();
@@ -127,14 +134,14 @@ app.get("/api/price", async (req, res) => {
 
 // Portfolio Endpoint (SOL/LPPP Balances)
 app.get("/api/portfolio", async (req, res) => {
-    const portfolio = await botManager.getPortfolio(); // Use correct method
-    res.json(portfolio);
+    const balance = await botManager.getWalletBalance(); // Corred method for UI widget
+    res.json(balance);
 });
 
 // Alias for client compatibility (Issue 44)
 app.get("/api/wallet", async (req, res) => {
-    const portfolio = await botManager.getPortfolio();
-    res.json(portfolio);
+    const balance = await botManager.getWalletBalance();
+    res.json(balance);
 });
 
 // Liquidity Management Endpoints
