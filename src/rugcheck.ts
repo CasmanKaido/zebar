@@ -100,138 +100,136 @@ export class OnChainSafetyChecker {
         try {
             let mintInfo;
             try {
-                let mintInfo;
-                try {
-                    mintInfo = await this.rpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
-                } catch {
-                    mintInfo = await this.rpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
-                }
+                mintInfo = await this.rpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
+            } catch {
+                mintInfo = await this.rpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
+            }
 
-                if (mintInfo.mintAuthority !== null) {
-                    result.safe = false;
-                    result.reason = "Mint Authority is ENABLED — dev can print unlimited tokens";
-                    result.checks.mintAuthority = "enabled";
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "error");
-                    return result;
-                }
-                result.checks.mintAuthority = "disabled";
-                SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
-
-                // ═══ 2. Freeze Authority Check ═══
-                if (mintInfo.freezeAuthority !== null) {
-                    result.safe = false;
-                    result.reason = "Freeze Authority is ENABLED — dev can freeze your tokens";
-                    result.checks.freezeAuthority = "enabled";
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED`, "error");
-                    return result;
-                }
-                result.checks.freezeAuthority = "disabled";
-                SocketManager.emitLog(`[SAFETY] ✅ Freeze Authority disabled`, "success");
-            } catch (err: any) {
-                console.warn(`[SAFETY] Failed to fetch mint info: ${err.message}`);
+            if (mintInfo.mintAuthority !== null) {
                 result.safe = false;
-                result.reason = "Could not verify mint info (defaulting to unsafe)";
+                result.reason = "Mint Authority is ENABLED — dev can print unlimited tokens";
+                result.checks.mintAuthority = "enabled";
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "error");
+                return result;
+            }
+            result.checks.mintAuthority = "disabled";
+            SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
+
+            // ═══ 2. Freeze Authority Check ═══
+            if (mintInfo.freezeAuthority !== null) {
+                result.safe = false;
+                result.reason = "Freeze Authority is ENABLED — dev can freeze your tokens";
+                result.checks.freezeAuthority = "enabled";
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED`, "error");
+                return result;
+            }
+            result.checks.freezeAuthority = "disabled";
+            SocketManager.emitLog(`[SAFETY] ✅ Freeze Authority disabled`, "success");
+        } catch (err: any) {
+            console.warn(`[SAFETY] Failed to fetch mint info: ${err.message}`);
+            result.safe = false;
+            result.reason = "Could not verify mint info (defaulting to unsafe)";
+            return result;
+        }
+
+        // ═══ 3. Liquidity Lock Check ═══
+        try {
+            // Priority: Check LP Mint if pairAddress is provided
+            let lpLocked = false;
+            if (pairAddress) {
+                try {
+                    lpLocked = await this.checkLpLock(connection, pairAddress);
+                } catch (lpErr) {
+                    console.warn(`[SAFETY] Dedicated LP lock check failed: ${lpErr}`);
+                }
+            }
+
+            if (lpLocked) {
+                result.checks.liquidityLocked = "locked";
+                SocketManager.emitLog(`[SAFETY] ✅ LP Tokens verified LOCKED/BURNED`, "success");
                 return result;
             }
 
-            // ═══ 3. Liquidity Lock Check ═══
-            try {
-                // Priority: Check LP Mint if pairAddress is provided
-                let lpLocked = false;
-                if (pairAddress) {
-                    try {
-                        lpLocked = await this.checkLpLock(connection, pairAddress);
-                    } catch (lpErr) {
-                        console.warn(`[SAFETY] Dedicated LP lock check failed: ${lpErr}`);
+            // Fallback: Check largest accounts of the token itself (Heuristic)
+            const largestAccounts = await this.rpc(
+                () => connection.getTokenLargestAccounts(mint),
+                "largestAccounts"
+            );
+            const topAccounts = largestAccounts.value.slice(0, 20);
+
+            if (topAccounts.length > 0) {
+                const accountInfos = await this.rpc(
+                    () => connection.getMultipleAccountsInfo(topAccounts.map(a => a.address)),
+                    "accountInfos"
+                );
+
+                let lockedAmount = 0;
+                let totalSupplyChecked = 0;
+                let devConcentration = 0;
+
+                const balanceCounts = new Map<number, number>();
+                let maxDuplicates = 0;
+
+                for (let i = 0; i < topAccounts.length; i++) {
+                    const account = topAccounts[i];
+                    const info = accountInfos[i];
+                    const amount = Number(account.uiAmount || 0);
+
+                    if (amount > 0) {
+                        const count = (balanceCounts.get(amount) || 0) + 1;
+                        balanceCounts.set(amount, count);
+                        maxDuplicates = Math.max(maxDuplicates, count);
                     }
+
+                    if (info?.owner) {
+                        const ownerStr = info.owner.toBase58();
+                        if (KNOWN_LOCKERS.has(ownerStr) || account.address.toBase58() === BURN_ADDRESS) {
+                            lockedAmount += amount;
+                        } else {
+                            devConcentration += amount;
+                        }
+                    }
+                    totalSupplyChecked += amount;
                 }
 
-                if (lpLocked) {
-                    result.checks.liquidityLocked = "locked";
-                    SocketManager.emitLog(`[SAFETY] ✅ LP Tokens verified LOCKED/BURNED`, "success");
+                if (maxDuplicates >= 3) {
+                    result.safe = false;
+                    result.reason = `Bundle Detected! ${maxDuplicates} wallets have identical balances.`;
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Bundle Detected (${maxDuplicates} identical wallets)`, "error");
                     return result;
                 }
 
-                // Fallback: Check largest accounts of the token itself (Heuristic)
-                const largestAccounts = await this.rpc(
-                    () => connection.getTokenLargestAccounts(mint),
-                    "largestAccounts"
-                );
-                const topAccounts = largestAccounts.value.slice(0, 20);
+                const mintInfo = await this.rpc(() => getMint(connection, mint), "getMint-Supply");
+                const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
+                const divisor = totalSupply > 0 ? totalSupply : totalSupplyChecked;
+                const concentrationRatio = devConcentration / divisor;
 
-                if (topAccounts.length > 0) {
-                    const accountInfos = await this.rpc(
-                        () => connection.getMultipleAccountsInfo(topAccounts.map(a => a.address)),
-                        "accountInfos"
-                    );
-
-                    let lockedAmount = 0;
-                    let totalSupplyChecked = 0;
-                    let devConcentration = 0;
-
-                    const balanceCounts = new Map<number, number>();
-                    let maxDuplicates = 0;
-
-                    for (let i = 0; i < topAccounts.length; i++) {
-                        const account = topAccounts[i];
-                        const info = accountInfos[i];
-                        const amount = Number(account.uiAmount || 0);
-
-                        if (amount > 0) {
-                            const count = (balanceCounts.get(amount) || 0) + 1;
-                            balanceCounts.set(amount, count);
-                            maxDuplicates = Math.max(maxDuplicates, count);
-                        }
-
-                        if (info?.owner) {
-                            const ownerStr = info.owner.toBase58();
-                            if (KNOWN_LOCKERS.has(ownerStr) || account.address.toBase58() === BURN_ADDRESS) {
-                                lockedAmount += amount;
-                            } else {
-                                devConcentration += amount;
-                            }
-                        }
-                        totalSupplyChecked += amount;
-                    }
-
-                    if (maxDuplicates >= 3) {
-                        result.safe = false;
-                        result.reason = `Bundle Detected! ${maxDuplicates} wallets have identical balances.`;
-                        SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Bundle Detected (${maxDuplicates} identical wallets)`, "error");
-                        return result;
-                    }
-
-                    const mintInfo = await this.rpc(() => getMint(connection, mint), "getMint-Supply");
-                    const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
-                    const divisor = totalSupply > 0 ? totalSupply : totalSupplyChecked;
-                    const concentrationRatio = devConcentration / divisor;
-
-                    if (concentrationRatio > 0.8 && devConcentration > 0) {
-                        result.safe = false;
-                        result.reason = `Extreme supply concentration detected (${(concentrationRatio * 100).toFixed(1)}% of total supply)`;
-                        SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... High holder concentration!`, "error");
-                        return result;
-                    }
-
-                    if (lockedAmount > 0) {
-                        result.checks.liquidityLocked = "locked";
-                        SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned (token level)`, "success");
-                    } else {
-                        result.checks.liquidityLocked = "unlocked";
-                        // BLOCK UNLOCKED LIQUIDITY
-                        result.safe = false;
-                        result.reason = "No locked liquidity detected (verified via lpMint and token holders)";
-                        SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... NO LOCKED LP DETECTED`, "error");
-                        return result;
-                    }
+                if (concentrationRatio > 0.8 && devConcentration > 0) {
+                    result.safe = false;
+                    result.reason = `Extreme supply concentration detected (${(concentrationRatio * 100).toFixed(1)}% of total supply)`;
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... High holder concentration!`, "error");
+                    return result;
                 }
-            } catch (err: any) {
-                console.warn(`[SAFETY] LP lock check failed: ${err.message}`);
-                result.checks.liquidityLocked = "unknown";
-            }
 
-            return result;
+                if (lockedAmount > 0) {
+                    result.checks.liquidityLocked = "locked";
+                    SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned (token level)`, "success");
+                } else {
+                    result.checks.liquidityLocked = "unlocked";
+                    // BLOCK UNLOCKED LIQUIDITY
+                    result.safe = false;
+                    result.reason = "No locked liquidity detected (verified via lpMint and token holders)";
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... NO LOCKED LP DETECTED`, "error");
+                    return result;
+                }
+            }
+        } catch (err: any) {
+            console.warn(`[SAFETY] LP lock check failed: ${err.message}`);
+            result.checks.liquidityLocked = "unknown";
         }
+
+        return result;
+    }
 
     /**
      * Checks if the LP tokens for a given pool are locked or burned.
