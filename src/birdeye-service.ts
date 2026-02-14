@@ -4,7 +4,7 @@ import { ScanResult, ScannerCriteria } from "./scanner";
 import { BIRDEYE_API_KEY } from "./config";
 
 const BIRDEYE_BASE_URL = "https://public-api.birdeye.so/defi/v3/token/list/scroll";
-const BIRDEYE_NEW_LISTING_URL = "https://public-api.birdeye.so/defi/v3/token/new_listing";
+const BIRDEYE_NEW_LISTING_URL = "https://public-api.birdeye.so/defi/v2/tokens/new_listing";
 
 export class BirdeyeService {
     /**
@@ -102,7 +102,7 @@ export class BirdeyeService {
                 await new Promise(r => setTimeout(r, REQUEST_DELAY));
             }
         } catch (error: any) {
-            console.warn(`[BIRDEYE] Fetch failed: ${error.message}`);
+            console.warn(`[BIRDEYE] Fetch failed: ${error.message} - ${JSON.stringify(error.response?.data || {})}`);
         }
 
         return scanResults;
@@ -151,7 +151,7 @@ export class BirdeyeService {
             }
 
         } catch (error: any) {
-            console.warn(`[BIRDEYE] New Listing Fetch failed: ${error.message}`);
+            console.warn(`[BIRDEYE] New Listing Fetch failed: ${error.message} - ${JSON.stringify(error.response?.data || {})}`);
         }
         return scanResults;
     }
