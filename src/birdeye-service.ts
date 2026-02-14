@@ -133,7 +133,7 @@ export class BirdeyeService {
                 },
                 params: {
                     limit,
-                    meme_platform_enabled: true // Explicitly enable meme platforms
+                    meme_platform_enabled: false // Explicitly disable meme platforms (Pump.fun, etc.)
                 },
                 timeout: 5000
             });

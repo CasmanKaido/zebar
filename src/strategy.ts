@@ -1,7 +1,7 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError } from "@solana/web3.js";
 import { wallet, connection, JUPITER_API_KEY, DRY_RUN, LPPP_MINT, SOL_MINT, USDC_MINT } from "./config";
 import bs58 from "bs58";
-import { PumpFunHandler } from "./pumpfun";
+
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
 import BN from "bn.js";
 import { deriveTokenVaultAddress, derivePositionAddress } from "@meteora-ag/cp-amm-sdk";
@@ -111,55 +111,6 @@ export class StrategyManager {
         try {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
             const slippageBps = Math.floor(slippagePercent * 100);
-
-            // ═══ SPECIAL CASE: Pump.fun Bonding Curve ═══
-            // If the token is on Pump.fun, we use the direct bonding curve buy instruction.
-            const pumpState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
-            if (pumpState) {
-                console.log(`[PUMP.FUN] Token detected on Bonding Curve! Executing direct buy...`);
-
-                // Issue Fix: Detect Token vs Token-2022 to avoid IncorrectProgramId
-                const mintAcc = await this.connection.getAccountInfo(mint);
-                const tokenProgram = mintAcc ? mintAcc.owner : TOKEN_PROGRAM_ID;
-                if (tokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {
-                    console.log(`[PUMP.FUN] Token-2022 detected for Pump.fun token. Adapting instructions.`);
-                }
-
-                const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(pumpState, amountSol, slippageBps);
-
-                const { instruction, createAtaInstruction, associatedUser } = await PumpFunHandler.createBuyInstruction(
-                    this.wallet.publicKey,
-                    mint,
-                    new BN(amountTokens.toString()),
-                    new BN(maxSolCost.toString()),
-                    tokenProgram
-                );
-
-                const tx = new Transaction();
-
-                // SAFEFY FIX: Explicitly check if ATA exists to avoid "0xbbd" / "InitializeAccount3" errors 
-                // on Token-2022 which sometimes fail Idempotent creation if account/program mismatch.
-                const ataExists = await this.connection.getAccountInfo(associatedUser);
-                if (!ataExists && createAtaInstruction) {
-                    tx.add(createAtaInstruction);
-                }
-
-                tx.add(instruction);
-
-                // Add priority fee
-                const fee = await this.getPriorityFee();
-                tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: fee }));
-
-                const sig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], { commitment: "confirmed" });
-                console.log(`[PUMP.FUN] Buy Success! Signature: ${sig}`);
-
-                const decimals = await this.getMintDecimals(mint);
-                return {
-                    success: true,
-                    amount: BigInt(amountTokens.toString()),
-                    uiAmount: Number(amountTokens) / (10 ** decimals)
-                };
-            }
 
             // 0. Pre-Swap Balance Check (To calculate actual received amount)
             const ata = await getAssociatedTokenAddress(mint, this.wallet.publicKey);
@@ -867,45 +818,7 @@ export class StrategyManager {
         }
     }
 
-    /**
-     * Fallback: Swap on Pump.fun Bonding Curve
-     * Used when the token is NOT on Raydium or Meteora yet.
-     */
-    async swapPumpFun(mint: PublicKey, amountSol: number, slippagePercent: number = 25): Promise<{ success: boolean; amount: bigint; error?: string }> {
-        const { DRY_RUN } = require("./config");
-        console.log(`[STRATEGY] Initializing Pump.fun Swap for ${mint.toBase58()}... ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
-        if (DRY_RUN) {
-            console.log(`[DRY RUN] Simulating Pump.fun Swap...`);
-            const simulatedAmount = BigInt(Math.floor((amountSol * 1e9) * 100));
-            return { success: true, amount: simulatedAmount };
-        }
-        try {
-            const curveState = await PumpFunHandler.getBondingCurveState(this.connection, mint);
-            if (!curveState) return { success: false, amount: BigInt(0), error: "Bonding Curve not found" };
-
-            const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(curveState, amountSol, slippagePercent * 100);
-            if (amountTokens === BigInt(0)) return { success: false, amount: BigInt(0), error: "Amount 0" };
-
-            const { instruction, associatedUser, createAtaInstruction } = await PumpFunHandler.createBuyInstruction(
-                this.wallet.publicKey,
-                mint,
-                new BN(amountTokens.toString()),
-                new BN(maxSolCost.toString())
-            );
-
-            const transaction = new Transaction();
-            if (createAtaInstruction) transaction.add(createAtaInstruction);
-            transaction.add(instruction);
-
-            const txid = await sendAndConfirmTransaction(this.connection, transaction, [this.wallet], { skipPreflight: true, commitment: "confirmed", maxRetries: 3 });
-            console.log(`[PUMP] Swap Success! Tx: https://solscan.io/tx/${txid}`);
-            return { success: true, amount: BigInt(amountTokens.toString()) };
-        } catch (error: any) {
-            console.error(`[PUMP] Swap Failed:`, error);
-            return { success: false, amount: BigInt(0), error: error.message };
-        }
-    }
 
     /**
      * Checks if a Meteora DAMM V2 pool already exists for a given token pair.

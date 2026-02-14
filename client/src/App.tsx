@@ -258,6 +258,7 @@ function App() {
         defaultValue?: string;
         onConfirm?: (val?: string) => void;
         onCancel?: () => void;
+        secondaryCalculation?: (val: string) => React.ReactNode;
     }>({
         isOpen: false,
         title: '',
@@ -497,6 +498,21 @@ function App() {
                         type: 'error'
                     });
                 }
+            },
+            secondaryCalculation: (val: string) => {
+                const amount = parseFloat(val);
+                if (isNaN(amount) || amount <= 0 || !solPrice || !lpppPrice || lpppPrice === 0) return null;
+
+                // Calculate LPPP equivalent based on Ratio (SOL Value / LPPP Price)
+                const solValue = amount * solPrice;
+                const lpppEquivalent = solValue / lpppPrice;
+
+                return (
+                    <div className="text-[10px] text-emerald-400 font-mono flex items-center gap-1.5 bg-emerald-950/30 px-2 py-1 rounded border border-emerald-500/20">
+                        <span className="font-bold">≈ {lpppEquivalent.toLocaleString(undefined, { maximumFractionDigits: 2 })} LPPP</span>
+                        <span className="text-emerald-500/60 italic">(Auto-Matched)</span>
+                    </div>
+                );
             }
         });
     };

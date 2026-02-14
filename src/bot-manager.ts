@@ -27,7 +27,6 @@ export interface BotSettings {
     volume24h: { min: number; max: number };
     liquidity: { min: number; max: number };
     mcap: { min: number; max: number };
-    pumpFunSupport: boolean;
     minBondingCurveProgress: number;
 }
 
@@ -55,7 +54,6 @@ export class BotManager {
         volume24h: { min: 1000000, max: 0 },
         liquidity: { min: 60000, max: 0 },
         mcap: { min: 60000, max: 0 },
-        pumpFunSupport: true,
         minBondingCurveProgress: 80
     };
 
@@ -426,7 +424,6 @@ export class BotManager {
             volume24h: this.settings.volume24h,
             liquidity: this.settings.liquidity,
             mcap: this.settings.mcap,
-            pumpFunSupport: this.settings.pumpFunSupport,
             minBondingCurveProgress: this.settings.minBondingCurveProgress
         };
 

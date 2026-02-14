@@ -13,6 +13,7 @@ interface ModalProps {
     showInput?: boolean;
     inputPlaceholder?: string;
     defaultValue?: string;
+    secondaryCalculation?: (val: string) => React.ReactNode;
 }
 
 export const Modal = ({
@@ -25,7 +26,8 @@ export const Modal = ({
     type = 'info',
     showInput = false,
     inputPlaceholder = "Enter value...",
-    defaultValue = ""
+    defaultValue = "",
+    ...props
 }: ModalProps) => {
     const [localInput, setLocalInput] = useState(defaultValue);
 
@@ -113,6 +115,12 @@ export const Modal = ({
                                     className="w-full bg-input border border-border text-foreground px-4 py-3 rounded-xl font-mono text-sm focus:outline-none focus:border-primary/50 transition-colors"
                                     autoFocus
                                 />
+                                {/* Dynamic Secondary Calculation Display */}
+                                {props.secondaryCalculation && (
+                                    <div className="mt-2 px-1">
+                                        {props.secondaryCalculation(localInput)}
+                                    </div>
+                                )}
                             </div>
                         )}
 

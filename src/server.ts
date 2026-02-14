@@ -8,7 +8,7 @@ import path from "path";
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { GeckoService } from "./gecko-service";
-import { SOL_MINT, LPPP_MINT, BONK_MINT } from "./config";
+import { SOL_MINT, LPPP_MINT } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 
 const app = express();
@@ -84,7 +84,7 @@ app.post("/api/stop", (req, res) => {
 
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
 // Price cache to prevent rate limiting (15s TTL)
-let priceCache: { sol: number; lppp: number; bonk: number } | null = null;
+let priceCache: { sol: number; lppp: number } | null = null;
 let priceCacheTime = 0;
 const PRICE_CACHE_TTL = 15000;
 
@@ -92,19 +92,17 @@ app.get("/api/price", async (req, res) => {
     if (priceCache && Date.now() - priceCacheTime < PRICE_CACHE_TTL) {
         return res.json(priceCache);
     }
-    const prices = { sol: 0, lppp: 0, bonk: 0 };
+    const prices = { sol: 0, lppp: 0 };
 
     try {
         // 1. Fetch Prices via Jupiter Service
         const jupPrices = await JupiterPriceService.getPrices([
             SOL_MINT.toBase58(),
-            LPPP_MINT.toBase58(),
-            BONK_MINT.toBase58()
+            LPPP_MINT.toBase58()
         ]);
 
         prices.sol = jupPrices.get(SOL_MINT.toBase58()) || 0;
         prices.lppp = jupPrices.get(LPPP_MINT.toBase58()) || 0;
-        prices.bonk = jupPrices.get(BONK_MINT.toBase58()) || 0;
 
         // 2. Fallbacks
         if (!prices.sol) {
@@ -193,7 +191,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 httpServer.listen(PORT, () => {
     console.log(`LPPP BOT Unified Server running on port ${PORT}`);
-    console.log(`LPPP BOT Version: v1.5.8 (Pump.fun Fix + Birdeye Sync)`);
+    console.log(`LPPP BOT Version: v1.5.9 (Birdeye Sync + Optimized)`);
     console.log(`[CONFIG] API_SECRET Status: ${API_SECRET ? "CONFIGURED (Locked)" : "UNSET (Public Access Mode)"}`);
     console.log(`[CONFIG] RPC_URL: ${process.env.RPC_URL ? "OK" : "MISSING"}`);
     const birdKey = process.env.BIRDEYE_API_KEY;
