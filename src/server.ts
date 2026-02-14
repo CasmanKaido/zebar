@@ -89,9 +89,12 @@ let priceCacheTime = 0;
 const PRICE_CACHE_TTL = 15000;
 
 app.get("/api/price", async (req, res) => {
+    console.log(`[DEBUG] Fetching Prices...`);
     if (priceCache && Date.now() - priceCacheTime < PRICE_CACHE_TTL) {
+        console.log(`[DEBUG] Serving Prices from Cache: SOL=${priceCache.sol}, LPPP=${priceCache.lppp}`);
         return res.json(priceCache);
     }
+
     const prices = { sol: 0, lppp: 0 };
 
     try {
@@ -110,7 +113,10 @@ app.get("/api/price", async (req, res) => {
                 const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
                 const solData = await solRes.json();
                 if (solData?.solana?.usd) prices.sol = solData.solana.usd;
-            } catch (e) { console.error("SOL Price CG Fallback failed"); }
+                console.log(`[DEBUG] CoinGecko SOL Fallback: ${prices.sol}`);
+            } catch (e) {
+                console.error("SOL Price CG Fallback failed");
+            }
         }
 
         if (!prices.lppp) {
@@ -118,8 +124,13 @@ app.get("/api/price", async (req, res) => {
                 const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + LPPP_MINT.toBase58());
                 const dexData = await dexRes.json();
                 if (dexData?.pairs?.[0]?.priceUsd) prices.lppp = parseFloat(dexData.pairs[0].priceUsd);
-            } catch (e) { console.error("LPPP Price DexScreener Fallback failed"); }
+                console.log(`[DEBUG] DexScreener LPPP Fallback: ${prices.lppp}`);
+            } catch (e) {
+                console.error("LPPP Price DexScreener Fallback failed", e);
+            }
         }
+
+        console.log(`[DEBUG] Final Prices: SOL=${prices.sol}, LPPP=${prices.lppp}`);
 
         priceCache = prices;
         priceCacheTime = Date.now();
