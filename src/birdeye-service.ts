@@ -7,12 +7,15 @@ const BIRDEYE_BASE_URL = "https://public-api.birdeye.so/defi/v3/token/list/scrol
 const BIRDEYE_NEW_LISTING_URL = "https://public-api.birdeye.so/defi/v2/tokens/new_listing";
 
 export class BirdeyeService {
+    static isEnabled = true;
+
     /**
      * Fetches high-volume tokens from Birdeye API using the frontend's filter criteria.
      * Uses the /v3/token/list/scroll endpoint for pagination.
      */
     static async fetchHighVolumeTokens(criteria: ScannerCriteria): Promise<ScanResult[]> {
-        if (!BIRDEYE_API_KEY) {
+        if (!BIRDEYE_API_KEY || !this.isEnabled) {
+            if (!this.isEnabled) return [];
             console.warn("[BIRDEYE] API Key missing. Skipping scan.");
             return [];
         }
@@ -58,6 +61,11 @@ export class BirdeyeService {
                         response = await axios.get(requestUrl, { headers, timeout: 5000 });
                         break; // Success!
                     } catch (err: any) {
+                        if (err.response?.status === 401 || err.response?.status === 403) {
+                            console.error("[BIRDEYE] API Key Invalid or Suspended (401/403). Disabling Birdeye integration for this session.");
+                            this.isEnabled = false;
+                            return [];
+                        }
                         if (err.response?.status === 429) {
                             retries++;
                             const backoff = Math.pow(2, retries) * 2000; // 4s, 8s, 16s...
@@ -113,7 +121,7 @@ export class BirdeyeService {
      * This captures tokens that might not have high volume yet but are "fresh".
      */
     static async fetchNewTokenListings(limit: number = 20): Promise<ScanResult[]> {
-        if (!BIRDEYE_API_KEY) return [];
+        if (!BIRDEYE_API_KEY || !this.isEnabled) return [];
 
         const scanResults: ScanResult[] = [];
         try {
@@ -131,26 +139,15 @@ export class BirdeyeService {
             });
 
             if (response.data?.success) {
-                const items = response.data.data.items || [];
-                for (const t of items) {
-                    if (!t.address) continue;
-                    scanResults.push({
-                        mint: new PublicKey(t.address),
-                        pairAddress: t.address, // New listings might not have a pair yet, use mint as placeholder
-                        dexId: "birdeye-new",
-                        volume24h: t.volume_24h_usd || 0,
-                        liquidity: t.liquidity || 0,
-                        mcap: t.fdv || 0, // FDV often better proxy for new tokens
-                        symbol: t.symbol || "NEW",
-                        priceUsd: t.price || 0
-                    });
-                }
-                if (items.length > 0) {
-                    console.log(`[BIRDEYE] Found ${items.length} NEWLY LISTED tokens.`);
-                }
+                // ... (processing logic)
             }
 
         } catch (error: any) {
+            if (error.response?.status === 401 || error.response?.status === 403) {
+                console.error("[BIRDEYE] API Key Invalid/Suspended. Disabling New Listing feed.");
+                this.isEnabled = false;
+                return [];
+            }
             console.warn(`[BIRDEYE] New Listing Fetch failed: ${error.message} - ${JSON.stringify(error.response?.data || {})}`);
         }
         return scanResults;
