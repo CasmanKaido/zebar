@@ -196,4 +196,6 @@ httpServer.listen(PORT, () => {
     console.log(`LPPP BOT Version: v1.5.8 (Pump.fun Fix + Birdeye Sync)`);
     console.log(`[CONFIG] API_SECRET Status: ${API_SECRET ? "CONFIGURED (Locked)" : "UNSET (Public Access Mode)"}`);
     console.log(`[CONFIG] RPC_URL: ${process.env.RPC_URL ? "OK" : "MISSING"}`);
+    const birdKey = process.env.BIRDEYE_API_KEY;
+    console.log(`[CONFIG] BIRDEYE_API_KEY: ${birdKey ? birdKey.substring(0, 4) + "****" : "MISSING/UNSET"}`);
 });
