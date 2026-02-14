@@ -235,7 +235,9 @@ function App() {
     const [minMcap, setMinMcap] = useState(60000);
     const [maxMcap, setMaxMcap] = useState(0);
 
-
+    const [pumpFunSupport, setPumpFunSupport] = useState(true);
+    const [minBondingCurve, setMinBondingCurve] = useState(80);
+    const [bonkSupport, setBonkSupport] = useState(true);
 
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
@@ -256,7 +258,6 @@ function App() {
         defaultValue?: string;
         onConfirm?: (val?: string) => void;
         onCancel?: () => void;
-        secondaryCalculation?: (val: string, solPrice?: number | null, lpppPrice?: number | null) => React.ReactNode;
     }>({
         isOpen: false,
         title: '',
@@ -397,7 +398,9 @@ function App() {
                     volume24h: { min: minVolume24h, max: maxVolume24h },
                     liquidity: { min: minLiquidity, max: maxLiquidity },
                     mcap: { min: minMcap, max: maxMcap },
-
+                    pumpFunSupport,
+                    minBondingCurveProgress: minBondingCurve,
+                    bonkSupport
                 })
             });
 
@@ -494,28 +497,6 @@ function App() {
                         type: 'error'
                     });
                 }
-            },
-            secondaryCalculation: (val: string, sPrice?: number | null, lPrice?: number | null) => {
-                const amount = parseFloat(val);
-                const s = sPrice || solPrice;
-                const l = lPrice || lpppPrice;
-
-                console.log(`[DEBUG UI] Calc Start: val=${val}, amount=${amount}, solPrice=${s}, lpppPrice=${l}`);
-                if (isNaN(amount) || amount <= 0 || !s || !l || l === 0) {
-                    console.log(`[DEBUG UI] Calc Aborted: missing data or invalid amount`);
-                    return null;
-                }
-
-                // Calculate LPPP equivalent based on Ratio (SOL Value / LPPP Price)
-                const solValue = amount * s;
-                const lpppEquivalent = solValue / l;
-
-                return (
-                    <div className="text-[10px] text-emerald-400 font-mono flex items-center gap-1.5 bg-emerald-950/30 px-2 py-1 rounded border border-emerald-500/20">
-                        <span className="font-bold">≈ {lpppEquivalent.toLocaleString(undefined, { maximumFractionDigits: 2 })} LPPP</span>
-                        <span className="text-emerald-500/60 italic">(Auto-Matched)</span>
-                    </div>
-                );
             }
         });
     };
@@ -650,7 +631,7 @@ function App() {
                         </div>
                         <div>
                             <h1 className="text-2xl font-bold glow-text leading-none tracking-wider text-pink-500">LPPP BOT</h1>
-                            <span className="text-[12px] text-muted-foreground block mt-1">Automated Liquidity Provisioning v2.0</span>
+                            <span className="text-[12px] text-muted-foreground block mt-1">Pool Party Liquidity Master</span>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -758,7 +739,47 @@ function App() {
 
                                 <div className="h-[1px] bg-border/40 my-2"></div>
 
+                                {/* Ecosystem Toggles */}
+                                <div className="grid grid-cols-2 gap-4 items-center">
+                                    <div className="flex items-center space-x-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={pumpFunSupport}
+                                            onChange={(e) => setPumpFunSupport(e.target.checked)}
+                                            disabled={running}
+                                            className="w-4 h-4 accent-primary"
+                                        />
+                                        <label className="text-xs font-medium">Pump.fun Integration</label>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={bonkSupport}
+                                            onChange={(e) => setBonkSupport(e.target.checked)}
+                                            disabled={running}
+                                            className="w-4 h-4 accent-primary"
+                                        />
+                                        <label className="text-xs font-medium">BONK Trading</label>
+                                    </div>
+                                </div>
 
+                                {pumpFunSupport && (
+                                    <div className="space-y-1">
+                                        <div className="flex justify-between items-center text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">
+                                            <span>Min Bonding Curve</span>
+                                            <span className="text-primary">{minBondingCurve}%</span>
+                                        </div>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="100"
+                                            value={minBondingCurve}
+                                            onChange={(e) => setMinBondingCurve(parseInt(e.target.value))}
+                                            disabled={running}
+                                            className="w-full h-1 bg-border rounded-lg appearance-none cursor-pointer accent-primary"
+                                        />
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -1032,11 +1053,16 @@ function App() {
             </main>
 
             <Modal
-                {...modalConfig}
+                isOpen={modalConfig.isOpen}
                 onClose={closeModal}
-                solPrice={solPrice}
-                lpppPrice={lpppPrice}
-                secondaryCalculation={modalConfig.secondaryCalculation}
+                title={modalConfig.title}
+                message={modalConfig.message}
+                type={modalConfig.type}
+                showInput={modalConfig.showInput}
+                inputPlaceholder={modalConfig.inputPlaceholder}
+                defaultValue={modalConfig.defaultValue}
+                onConfirm={modalConfig.onConfirm}
+                onCancel={modalConfig.onCancel}
             />
         </div>
     );

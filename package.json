@@ -1,11 +1,12 @@
 {
   "name": "lppp-bot",
-  "version": "1.5.8",
+  "version": "1.0.0",
   "main": "src/index.ts",
   "license": "ISC",
   "scripts": {
     "start": "ts-node src/server.ts",
     "dev": "ts-node src/server.ts",
+    "monitor": "ts-node src/monitor.ts",
     "client": "cd client && npm run dev",
     "build": "cd client && npm install && npm run build && cd .. && tsc",
     "start:prod": "node dist/server.js"

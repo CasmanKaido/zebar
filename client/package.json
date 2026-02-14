@@ -1,7 +1,7 @@
 {
     "name": "lppp-bot-client",
     "private": true,
-    "version": "1.1.0",
+    "version": "1.0.1",
     "description": "ZEBAR Cyberpunk Dashboard",
     "type": "module",
     "scripts": {
