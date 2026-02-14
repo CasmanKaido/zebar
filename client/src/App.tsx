@@ -256,7 +256,7 @@ function App() {
         defaultValue?: string;
         onConfirm?: (val?: string) => void;
         onCancel?: () => void;
-        secondaryCalculation?: (val: string) => React.ReactNode;
+        secondaryCalculation?: (val: string, solPrice?: number | null, lpppPrice?: number | null) => React.ReactNode;
     }>({
         isOpen: false,
         title: '',
@@ -495,13 +495,20 @@ function App() {
                     });
                 }
             },
-            secondaryCalculation: (val: string) => {
+            secondaryCalculation: (val: string, sPrice?: number | null, lPrice?: number | null) => {
                 const amount = parseFloat(val);
-                if (isNaN(amount) || amount <= 0 || !solPrice || !lpppPrice || lpppPrice === 0) return null;
+                const s = sPrice || solPrice;
+                const l = lPrice || lpppPrice;
+
+                console.log(`[DEBUG UI] Calc Start: val=${val}, amount=${amount}, solPrice=${s}, lpppPrice=${l}`);
+                if (isNaN(amount) || amount <= 0 || !s || !l || l === 0) {
+                    console.log(`[DEBUG UI] Calc Aborted: missing data or invalid amount`);
+                    return null;
+                }
 
                 // Calculate LPPP equivalent based on Ratio (SOL Value / LPPP Price)
-                const solValue = amount * solPrice;
-                const lpppEquivalent = solValue / lpppPrice;
+                const solValue = amount * s;
+                const lpppEquivalent = solValue / l;
 
                 return (
                     <div className="text-[10px] text-emerald-400 font-mono flex items-center gap-1.5 bg-emerald-950/30 px-2 py-1 rounded border border-emerald-500/20">
@@ -1025,16 +1032,11 @@ function App() {
             </main>
 
             <Modal
-                isOpen={modalConfig.isOpen}
+                {...modalConfig}
                 onClose={closeModal}
-                title={modalConfig.title}
-                message={modalConfig.message}
-                type={modalConfig.type}
-                showInput={modalConfig.showInput}
-                inputPlaceholder={modalConfig.inputPlaceholder}
-                defaultValue={modalConfig.defaultValue}
-                onConfirm={modalConfig.onConfirm}
-                onCancel={modalConfig.onCancel}
+                solPrice={solPrice}
+                lpppPrice={lpppPrice}
+                secondaryCalculation={modalConfig.secondaryCalculation}
             />
         </div>
     );
