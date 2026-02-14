@@ -127,7 +127,7 @@ export class StrategyManager {
 
                 const { amountTokens, maxSolCost } = PumpFunHandler.calculateBuyAmount(pumpState, amountSol, slippageBps);
 
-                const { instruction, createAtaInstruction } = await PumpFunHandler.createBuyInstruction(
+                const { instruction, createAtaInstruction, associatedUser } = await PumpFunHandler.createBuyInstruction(
                     this.wallet.publicKey,
                     mint,
                     new BN(amountTokens.toString()),
@@ -136,7 +136,14 @@ export class StrategyManager {
                 );
 
                 const tx = new Transaction();
-                if (createAtaInstruction) tx.add(createAtaInstruction);
+
+                // SAFEFY FIX: Explicitly check if ATA exists to avoid "0xbbd" / "InitializeAccount3" errors 
+                // on Token-2022 which sometimes fail Idempotent creation if account/program mismatch.
+                const ataExists = await this.connection.getAccountInfo(associatedUser);
+                if (!ataExists && createAtaInstruction) {
+                    tx.add(createAtaInstruction);
+                }
+
                 tx.add(instruction);
 
                 // Add priority fee
