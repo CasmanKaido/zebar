@@ -235,10 +235,6 @@ function App() {
     const [minMcap, setMinMcap] = useState(60000);
     const [maxMcap, setMaxMcap] = useState(0);
 
-    const [pumpFunSupport, setPumpFunSupport] = useState(true);
-    const [minBondingCurve, setMinBondingCurve] = useState(80);
-    const [bonkSupport, setBonkSupport] = useState(true);
-
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
@@ -397,10 +393,7 @@ function App() {
                     volume1h: { min: minVolume, max: maxVolume },
                     volume24h: { min: minVolume24h, max: maxVolume24h },
                     liquidity: { min: minLiquidity, max: maxLiquidity },
-                    mcap: { min: minMcap, max: maxMcap },
-                    pumpFunSupport,
-                    minBondingCurveProgress: minBondingCurve,
-                    bonkSupport
+                    mcap: { min: minMcap, max: maxMcap }
                 })
             });
 
@@ -737,49 +730,6 @@ function App() {
                                     <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" subtext="0 = No limit" />
                                 </div>
 
-                                <div className="h-[1px] bg-border/40 my-2"></div>
-
-                                {/* Ecosystem Toggles */}
-                                <div className="grid grid-cols-2 gap-4 items-center">
-                                    <div className="flex items-center space-x-2">
-                                        <input
-                                            type="checkbox"
-                                            checked={pumpFunSupport}
-                                            onChange={(e) => setPumpFunSupport(e.target.checked)}
-                                            disabled={running}
-                                            className="w-4 h-4 accent-primary"
-                                        />
-                                        <label className="text-xs font-medium">Pump.fun Integration</label>
-                                    </div>
-                                    <div className="flex items-center space-x-2">
-                                        <input
-                                            type="checkbox"
-                                            checked={bonkSupport}
-                                            onChange={(e) => setBonkSupport(e.target.checked)}
-                                            disabled={running}
-                                            className="w-4 h-4 accent-primary"
-                                        />
-                                        <label className="text-xs font-medium">BONK Trading</label>
-                                    </div>
-                                </div>
-
-                                {pumpFunSupport && (
-                                    <div className="space-y-1">
-                                        <div className="flex justify-between items-center text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">
-                                            <span>Min Bonding Curve</span>
-                                            <span className="text-primary">{minBondingCurve}%</span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            min="0"
-                                            max="100"
-                                            value={minBondingCurve}
-                                            onChange={(e) => setMinBondingCurve(parseInt(e.target.value))}
-                                            disabled={running}
-                                            className="w-full h-1 bg-border rounded-lg appearance-none cursor-pointer accent-primary"
-                                        />
-                                    </div>
-                                )}
                             </div>
                         </div>
 
