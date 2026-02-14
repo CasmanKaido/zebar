@@ -1640,8 +1640,10 @@ export class StrategyManager {
                             BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
                         // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
+                        // Both deltaA and liquidity (L_user) are scaled by 2^64 in DAMM v2.
+                        // Product is scaled by 2^128. Shift by 128 to get raw units.
                         const deltaA = globalA > checkA ? globalA - checkA : 0n;
-                        const pendingA_Raw = (deltaA * liquidity) >> 64n;
+                        const pendingA_Raw = (deltaA * liquidity) >> 128n;
 
                         feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
                     }
@@ -1658,7 +1660,7 @@ export class StrategyManager {
                             BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
                         const deltaB = globalB > checkB ? globalB - checkB : 0n;
-                        const pendingB_Raw = (deltaB * liquidity) >> 64n;
+                        const pendingB_Raw = (deltaB * liquidity) >> 128n;
 
                         feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
                     }
