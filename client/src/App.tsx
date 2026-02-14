@@ -243,6 +243,10 @@ function App() {
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
 
+    // API Security
+    const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
+    const [isSecretVisible, setIsSecretVisible] = useState(false);
+
     // Modal State
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -274,7 +278,6 @@ function App() {
     // Auto-Refresh Wallet Balance
     const refreshBalance = async () => {
         try {
-            const apiSecret = localStorage.getItem('API_SECRET') || '';
             const res = await axios.get(`${BACKEND_URL}/api/portfolio`, {
                 headers: { 'x-api-key': apiSecret }
             });
@@ -374,32 +377,48 @@ function App() {
     }, []);
 
     const toggleBot = async () => {
+        const endpoint = running ? '/api/stop' : '/api/start';
         const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
 
-        const endpoint = running ? '/api/stop' : '/api/start';
-        const apiSecret = localStorage.getItem('API_SECRET') || '';
-        await fetch(`${BACKEND_URL}${endpoint}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': apiSecret
-            },
-            body: JSON.stringify({
-                buyAmount: finalBuy,
-                lpppAmount: 0, // Auto-calculated by backend from market price
-                meteoraFeeBps,
-                maxPools,
-                slippage,
-                volume5m: { min: minVolume5m, max: maxVolume5m },
-                volume1h: { min: minVolume, max: maxVolume },
-                volume24h: { min: minVolume24h, max: maxVolume24h },
-                liquidity: { min: minLiquidity, max: maxLiquidity },
-                mcap: { min: minMcap, max: maxMcap },
-                pumpFunSupport,
-                minBondingCurveProgress: minBondingCurve,
-                bonkSupport
-            })
-        });
+        try {
+            const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiSecret
+                },
+                body: JSON.stringify({
+                    buyAmount: finalBuy,
+                    lpppAmount: 0,
+                    meteoraFeeBps,
+                    maxPools,
+                    slippage,
+                    volume5m: { min: minVolume5m, max: maxVolume5m },
+                    volume1h: { min: minVolume, max: maxVolume },
+                    volume24h: { min: minVolume24h, max: maxVolume24h },
+                    liquidity: { min: minLiquidity, max: maxLiquidity },
+                    mcap: { min: minMcap, max: maxMcap },
+                    pumpFunSupport,
+                    minBondingCurveProgress: minBondingCurve,
+                    bonkSupport
+                })
+            });
+
+            if (res.status === 401) {
+                showModal({
+                    title: "Authentication Failed",
+                    message: "The API Secret provided is invalid. Please check your Security settings.",
+                    type: 'error'
+                });
+                return;
+            }
+
+            if (res.ok) {
+                setRunning(!running);
+            }
+        } catch (e) {
+            console.error("Bot toggle error:", e);
+        }
     };
 
     const withdrawLiquidity = async (poolId: string, percent: number) => {
@@ -412,18 +431,28 @@ function App() {
             type: 'warning',
             onCancel: closeModal,
             onConfirm: async () => {
-                await fetch(`${BACKEND_URL}/api/pool/withdraw`, {
+                const res = await fetch(`${BACKEND_URL}/api/pool/withdraw`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': apiSecret
+                    },
                     body: JSON.stringify({ poolId, percent })
                 });
+
+                if (res.status === 401) {
+                    showModal({
+                        title: "Failed",
+                        message: "Invalid API Secret. Could not withdraw.",
+                        type: 'error'
+                    });
+                }
             }
         });
     };
 
     const claimFees = async (poolId: string) => {
-        const apiSecret = localStorage.getItem('API_SECRET') || '';
-        await fetch(`${BACKEND_URL}/api/pool/claim`, {
+        const res = await fetch(`${BACKEND_URL}/api/pool/claim`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -431,6 +460,14 @@ function App() {
             },
             body: JSON.stringify({ poolId })
         });
+
+        if (res.status === 401) {
+            showModal({
+                title: "Failed",
+                message: "Invalid API Secret. Could not claim fees.",
+                type: 'error'
+            });
+        }
     };
 
     const increaseLiquidity = async (poolId: string) => {
@@ -444,11 +481,22 @@ function App() {
             onCancel: closeModal,
             onConfirm: async (amount) => {
                 if (!amount || isNaN(Number(amount))) return;
-                await fetch(`${BACKEND_URL}/api/pool/increase`, {
+                const res = await fetch(`${BACKEND_URL}/api/pool/increase`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': apiSecret
+                    },
                     body: JSON.stringify({ poolId, amountSol: Number(amount) })
                 });
+
+                if (res.status === 401) {
+                    showModal({
+                        title: "Failed",
+                        message: "Invalid API Secret. Could not increase liquidity.",
+                        type: 'error'
+                    });
+                }
             }
         });
     };
@@ -764,9 +812,34 @@ function App() {
 
                         <div className="mt-4 pt-4 border-t border-border">
                             <div className="flex items-center justify-between mb-2">
-                                <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Security (Experimental)</p>
-                                <span className="bg-amber-500/20 text-amber-500 text-[8px] px-1.5 py-0.5 rounded font-black tracking-tighter">BETA</span>
+                                <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Security & API Access</p>
+                                <ShieldAlert size={12} className="text-amber-500" />
                             </div>
+
+                            <div className="flex flex-col gap-1.5 mb-4">
+                                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">API Secret Key</label>
+                                <div className="relative">
+                                    <input
+                                        type={isSecretVisible ? "text" : "password"}
+                                        value={apiSecret}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setApiSecret(val);
+                                            localStorage.setItem('API_SECRET', val);
+                                        }}
+                                        placeholder="Enter your API_SECRET"
+                                        className="w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[11px] focus:outline-none focus:border-primary/50 transition-colors pr-8"
+                                    />
+                                    <button
+                                        onClick={() => setIsSecretVisible(!isSecretVisible)}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                    >
+                                        <Activity size={12} />
+                                    </button>
+                                </div>
+                                <p className="text-[8px] text-muted-foreground/60 leading-tight"> Required to Lauch Bot or close positions. Match your .env file.</p>
+                            </div>
+
                             <button
                                 onClick={updatePrivateKey}
                                 className="w-full flex items-center justify-center gap-2 py-2.5 bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-[10px] font-bold rounded border border-border transition-all"
@@ -775,7 +848,7 @@ function App() {
                                 UPDATE BOT WALLET
                             </button>
                             <p className="text-[9px] text-amber-500/60 mt-2 text-center leading-tight">
-                                ⚠️ <b>WARNING:</b> Only use over HTTPS. Key swap is volatile and resets on server restart. Use a low-balance hot wallet.
+                                ⚠️ <b>WARNING:</b> Key swap is volatile and resets on server restart. Use a low-balance hot wallet.
                             </p>
                         </div>
 
