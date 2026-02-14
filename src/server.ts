@@ -23,6 +23,11 @@ if (!API_SECRET) {
 app.use("/api", (req, res, next) => {
     // Skip auth for webhook endpoints (they use their own auth)
     if (req.path.startsWith("/webhooks")) return next();
+
+    // PUBLIC ENDPOINTS: Allow access without API Key
+    const publicEndpoints = ["/status", "/price", "/portfolio", "/wallet"];
+    if (publicEndpoints.includes(req.path)) return next();
+
     // Skip auth if no API_SECRET is configured (backward compatible)
     if (!API_SECRET) return next();
 
@@ -182,4 +187,6 @@ const PORT = Number(process.env.PORT) || 3000;
 httpServer.listen(PORT, () => {
     console.log(`LPPP BOT Unified Server running on port ${PORT}`);
     console.log(`LPPP BOT Version: v1.5.7 (Ultra-Throttled Recovery + ROI Fix)`);
+    console.log(`[CONFIG] API_SECRET Status: ${API_SECRET ? "CONFIGURED (Locked)" : "UNSET (Public Access Mode)"}`);
+    console.log(`[CONFIG] RPC_URL: ${process.env.RPC_URL ? "OK" : "MISSING"}`);
 });

@@ -350,15 +350,12 @@ function App() {
             if (document.visibilityState !== 'visible') return;
 
             try {
-                const apiSecret = localStorage.getItem('API_SECRET') || '';
-                const res = await fetch(`${BACKEND_URL}/api/price`, {
-                    headers: { 'x-api-key': apiSecret }
-                });
-                if (res.status === 401) return; // Silent ignore, let dashboard wait
+                const res = await fetch(`${BACKEND_URL}/api/price`); // Headers optional for public endpoint
                 const data = await res.json();
                 if (data && !data.error) {
-                    if (data.sol) setSolPrice(Number(data.sol));
-                    if (data.lppp) setLpppPrice(Number(data.lppp));
+                    // Use !== undefined and !== null to allow 0.0 values to be set
+                    if (data.sol !== undefined && data.sol !== null) setSolPrice(Number(data.sol));
+                    if (data.lppp !== undefined && data.lppp !== null) setLpppPrice(Number(data.lppp));
                 }
             } catch (e) {
                 console.error("Price fetch error:", e);
