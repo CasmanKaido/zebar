@@ -175,9 +175,9 @@ export class MarketScanner {
                     }
                     console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
+                // Rate limit protection: Slow 5.0s between pages
+                if (page < 20) await new Promise(r => setTimeout(r, 5000));
             }
-            // Rate limit protection: Slow 5.0s between pages
-            if (page < 20) await new Promise(r => setTimeout(r, 5000));
         }
 
             // 2. Add Broad DexScreener Search (Meteora specifically)
