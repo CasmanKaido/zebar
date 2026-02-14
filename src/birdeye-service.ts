@@ -51,6 +51,7 @@ export class BirdeyeService {
                     ? `${BIRDEYE_BASE_URL}?scroll_id=${nextScrollId}`
                     : `${BIRDEYE_BASE_URL}?${queryParts.join("&")}`;
 
+                let response;
                 try {
                     response = await axios.get(requestUrl, { headers, timeout: 5000 });
                 } catch (err: any) {

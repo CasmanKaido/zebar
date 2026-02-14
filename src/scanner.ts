@@ -202,15 +202,15 @@ export class MarketScanner {
                 console.warn(`[BIRDEYE] Error: ${e}`);
             }
 
-            // 3.5. NEW: Birdeye 'New Listing' Feed (Pump.fun, Moonshot, etc.)
-            try {
-                const newTokens = await BirdeyeService.fetchNewTokenListings(20); // Get latest 20
-                if (newTokens.length > 0) {
-                    allPairs = [...allPairs, ...newTokens];
-                }
-            } catch (e) {
-                console.warn(`[BIRDEYE] New Listing Error: ${e}`);
-            }
+            // 3.5. NEW: Birdeye 'New Listing' Feed (DISABLED)
+            // try {
+            //     // const newTokens = await BirdeyeService.fetchNewTokenListings(20);
+            //     // if (newTokens.length > 0) {
+            //     //     allPairs = [...allPairs, ...newTokens];
+            //     // }
+            // } catch (e) {
+            //     console.warn(`[BIRDEYE] New Listing Error: ${e}`);
+            // }
 
 
 
