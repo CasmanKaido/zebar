@@ -15,9 +15,9 @@ app.use(express.json());
 // ═══ API Authentication Middleware ═══
 // Protects all /api/* routes (except webhooks) with an API key.
 // Set API_SECRET in .env. If not set, access is allowed with a warning.
-const API_SECRET = process.env.API_SECRET;
+const API_SECRET = process.env.API_SECRET?.trim();
 if (!API_SECRET) {
-    throw new Error("CRITICAL SECURITY ERROR: API_SECRET is missing from .env. Access denied to all endpoints.");
+    console.warn("[SECURITY WARNING] API_SECRET is not set in .env. API endpoints are UNPROTECTED. Set API_SECRET to enable authentication.");
 }
 
 app.use("/api", (req, res, next) => {
@@ -122,7 +122,13 @@ app.get("/api/price", async (req, res) => {
 
 // Portfolio Endpoint (SOL/LPPP Balances)
 app.get("/api/portfolio", async (req, res) => {
-    const portfolio = await botManager.getWalletBalance();
+    const portfolio = await botManager.getPortfolio(); // Use correct method
+    res.json(portfolio);
+});
+
+// Alias for client compatibility (Issue 44)
+app.get("/api/wallet", async (req, res) => {
+    const portfolio = await botManager.getPortfolio();
     res.json(portfolio);
 });
 

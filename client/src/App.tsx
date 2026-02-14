@@ -271,31 +271,32 @@ function App() {
 
     const logsEndRef = useRef<HTMLDivElement>(null);
 
-    // Auto-Refresh Wallet Balance (Issue 43)
+    // Auto-Refresh Wallet Balance
     const refreshBalance = async () => {
         try {
-            const res = await axios.get(`${BACKEND_URL}/api/wallet`); // Used BACKEND_URL
-            setPortfolio({
-                sol: res.data.sol || 0,
-                lppp: res.data.lppp || 0
+            const apiSecret = localStorage.getItem('API_SECRET') || '';
+            const res = await axios.get(`${BACKEND_URL}/api/portfolio`, {
+                headers: { 'x-api-key': apiSecret }
             });
+            if (res.data && !res.data.error) {
+                setPortfolio({
+                    sol: res.data.sol || 0,
+                    lppp: res.data.lppp || 0
+                });
+            }
         } catch (e) {
-            console.error("Failed to refresh wallet balance", e);
+            console.error("Failed to refresh portfolio", e);
         }
     };
 
     useEffect(() => {
         refreshBalance(); // Initial fetch
-
         const interval = setInterval(refreshBalance, 30000); // Poll every 30s
-
-        // Also refresh on trade events
         socket.on('log', (data) => {
             if (data.type === 'success' || data.message.includes('Swap Success') || data.message.includes('Liquidity Removed')) {
                 setTimeout(refreshBalance, 2000); // Slight delay for chain indexing
             }
         });
-
         return () => {
             clearInterval(interval);
             socket.off('log');
@@ -349,9 +350,13 @@ function App() {
             if (document.visibilityState !== 'visible') return;
 
             try {
-                const res = await fetch(`${BACKEND_URL}/api/price`);
+                const apiSecret = localStorage.getItem('API_SECRET') || '';
+                const res = await fetch(`${BACKEND_URL}/api/price`, {
+                    headers: { 'x-api-key': apiSecret }
+                });
+                if (res.status === 401) return; // Silent ignore, let dashboard wait
                 const data = await res.json();
-                if (data) {
+                if (data && !data.error) {
                     if (data.sol) setSolPrice(Number(data.sol));
                     if (data.lppp) setLpppPrice(Number(data.lppp));
                 }
@@ -366,30 +371,22 @@ function App() {
         return () => clearInterval(interval);
     }, [running]); // Re-run effect when 'running' state changes
 
-    // Fetch Portfolio
+    // Fetch Portfolio (Duplicate removed, use refreshBalance)
     useEffect(() => {
-        const fetchPortfolio = async () => {
-            try {
-                const res = await fetch(`${BACKEND_URL}/api/portfolio`);
-                const data = await res.json();
-                if (data) setPortfolio(data);
-            } catch (e) {
-                console.error("Portfolio fetch error:", e);
-            }
-        };
-
-        fetchPortfolio();
-        const interval = setInterval(fetchPortfolio, 30000);
-        return () => clearInterval(interval);
+        refreshBalance();
     }, []);
 
     const toggleBot = async () => {
         const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
 
         const endpoint = running ? '/api/stop' : '/api/start';
+        const apiSecret = localStorage.getItem('API_SECRET') || '';
         await fetch(`${BACKEND_URL}${endpoint}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiSecret
+            },
             body: JSON.stringify({
                 buyAmount: finalBuy,
                 lpppAmount: 0, // Auto-calculated by backend from market price
@@ -428,9 +425,13 @@ function App() {
     };
 
     const claimFees = async (poolId: string) => {
+        const apiSecret = localStorage.getItem('API_SECRET') || '';
         await fetch(`${BACKEND_URL}/api/pool/claim`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiSecret
+            },
             body: JSON.stringify({ poolId })
         });
     };
