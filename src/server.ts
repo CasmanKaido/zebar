@@ -5,7 +5,8 @@ import path from "path";
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { GeckoService } from "./gecko-service";
-import { POOL_DATA_FILE } from "./config";
+import { POOL_DATA_FILE, SOL_MINT, LPPP_MINT, BONK_MINT } from "./config";
+import { JupiterPriceService } from "./jupiter-price-service";
 
 const app = express();
 app.use(cors());
@@ -16,7 +17,7 @@ app.use(express.json());
 // Set API_SECRET in .env. If not set, access is allowed with a warning.
 const API_SECRET = process.env.API_SECRET;
 if (!API_SECRET) {
-    console.warn("[SECURITY WARNING] API_SECRET is not set in .env. API endpoints are UNPROTECTED. Set API_SECRET to enable authentication.");
+    throw new Error("CRITICAL SECURITY ERROR: API_SECRET is missing from .env. Access denied to all endpoints.");
 }
 
 app.use("/api", (req, res, next) => {
@@ -83,9 +84,6 @@ app.get("/api/price", async (req, res) => {
 
     try {
         // 1. Fetch Prices via Jupiter Service
-        const { SOL_MINT, LPPP_MINT, BONK_MINT } = require("./config");
-        const { JupiterPriceService } = require("./jupiter-price-service");
-
         const jupPrices = await JupiterPriceService.getPrices([
             SOL_MINT.toBase58(),
             LPPP_MINT.toBase58(),
@@ -166,12 +164,7 @@ app.post("/api/config/key", async (req, res) => {
 });
 
 // Helius Webhook Endpoint for Real-Time Discovery
-// NOTE: Currently disabled. The payload parsing was a heuristic that extracted
-// wrong addresses. Re-enable after testing with actual Helius webhook payloads.
-app.post("/api/webhooks/helius", async (req, res) => {
-    console.log("[WEBHOOK] Received Helius webhook event. Handler is currently disabled.");
-    res.status(200).json({ status: "received", note: "Webhook processing is disabled. Enable after testing with real payloads." });
-});
+// Handler removed per audit cleanup.
 
 // Catch-all to serve React's index.html
 app.use((req, res) => {

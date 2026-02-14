@@ -58,6 +58,22 @@ export class StrategyManager {
     }
 
     /**
+     * Helper to fetch mint decimals dynamically.
+     */
+    async getMintDecimals(mint: PublicKey): Promise<number> {
+        try {
+            const accInfo = await this.connection.getAccountInfo(mint);
+            if (!accInfo) return 6; // Fallback to 6
+            const programId = accInfo.owner;
+            const mintInfo = await getMint(this.connection, mint, "confirmed", programId);
+            return mintInfo.decimals;
+        } catch (e) {
+            console.warn(`[STRATEGY] Could not fetch decimals for ${mint.toBase58()}, defaulting to 6.`);
+            return 6;
+        }
+    }
+
+    /**
      * Fetches current priority fees from RPC.
      */
     async getPriorityFee(): Promise<number> {
@@ -121,10 +137,11 @@ export class StrategyManager {
                 const sig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], { commitment: "confirmed" });
                 console.log(`[PUMP.FUN] Buy Success! Signature: ${sig}`);
 
+                const decimals = await this.getMintDecimals(mint);
                 return {
                     success: true,
                     amount: BigInt(amountTokens.toString()),
-                    uiAmount: Number(amountTokens) / 1e6 // Assuming 6 decimals for pump tokens
+                    uiAmount: Number(amountTokens) / (10 ** decimals)
                 };
             }
 
