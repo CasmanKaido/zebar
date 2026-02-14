@@ -143,34 +143,30 @@ export class MarketScanner {
         try {
             let allPairs: any[] = [];
 
-            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Pools (Paginated)
-            // This hits Raydium, Meteora, Orca, etc. and finds EVERYTHING with volume
+            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Tokens (Paginated)
+            // This finds trending TOKENS directly, aggregating their pools
             for (let page = 1; page <= 3; page++) { // Capped at 3 pages for rate limit safety
                 try {
-                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
+                    // Changed from /pools to /tokens to get token-centric data
+                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/tokens?page=${page}`, { timeout: 8000 });
                     if (geckoRes.data.data) {
-                        const pagePairs = geckoRes.data.data.map((p: any) => ({
-                            pairAddress: p.attributes.address,
+                        const pageTokens = geckoRes.data.data.map((t: any) => ({
+                            pairAddress: t.relationships.top_pools?.data?.[0]?.id?.replace('solana_', '') || "", // Best pool as proxy
                             chainId: "solana",
-                            dexId: p.relationships.dex.data.id, // e.g. 'raydium', 'meteora'
+                            dexId: "gecko_aggregated",
                             baseToken: {
-                                symbol: p.attributes.name.split(" / ")[0],
-                                address: p.relationships.base_token.data.id.split("_")[1]
+                                symbol: t.attributes.symbol,
+                                address: t.attributes.address
                             },
-                            quoteToken: {
-                                symbol: p.attributes.name.split(" / ")[1],
-                                address: p.relationships.quote_token.data.id.split("_")[1]
-                            },
-                            priceUsd: p.attributes.base_token_price_usd,
+                            quoteToken: { symbol: "SOL", address: "So11111111111111111111111111111111111111112" }, // Assumed
+                            priceUsd: t.attributes.price_usd,
                             volume: {
-                                m5: Number(p.attributes.volume_usd.m5),
-                                h1: Number(p.attributes.volume_usd.h1),
-                                h24: Number(p.attributes.volume_usd.h24)
+                                h24: Number(t.attributes.volume_usd.h24)
                             },
-                            liquidity: { usd: Number(p.attributes.reserve_in_usd) },
-                            marketCap: Number(p.attributes.fdv_usd) || 0
-                        }));
-                        allPairs = [...allPairs, ...pagePairs];
+                            liquidity: { usd: Number(t.attributes.fdv_usd) }, // FDV as proxy for size
+                            marketCap: Number(t.attributes.fdv_usd) || 0
+                        })).filter((t: any) => t.pairAddress !== ""); // Filter out tokens with no pools
+                        allPairs = [...allPairs, ...pageTokens];
                     }
                 } catch (e: any) {
                     if (e.response?.status === 429) {
