@@ -140,48 +140,46 @@ export class MarketScanner {
     private async performMarketSweep() {
         SocketManager.emitLog("[SWEEPER] Harvesting the whole Solana ecosystem for opportunities...", "info");
 
-        try {
-            let allPairs: any[] = [];
+        let allPairs: any[] = [];
 
-            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Tokens (Paginated)
-            // This finds trending TOKENS directly, aggregating their pools
-            for (let page = 1; page <= 20; page++) { // Increased to 20 pages per user request
-                try {
-                    // Changed from /pools to /tokens to get token-centric data
-                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/tokens?page=${page}`, { timeout: 8000 });
-                    if (geckoRes.data.data) {
-                        const pageTokens = geckoRes.data.data.map((t: any) => ({
-                            pairAddress: t.relationships.top_pools?.data?.[0]?.id?.replace('solana_', '') || "", // Best pool as proxy
-                            chainId: "solana",
-                            dexId: "gecko_aggregated",
-                            baseToken: {
-                                symbol: t.attributes.symbol,
-                                address: t.attributes.address
-                            },
-                            quoteToken: { symbol: "SOL", address: "So11111111111111111111111111111111111111112" }, // Assumed
-                            priceUsd: t.attributes.price_usd,
-                            volume: {
-                                h24: Number(t.attributes.volume_usd.h24)
-                            },
-                            liquidity: { usd: Number(t.attributes.fdv_usd) }, // FDV as proxy for size
-                            marketCap: Number(t.attributes.fdv_usd) || 0
-                        })).filter((t: any) => t.pairAddress !== ""); // Filter out tokens with no pools
-                        allPairs = [...allPairs, ...pageTokens];
-                    }
-                } catch (e: any) {
-                    if (e.response?.status === 429) {
-                        console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. Halting sweep to protect IP.`);
-                        break; // Stop fetching more pages
-                    }
-                    console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
+        // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Tokens (Paginated)
+        // This finds trending TOKENS directly, aggregating their pools
+        for (let page = 1; page <= 20; page++) { // Increased to 20 pages per user request
+            try {
+                // Changed from /pools to /tokens to get token-centric data
+                const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/tokens?page=${page}`, { timeout: 8000 });
+                if (geckoRes.data.data) {
+                    const pageTokens = geckoRes.data.data.map((t: any) => ({
+                        pairAddress: t.relationships.top_pools?.data?.[0]?.id?.replace('solana_', '') || "", // Best pool as proxy
+                        chainId: "solana",
+                        dexId: "gecko_aggregated",
+                        baseToken: {
+                            symbol: t.attributes.symbol,
+                            address: t.attributes.address
+                        },
+                        quoteToken: { symbol: "SOL", address: "So11111111111111111111111111111111111111112" }, // Assumed
+                        priceUsd: t.attributes.price_usd,
+                        volume: {
+                            h24: Number(t.attributes.volume_usd.h24)
+                        },
+                        liquidity: { usd: Number(t.attributes.fdv_usd) }, // FDV as proxy for size
+                        marketCap: Number(t.attributes.fdv_usd) || 0
+                    })).filter((t: any) => t.pairAddress !== ""); // Filter out tokens with no pools
+                    allPairs = [...allPairs, ...pageTokens];
                 }
-                // Rate limit protection: Slow 5.0s between pages
-                if (page < 20) await new Promise(r => setTimeout(r, 5000));
+            } catch (e: any) {
+                if (e.response?.status === 429) {
+                    console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. Halting sweep to protect IP.`);
+                    break; // Stop fetching more pages
+                }
+                console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
             }
+            // Rate limit protection: Slow 5.0s between pages
+            if (page < 20) await new Promise(r => setTimeout(r, 5000));
         }
 
-            // 2. Add Broad DexScreener Search (Meteora specifically)
-            const keywordQueries = ["meteora"];
+        // 2. Add Broad DexScreener Search (Meteora specifically)
+        const keywordQueries = ["meteora"];
         for (const query of keywordQueries) {
             try {
                 const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${query}`, { timeout: 5000 });
