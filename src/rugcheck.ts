@@ -62,7 +62,8 @@ export class OnChainSafetyChecker {
             try {
                 return await fn();
             } catch (err: any) {
-                if (err.message?.includes("429") || err.toString().includes("429")) {
+                const errStr = (err.message || err.toString()).toLowerCase();
+                if (errStr.includes("429") || errStr.includes("deprioritized") || errStr.includes("too many requests")) {
                     if (retries >= maxRetries) throw err;
                     retries++;
                     const backoff = Math.pow(2, retries) * 500;

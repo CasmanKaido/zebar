@@ -55,6 +55,11 @@ export class BirdeyeService {
                 try {
                     response = await axios.get(requestUrl, { headers, timeout: 5000 });
                 } catch (err: any) {
+                    if (err.response?.status === 401 || err.response?.status === 403) {
+                        console.error("[BIRDEYE] API Key Invalid/Suspended. Disabling service for 10 minutes.");
+                        this.isEnabled = false;
+                        setTimeout(() => { this.isEnabled = true; }, 10 * 60 * 1000);
+                    }
                     console.warn(`[BIRDEYE] Fetch error: ${err.message}`);
                     break;
                 }

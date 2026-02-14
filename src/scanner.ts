@@ -143,40 +143,44 @@ export class MarketScanner {
         try {
             let allPairs: any[] = [];
 
-            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Tokens (Paginated)
-            // This finds trending TOKENS directly, aggregating their pools
-            for (let page = 1; page <= 20; page++) { // Increased to 20 pages per user request
+            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Pools (Paginated)
+            for (let page = 1; page <= 10; page++) {
                 try {
-                    // Changed from /pools to /tokens to get token-centric data
-                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/tokens?page=${page}`, { timeout: 8000 });
-                    if (geckoRes.data.data) {
-                        const pageTokens = geckoRes.data.data.map((t: any) => ({
-                            pairAddress: t.relationships.top_pools?.data?.[0]?.id?.replace('solana_', '') || "", // Best pool as proxy
+                    // We use /pools to find tokens with activity.
+                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
+                    if (geckoRes.data?.data) {
+                        const pagePairs = geckoRes.data.data.map((p: any) => ({
+                            pairAddress: p.attributes.address,
                             chainId: "solana",
-                            dexId: "gecko_aggregated",
+                            dexId: p.relationships.dex.data.id,
                             baseToken: {
-                                symbol: t.attributes.symbol,
-                                address: t.attributes.address
+                                symbol: p.attributes.name.split(" / ")[0],
+                                address: p.relationships.base_token.data.id.split("_")[1]
                             },
-                            quoteToken: { symbol: "SOL", address: "So11111111111111111111111111111111111111112" }, // Assumed
-                            priceUsd: t.attributes.price_usd,
+                            quoteToken: {
+                                symbol: p.attributes.name.split(" / ")[1],
+                                address: p.relationships.quote_token.data.id.split("_")[1]
+                            },
+                            priceUsd: p.attributes.base_token_price_usd,
                             volume: {
-                                h24: Number(t.attributes.volume_usd.h24)
+                                m5: Number(p.attributes.volume_usd.m5),
+                                h1: Number(p.attributes.volume_usd.h1),
+                                h24: Number(p.attributes.volume_usd.h24)
                             },
-                            liquidity: { usd: Number(t.attributes.fdv_usd) }, // FDV as proxy for size
-                            marketCap: Number(t.attributes.fdv_usd) || 0
-                        })).filter((t: any) => t.pairAddress !== ""); // Filter out tokens with no pools
-                        allPairs = [...allPairs, ...pageTokens];
+                            liquidity: { usd: Number(p.attributes.reserve_in_usd) },
+                            marketCap: Number(p.attributes.fdv_usd) || 0
+                        }));
+                        allPairs = [...allPairs, ...pagePairs];
                     }
                 } catch (e: any) {
                     if (e.response?.status === 429) {
                         console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. Halting sweep to protect IP.`);
-                        break; // Stop fetching more pages
+                        break;
                     }
                     console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
                 // Rate limit protection: Slow 5.0s between pages
-                if (page < 20) await new Promise(r => setTimeout(r, 5000));
+                if (page < 10) await new Promise(r => setTimeout(r, 5000));
             }
 
             // 2. Add Broad DexScreener Search (Meteora specifically)
