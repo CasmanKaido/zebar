@@ -1579,45 +1579,53 @@ export class StrategyManager {
                     const globalA = parseBigIntLE(globalFeeA_Array);
                     const checkA = parseBigIntLE(checkpointA_Array);
 
-                    // SAFETY: If checkpoint is 0 (uninitialized) but global is > 0, do NOT calculate.
-                    if (checkA > 0n) {
-                        const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
-                            BigInt(pos.positionState.vestedLiquidity.toString()) +
-                            BigInt(pos.positionState.permanentLockedLiquidity.toString());
+                    const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                        BigInt(pos.positionState.vestedLiquidity.toString()) +
+                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
-                        // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
-                        // Both deltaA and liquidity (L_user) are scaled by 2^64 in DAMM v2.
-                        // Product is scaled by 2^128. Shift by 128 to get raw units.
-                        const deltaA = globalA > checkA ? globalA - checkA : 0n;
-                        const pendingA_Raw = (deltaA * liquidity) >> 128n;
+                    // Calculate Pending Fees: (Global - Checkpoint) * Liquidity
+                    // Both deltaA and liquidity (L_user) are scaled by 2^64 in DAMM v2.
+                    // Product is scaled by 2^128. Shift by 128 to get raw units.
+                    const deltaA = globalA > checkA ? globalA - checkA : 0n;
+                    const pendingA_Raw = (deltaA * liquidity) >> 128n;
 
-                        feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
-                    }
+                    feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
                 }
 
                 if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
                     const globalB = parseBigIntLE(globalFeeB_Array);
                     const checkB = parseBigIntLE(checkpointB_Array);
 
-                    // SAFETY: If checkpoint is 0, skip.
-                    if (checkB > 0n) {
-                        const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
-                            BigInt(pos.positionState.vestedLiquidity.toString()) +
-                            BigInt(pos.positionState.permanentLockedLiquidity.toString());
+                    const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                        BigInt(pos.positionState.vestedLiquidity.toString()) +
+                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
-                        const deltaB = globalB > checkB ? globalB - checkB : 0n;
-                        const pendingB_Raw = (deltaB * liquidity) >> 128n;
+                    const deltaB = globalB > checkB ? globalB - checkB : 0n;
+                    const pendingB_Raw = (deltaB * liquidity) >> 128n;
 
-                        feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
-                    }
+                    feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
                 }
             } catch (err) {
                 console.warn(`[STRATEGY] Manual fee calculation failed:`, err);
             }
 
-            // Fallback to direct read if calculation yielded 0 (or failed) but direct read has value (unlikely given logs)
-            if (feeA === 0) feeA = Number(pos.positionState.feeAPending?.toString() || "0") / Math.pow(10, decimalsA);
-            if (feeB === 0) feeB = Number(pos.positionState.feeBPending?.toString() || "0") / Math.pow(10, decimalsB);
+            // Fallback to direct read if calculation yielded 0 (or failed)
+            if (feeA === 0) {
+                feeA = Number(
+                    pos.positionState.feeAPending?.toString() ||
+                    pos.positionState.feeAAmount?.toString() ||
+                    pos.positionState.feeA?.toString() ||
+                    "0"
+                ) / Math.pow(10, decimalsA);
+            }
+            if (feeB === 0) {
+                feeB = Number(
+                    pos.positionState.feeBPending?.toString() ||
+                    pos.positionState.feeBAmount?.toString() ||
+                    pos.positionState.feeB?.toString() ||
+                    "0"
+                ) / Math.pow(10, decimalsB);
+            }
 
             // Log calculation results for verification
             if (feeA > 0 || feeB > 0) {

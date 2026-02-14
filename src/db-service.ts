@@ -3,7 +3,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { PoolData, TradeHistory } from "./types";
 
-const DB_PATH = path.join(process.cwd(), "data", "lppp-bot.db");
+const DB_PATH = path.join(process.cwd(), "data", "zebar.db");
 
 export class DatabaseService {
     private db: Database.Database;
@@ -44,6 +44,7 @@ export class DatabaseService {
                 initialSolValue REAL,
                 isBotCreated INTEGER NOT NULL DEFAULT 0,
                 entryUsdValue REAL,
+                fee_total_lppp TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -72,6 +73,11 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE pools ADD COLUMN entryUsdValue REAL");
             console.log("[DB] Migrated: Added entryUsdValue column to pools table.");
         } catch (e) { }
+
+        try {
+            this.db.exec("ALTER TABLE pools ADD COLUMN fee_total_lppp TEXT");
+            console.log("[DB] Migrated: Added fee_total_lppp column to pools table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -92,13 +98,13 @@ export class DatabaseService {
                 poolId, token, mint, roi, created, initialPrice, 
                 initialTokenAmount, initialLpppAmount, exited, 
                 tp1Done, takeProfitDone, stopLossDone, positionId, 
-                fee_sol, fee_token, withdrawalPending, priceReconstructed,
+                fee_sol, fee_token, fee_total_lppp, withdrawalPending, priceReconstructed,
                 netRoi, initialSolValue, isBotCreated, entryUsdValue
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
                 @tp1Done, @takeProfitDone, @stopLossDone, @positionId,
-                @fee_sol, @fee_token, @withdrawalPending, @priceReconstructed,
+                @fee_sol, @fee_token, @fee_total_lppp, @withdrawalPending, @priceReconstructed,
                 @netRoi, @initialSolValue, @isBotCreated, @entryUsdValue
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
@@ -109,6 +115,7 @@ export class DatabaseService {
                 positionId = excluded.positionId,
                 fee_sol = excluded.fee_sol,
                 fee_token = excluded.fee_token,
+                fee_total_lppp = excluded.fee_total_lppp,
                 withdrawalPending = excluded.withdrawalPending,
                 priceReconstructed = excluded.priceReconstructed,
                 netRoi = excluded.netRoi,
@@ -134,6 +141,7 @@ export class DatabaseService {
             positionId: pool.positionId || null,
             fee_sol: pool.unclaimedFees?.sol || "0",
             fee_token: pool.unclaimedFees?.token || "0",
+            fee_total_lppp: pool.unclaimedFees?.totalLppp || "0",
             withdrawalPending: pool.withdrawalPending ? 1 : 0,
             priceReconstructed: pool.priceReconstructed ? 1 : 0,
             netRoi: pool.netRoi || "0%",
@@ -190,7 +198,8 @@ export class DatabaseService {
             positionId: row.positionId,
             unclaimedFees: {
                 sol: row.fee_sol || "0",
-                token: row.fee_token || "0"
+                token: row.fee_token || "0",
+                totalLppp: row.fee_total_lppp || "0"
             },
             withdrawalPending: !!row.withdrawalPending,
             priceReconstructed: !!row.priceReconstructed,

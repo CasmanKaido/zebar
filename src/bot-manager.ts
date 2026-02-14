@@ -333,7 +333,7 @@ export class BotManager {
     /**
      * Updates the ROI of a pool in SQL and emits to socket.
      */
-    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees?: { sol: string; token: string }, partial?: Partial<PoolData>) {
+    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees?: { sol: string; token: string; totalLppp?: string }, partial?: Partial<PoolData>) {
         if (this.activeTpSlActions.has(poolId)) return;
 
         try {
