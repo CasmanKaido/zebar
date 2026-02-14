@@ -76,7 +76,8 @@ docker compose up -d --build
     ```bash
 cd ~/zebar
 git pull
-npm install  # <--- Triggers 'postinstall' which builds frontend + backend automatically
+npm install
+npm run build
 npm run start:prod
 ```
 *   **Stop Bot**: `docker compose down`
