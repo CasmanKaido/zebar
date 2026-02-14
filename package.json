@@ -1,6 +1,6 @@
 {
   "name": "zebar-bot",
-  "version": "1.0.0",
+  "version": "1.5.8",
   "main": "src/index.ts",
   "license": "ISC",
   "scripts": {
