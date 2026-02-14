@@ -27,7 +27,7 @@ export interface BotSettings {
     volume24h: { min: number; max: number };
     liquidity: { min: number; max: number };
     mcap: { min: number; max: number };
-    minBondingCurveProgress: number;
+
 }
 
 export class BotManager {
@@ -54,7 +54,7 @@ export class BotManager {
         volume24h: { min: 1000000, max: 0 },
         liquidity: { min: 60000, max: 0 },
         mcap: { min: 60000, max: 0 },
-        minBondingCurveProgress: 80
+
     };
 
     constructor() {
@@ -423,8 +423,7 @@ export class BotManager {
             volume1h: this.settings.volume1h,
             volume24h: this.settings.volume24h,
             liquidity: this.settings.liquidity,
-            mcap: this.settings.mcap,
-            minBondingCurveProgress: this.settings.minBondingCurveProgress
+            mcap: this.settings.mcap
         };
 
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {

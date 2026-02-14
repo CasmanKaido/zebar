@@ -25,7 +25,7 @@ export interface ScannerCriteria {
     volume24h: NumericRange;
     liquidity: NumericRange;
     mcap: NumericRange;
-    minBondingCurveProgress: number; // 0-100
+
 }
 
 export class MarketScanner {
