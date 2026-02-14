@@ -74,7 +74,9 @@ docker compose up -d --build
 *   **View Logs**: `docker compose logs -f`
 *   **Update Bot**: 
     ```bash
-    git pull
-    docker compose up -d --build
-    ```
+cd ~/zebar
+git pull
+npm install  # <--- Triggers 'postinstall' which builds frontend + backend automatically
+npm run start:prod
+```
 *   **Stop Bot**: `docker compose down`
