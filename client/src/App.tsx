@@ -643,7 +643,7 @@ function App() {
                         </div>
                         <div>
                             <h1 className="text-2xl font-bold glow-text leading-none tracking-wider text-pink-500">LPPP BOT</h1>
-                            <span className="text-[12px] text-muted-foreground block mt-1">Pool Party Liquidity Master</span>
+                            <span className="text-[12px] text-muted-foreground block mt-1">Pool Party Liquidity Master v2.0</span>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
