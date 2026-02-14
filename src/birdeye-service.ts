@@ -51,30 +51,11 @@ export class BirdeyeService {
                     ? `${BIRDEYE_BASE_URL}?scroll_id=${nextScrollId}`
                     : `${BIRDEYE_BASE_URL}?${queryParts.join("&")}`;
 
-                let response;
-                let retries = 0;
-                const maxRetries = 5;
-
-                // Retry loop for Rate Limits (429)
-                while (retries < maxRetries) {
-                    try {
-                        response = await axios.get(requestUrl, { headers, timeout: 5000 });
-                        break; // Success!
-                    } catch (err: any) {
-                        if (err.response?.status === 401 || err.response?.status === 403) {
-                            console.error("[BIRDEYE] API Key Invalid or Suspended (401/403). Disabling Birdeye integration for this session.");
-                            this.isEnabled = false;
-                            return [];
-                        }
-                        if (err.response?.status === 429) {
-                            retries++;
-                            const backoff = Math.pow(2, retries) * 2000; // 4s, 8s, 16s...
-                            console.warn(`[BIRDEYE] Rate limited (429). Retrying in ${backoff / 1000}s... (Attempt ${retries}/${maxRetries})`);
-                            await new Promise(r => setTimeout(r, backoff));
-                            continue;
-                        }
-                        throw err; // Real error
-                    }
+                try {
+                    response = await axios.get(requestUrl, { headers, timeout: 5000 });
+                } catch (err: any) {
+                    console.warn(`[BIRDEYE] Fetch error: ${err.message}`);
+                    break;
                 }
 
                 if (!response || !response.data?.success) break;
@@ -116,40 +97,4 @@ export class BirdeyeService {
         return scanResults;
     }
 
-    /**
-     * Fetches brand new token listings (inc. Pump.fun, Moonshot).
-     * This captures tokens that might not have high volume yet but are "fresh".
-     */
-    static async fetchNewTokenListings(limit: number = 20): Promise<ScanResult[]> {
-        if (!BIRDEYE_API_KEY || !this.isEnabled) return [];
-
-        const scanResults: ScanResult[] = [];
-        try {
-            const response = await axios.get(BIRDEYE_NEW_LISTING_URL, {
-                headers: {
-                    "X-API-KEY": BIRDEYE_API_KEY,
-                    "x-chain": "solana",
-                    "accept": "application/json"
-                },
-                params: {
-                    limit,
-                    meme_platform_enabled: false // Explicitly disable meme platforms (Pump.fun, etc.)
-                },
-                timeout: 5000
-            });
-
-            if (response.data?.success) {
-                // ... (processing logic)
-            }
-
-        } catch (error: any) {
-            if (error.response?.status === 401 || error.response?.status === 403) {
-                console.error("[BIRDEYE] API Key Invalid/Suspended. Disabling New Listing feed.");
-                this.isEnabled = false;
-                return [];
-            }
-            console.warn(`[BIRDEYE] New Listing Fetch failed: ${error.message} - ${JSON.stringify(error.response?.data || {})}`);
-        }
-        return scanResults;
-    }
 }
