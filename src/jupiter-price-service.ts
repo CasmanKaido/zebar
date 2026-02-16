@@ -54,10 +54,13 @@ export class JupiterPriceService {
             if (priceMap) {
                 for (const mint of toFetch) {
                     const priceData = priceMap[mint];
-                    if (priceData && priceData.usdPrice !== undefined) {
-                        const price = typeof priceData.usdPrice === 'string' ? parseFloat(priceData.usdPrice) : priceData.usdPrice;
-                        results.set(mint, price);
-                        this.cache.set(mint, { price, timestamp: now });
+                    if (priceData) {
+                        const priceVal = priceData.price ?? priceData.usdPrice;
+                        if (priceVal !== undefined) {
+                            const price = typeof priceVal === 'string' ? parseFloat(priceVal) : priceVal;
+                            results.set(mint, price);
+                            this.cache.set(mint, { price, timestamp: now });
+                        }
                     }
                 }
             }

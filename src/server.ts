@@ -116,8 +116,15 @@ app.get("/api/price", async (req, res) => {
             try {
                 const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
                 const solData = await solRes.json();
-                if (solData?.solana?.usd) prices.sol = solData.solana.usd;
-                console.log(`[DEBUG] CoinGecko SOL Fallback: ${prices.sol}`);
+
+                // Extra sanity check: SOL price shouldn't be too low in 2026!
+                // Current market is ~$180, so anything under $120 is likely a bug/old data.
+                if (solData?.solana?.usd && solData.solana.usd > 120) {
+                    prices.sol = solData.solana.usd;
+                    console.log(`[DEBUG] CoinGecko SOL Fallback: $${prices.sol}`);
+                } else if (solData?.solana?.usd) {
+                    console.warn(`[DEBUG] CoinGecko returned suspiciously low SOL price: $${solData.solana.usd}. Ignoring fallback.`);
+                }
             } catch (e) {
                 console.error("SOL Price CG Fallback failed");
             }
@@ -134,7 +141,7 @@ app.get("/api/price", async (req, res) => {
             }
         }
 
-        console.log(`[DEBUG] Final Prices: SOL=${prices.sol}, LPPP=${prices.lppp}`);
+        console.log(`[DEBUG] Final Price Sync: SOL=$${prices.sol.toFixed(2)}, LPPP=$${prices.lppp.toFixed(6)}`);
 
         priceCache = prices;
         priceCacheTime = Date.now();

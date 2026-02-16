@@ -2,7 +2,7 @@ import axios from "axios";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 import { BirdeyeService } from "./birdeye-service";
-import { connection, IGNORED_MINTS, SOL_MINT } from "./config";
+import { connection, IGNORED_MINTS, SOL_MINT, USDC_MINT } from "./config";
 export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
@@ -81,8 +81,25 @@ export class MarketScanner {
         while (attempts < maxAttempts) {
             try {
                 SocketManager.emitLog(`[JUPITER] Refreshing global token list (Attempt ${attempts + 1}/${maxAttempts})...`, "info");
-                const res = await axios.get("https://token.jup.ag/all", { timeout: 20000 });
-                if (Array.isArray(res.data)) {
+
+                // Try multiple endpoints for the token list to handle DNS/cache issues
+                const endpoints = [
+                    "https://token.jup.ag/all",
+                    "https://tokens.jup.ag/all",
+                    "https://cache.jup.ag/tokens"
+                ];
+
+                let res: any;
+                for (const url of endpoints) {
+                    try {
+                        res = await axios.get(url, { timeout: 15000 });
+                        if (res.data && Array.isArray(res.data)) break;
+                    } catch (urlErr) {
+                        // Try next URL
+                    }
+                }
+
+                if (res && Array.isArray(res.data)) {
                     this.jupiterTokens.clear();
                     res.data.forEach((t: any) => {
                         this.jupiterTokens.set(t.address, t);
@@ -104,7 +121,14 @@ export class MarketScanner {
                 } else {
                     this.jupiterSyncFailed = true;
                     this.jupiterFailCooldown = Date.now() + (10 * 60 * 1000); // 10 min cooldown
-                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}. Cooling down for 10 mins. On-chain fallback active.`);
+                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}. Using hardcoded fallback for core tokens.`);
+
+                    // Critical Fallback: Ensure at least core tokens are known if Jupiter is down
+                    if (this.jupiterTokens.size === 0) {
+                        this.jupiterTokens.set(SOL_MINT.toBase58(), { symbol: "SOL", decimals: 9, name: "Solana" });
+                        this.jupiterTokens.set(USDC_MINT.toBase58(), { symbol: "USDC", decimals: 6, name: "USD Coin" });
+                        this.jupiterTokens.set("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV", { symbol: "LPPP", decimals: 9, name: "LPPP Liquidity" });
+                    }
                 }
             }
         }
@@ -241,17 +265,21 @@ export class MarketScanner {
 
                 if (chainId === "solana" && address && !uniquePairsMap.has(address)) {
                     // Normalize standard format for internal loop
+                    const baseToken = p.baseToken || {
+                        address: p.mint ? (typeof p.mint === 'string' ? p.mint : p.mint.toBase58()) : p.relationships?.base_token?.data?.id?.split("_")[1],
+                        symbol: p.symbol || p.attributes?.name?.split(" / ")[0] || "TOKEN"
+                    };
+
+                    const quoteToken = p.quoteToken || {
+                        address: p.relationships?.quote_token?.data?.id?.split("_")[1] || SOL_MINT.toBase58(),
+                        symbol: p.attributes?.name?.split(" / ")[1] || "SOL"
+                    };
+
                     uniquePairsMap.set(address, {
                         pairAddress: address,
                         dexId: dexId,
-                        baseToken: p.baseToken || {
-                            address: p.mint ? p.mint.toBase58() : p.relationships?.base_token?.data?.id?.split("_")[1],
-                            symbol: p.symbol || p.attributes?.name?.split(" / ")[0]
-                        },
-                        quoteToken: p.quoteToken || {
-                            address: p.relationships?.quote_token?.data?.id?.split("_")[1],
-                            symbol: p.attributes?.name?.split(" / ")[1]
-                        },
+                        baseToken,
+                        quoteToken,
                         priceUsd: p.priceUsd || Number(p.attributes?.base_token_price_usd || 0),
                         volume: p.volume || {
                             m5: Number(p.attributes?.volume_usd?.m5 || 0),
@@ -284,11 +312,12 @@ export class MarketScanner {
                 let targetToken = pair.baseToken;
                 let priceUSD = Number(pair.priceUsd || 0);
 
-                if (IGNORED_MINTS.includes(targetToken.address)) {
+                if (!targetToken?.address || IGNORED_MINTS.includes(targetToken.address)) {
                     targetToken = pair.quoteToken;
                 }
 
-                if (IGNORED_MINTS.includes(targetToken.address)) continue;
+                // Final safety check for targetToken
+                if (!targetToken?.address || IGNORED_MINTS.includes(targetToken.address)) continue;
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
 
                 // metadata Check / Fallback (Batch 2.0)
