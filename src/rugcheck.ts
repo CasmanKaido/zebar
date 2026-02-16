@@ -32,12 +32,21 @@ const KNOWN_LOCKERS = new Set([
     // PinkSale
     "FASGwdWxPjZ655g67idpSwiavigorgB9L7p6Y4qG6Pc5",
 
-    // Other (Metaplex, Raydium, Tally, SOLOCKER)
+    // Other (Metaplex, Raydium, Tally, SOLOCKER, SolMint)
     "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
     "1BWutmTvYPwDtmw9abTkS4Ssr8no61spGAvW1X6NDix",
     "A5vz72a5ipKUJZxmGUjGtS7uhWfzr6jhDgV2q73YhD8A", // Tally-Pay
     "DLxB9dSQtA4WJ49hWFhxqiQkD9v6m67Yfk9voxpxrBs4", // SOLOCKER
+    "B46UV19XGvWf8xXbKThVqH7A7fD8J9T1mP", // Raydium Authority
 ]);
+
+// DEX Program IDs to detect
+const DEX_PROGRAMS = {
+    RAYDIUM_V4: "675k1S2AYp7jkS6GMBv6mUeBBSyitjGatE2Gf2n4jGvP",
+    METEORA_CP: "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+    ORCA_WHIRLPOOL: "whir9iKR7ndbm3gUak6Z6uHXYsc2FcyGAFGcMjg7uVL",
+    RAYDIUM_CLMM: "CAMMCzo5YL8w4VFF8KVHrpeWCsC2vG96itstCxsK7o",
+};
 
 // Burn address (tokens sent here = permanently locked)
 const BURN_ADDRESS = "1111111111111111111111111111111111111111111";
@@ -127,8 +136,9 @@ export class OnChainSafetyChecker {
             if (lpLocked) {
                 result.checks.liquidityLocked = "locked";
                 SocketManager.emitLog(`[SAFETY] ✅ LP Tokens verified LOCKED/BURNED`, "success");
-                return result;
             }
+
+            // Always perform following checks: Bundle Check, Concentration Check, and Token-level Lock heuristic (if not already locked)
 
             // Fallback: Check largest accounts of the token itself (Heuristic)
             const largestAccounts = await safeRpc(
@@ -172,10 +182,14 @@ export class OnChainSafetyChecker {
                     totalSupplyChecked += amount;
                 }
 
-                // ═══ BUNDLE CHECK DISABLED PER USER REQUEST ═══
-                // if (maxDuplicates >= 3) {
-                // ...
-                // }
+                // ═══ 4. BUNDLE CHECK (Reactivated) ═══
+                // High probability of "Wash Trading" or "Dump Bundles" if multiple top accounts have identical balances.
+                if (maxDuplicates >= 3) {
+                    result.safe = false;
+                    result.reason = `Bundled Wallets Detected (${maxDuplicates} accounts with identical balances)`;
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... BUNDLED WALLETS DETECTED`, "error");
+                    return result;
+                }
 
                 const mintInfo = await safeRpc(() => getMint(connection, mint), "getMint-Supply");
                 const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
@@ -191,19 +205,22 @@ export class OnChainSafetyChecker {
 
                 if (lockedAmount > 0) {
                     result.checks.liquidityLocked = "locked";
-                    SocketManager.emitLog(`[SAFETY] ✅ Liquidity appears locked/burned (token level)`, "success");
-                } else {
+                    // If we found locked supply at the token level, we consider it a 'soft' lock pass
+                    if (!lpLocked) SocketManager.emitLog(`[SAFETY] ✅ Supply appears locked/burned (token level check)`, "success");
+                } else if (!lpLocked) {
                     result.checks.liquidityLocked = "unlocked";
-                    // BLOCK UNLOCKED LIQUIDITY
                     result.safe = false;
-                    result.reason = "No locked liquidity detected (verified via lpMint and token holders)";
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... NO LOCKED LP DETECTED`, "error");
+                    result.reason = "Unverified Liquidity: No locked LP tokens or burned supply detected";
+                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... LIQUIDITY UNLOCKED`, "error");
                     return result;
                 }
             }
         } catch (err: any) {
-            console.warn(`[SAFETY] LP lock check failed: ${err.message}`);
+            console.warn(`[SAFETY] Safety scan failed: ${err.message}`);
+            result.safe = false;
+            result.reason = `Safety check failed: ${err.message}`;
             result.checks.liquidityLocked = "unknown";
+            return result;
         }
 
         return result;
@@ -221,16 +238,24 @@ export class OnChainSafetyChecker {
         let lpMint: string | null = null;
 
         // Raydium V4
-        if (owner === "675k1S2AYp7jkS6GMBv6mUeBBSyitjGatE2Gf2n4jGvP") {
+        if (owner === DEX_PROGRAMS.RAYDIUM_V4) {
             // lpMint is at offset 328 in Raydium V4 AMM layout
             lpMint = new PublicKey(info.data.slice(328, 328 + 32)).toBase58();
         }
         // Meteora CP-AMM
-        else if (owner === "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C") {
+        else if (owner === DEX_PROGRAMS.METEORA_CP) {
             // lpMint is at offset 168 in Meteora CP-AMM PoolState
             lpMint = new PublicKey(info.data.slice(168, 168 + 32)).toBase58();
         }
-        // Fallback for other DEXs (like DLMM, Orca) can be added here if offsets are known
+        // Raydium CLMM or Orca (LP is an NFT, check the owner directly for locked status)
+        else if (owner === DEX_PROGRAMS.RAYDIUM_CLMM || owner === DEX_PROGRAMS.ORCA_WHIRLPOOL) {
+            SocketManager.emitLog(`[SAFETY] Detected ${owner === DEX_PROGRAMS.ORCA_WHIRLPOOL ? 'Orca' : 'CLMM'} Pool. Checking NFT-based lock status...`, "info");
+            // For these, we don't have a simple 'lpMint' to check holders.
+            // But we can check if the largest position accounts are owned by trackers.
+            // Placeholder: Returning true for now if owner is recognized, but ideally we'd scan positions.
+            // For now, let's treat it as "unknown" to be safe.
+            return false;
+        }
 
         if (!lpMint || lpMint === "11111111111111111111111111111111") return false;
 
