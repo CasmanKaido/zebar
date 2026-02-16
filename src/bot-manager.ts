@@ -813,10 +813,10 @@ export class BotManager {
                         const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
 
                         if (posValue.success) {
-                            // ═══ DEBUG: Show raw values for diagnosis ═══
+                            /* ═══ DEBUG: Show raw values for diagnosis ═══
                             if (sweepCount < 10 || sweepCount % 5 === 0) {
                                 console.log(`[MONITOR RAW] ${pool.token} | totalSol: ${posValue.totalSol.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | fees: ${posValue.feesSol.toFixed(6)} | initialSolValue: ${pool.initialSolValue?.toFixed(6) || 'N/A'}`);
-                            }
+                            } */
 
                             // ═══ SANITY GUARD: Reject zero-value responses from RPC glitches ═══
                             if (posValue.totalSol <= 0 && pool.initialSolValue && pool.initialSolValue > 0) {
@@ -841,11 +841,11 @@ export class BotManager {
                                 totalLppp: posValueLppp.toString()
                             };
 
-                            // ═══ DEBUG: Position Value + Fees breakdown ═══
+                            /* ═══ DEBUG: Position Value + Fees breakdown ═══
                             if (sweepCount < 10 || sweepCount % 5 === 0) {
                                 console.log(`[POS-VALUE] ${pool.token} | baseLp: ${posValue.userBaseInLp.toFixed(6)} | tokenLp: ${posValue.userTokenInLp.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | posLppp: ${posValueLppp.toFixed(6)}`);
                                 console.log(`[FEES-DBG]  ${pool.token} | feesSol: ${posValue.feesSol.toFixed(6)} | feesToken: ${posValue.feesToken.toFixed(6)} | feesLppp: ${totalFeesLppp.toFixed(6)}`);
-                            }
+                            } */
 
                             // 2. Spot ROI (Price-based)
                             const normalizedPrice = posValue.spotPrice;
@@ -894,10 +894,10 @@ export class BotManager {
                             const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
                             pool.netRoi = `${netRoiVal.toFixed(2)}%`;
 
-                            // Log state for visibility
-                            if (sweepCount < 30 || sweepCount % 5 === 0 || usdMultiplier !== 1) {
-                                console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(2)}x | Value: $${currentUsdValue.toFixed(4)} (Token:$${tokenPrice.toFixed(6)}, LPPP:$${lpppPrice.toFixed(6)})`);
-                                console.log(`[MONITOR]  ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP`);
+                            // Log state for visibility (Reduced frequency)
+                            if (sweepCount % 20 === 0 || usdMultiplier !== 1) {
+                                console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(3)}x | Net ROI: ${pool.netRoi}`);
+                                // console.log(`[MONITOR]  ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP`);
                             }
 
                             // Update local state and emit

@@ -484,7 +484,7 @@ export class StrategyManager {
             }
 
             if (!poolData) {
-                // On-chain fallback would require full layout decoding which is heavy, 
+                // On-chain fallback would require full layout decoding which is heavy,
                 // but we can at least try the V2 API which sometimes has different indexing.
                 try {
                     const backupResponse = await axios.get(`https://api.raydium.io/v2/sdk/liquidity/mainnet.json`);
@@ -1509,8 +1509,9 @@ export class StrategyManager {
                 // Since priceRatio = B_raw / A_raw, A_raw / B_raw = 1 / priceRatio.
                 spotPrice = (1 / priceRatio) * (10 ** (decimalsB - decimalsA));
 
-                // Logging for verification
+                /* Logging for verification (Spammy)
                 console.log(`[SPOT-PRICE] sqrtPriceX64: ${sqrtPriceX64}, priceRatio: ${priceRatio}, spotPrice: ${spotPrice}`);
+                */
             }
 
             // Fallback if sqrtPrice processing failed or yielded NaN
@@ -1601,8 +1602,8 @@ export class StrategyManager {
             const userAmountA = Number(amountA_red) / (10 ** mintAInfo.decimals);
             const userAmountB = Number(amountB_red) / (10 ** mintBInfo.decimals);
 
-            console.log(`[DEBUG-MATH] L_user: ${L_user}, sqrtPriceX64: ${sqrtPriceX64}, AmtA_raw: ${amountA_red}, AmtB_raw: ${amountB_red}`);
-            console.log(`[DEBUG-MATH] UserAmtA: ${userAmountA}, UserAmtB: ${userAmountB}`);
+            /* console.log(`[DEBUG-MATH] L_user: ${L_user}, sqrtPriceX64: ${sqrtPriceX64}, AmtA_raw: ${amountA_red}, AmtB_raw: ${amountB_red}`);
+            console.log(`[DEBUG-MATH] UserAmtA: ${userAmountA}, UserAmtB: ${userAmountB}`); */
 
             // Assign to Base/Token
             // Note: This logic assumes sqrtPrice direction matches (B/A).
@@ -1692,10 +1693,10 @@ export class StrategyManager {
                 ) / Math.pow(10, decimalsB);
             }
 
-            // Log calculation results for verification
+            /* // Log calculation results for verification
             if (feeA > 0 || feeB > 0) {
                 console.log(`[FEES] Calculated Pending Fees: A=${feeA.toFixed(6)}, B=${feeB.toFixed(6)}`);
-            }
+            } */
 
             const feesBase = baseIsA ? feeA : feeB;
             const feesToken = baseIsA ? feeB : feeA;

@@ -123,14 +123,16 @@ export class BirdeyeService {
                 "accept": "application/json"
             };
 
-            // Birdeye V2 New Listing allows min_liquidity directly
+            // Removed 'meme_platform_enabled' as it can cause 400/Bad Request on some API tiers.
             const params = new URLSearchParams({
-                meme_platform_enabled: "true",
                 min_liquidity: (criteria.liquidity.min || 100).toString(),
-                limit: "50"
+                limit: "10" // Safer limit for Lite/Free tiers
             });
 
-            const response = await axios.get(`https://public-api.birdeye.so/defi/v2/tokens/new_listing?${params}`, { headers, timeout: 5000 });
+            const response = await axios.get(`https://public-api.birdeye.so/defi/v2/tokens/new_listing?${params}`, {
+                headers,
+                timeout: 8000
+            });
 
             if (!response.data?.success) return [];
 
@@ -146,7 +148,8 @@ export class BirdeyeService {
                 priceUsd: t.price || 0
             }));
         } catch (e: any) {
-            console.warn(`[BIRDEYE-SCOUT] Error: ${e.message}`);
+            const errorMsg = e.response?.data?.message || e.message;
+            console.warn(`[BIRDEYE-SCOUT] Error: ${errorMsg}`);
             return [];
         }
     }
