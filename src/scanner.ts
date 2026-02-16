@@ -19,13 +19,15 @@ export interface NumericRange {
     max: number; // 0 means no upper limit
 }
 
+export type ScannerMode = "SCOUT" | "ANALYST" | "DUAL";
+
 export interface ScannerCriteria {
     volume5m: NumericRange;
     volume1h: NumericRange;
     volume24h: NumericRange;
     liquidity: NumericRange;
     mcap: NumericRange;
-
+    mode?: ScannerMode;
 }
 
 export class MarketScanner {
@@ -74,18 +76,19 @@ export class MarketScanner {
         if (this.jupiterSyncFailed && Date.now() < this.jupiterFailCooldown) return;
 
         let attempts = 0;
-        const maxAttempts = 2; // Reduced from 5: don't waste sweep time
+        const maxAttempts = 4; // Increased from 2 for better resilience
 
         while (attempts < maxAttempts) {
             try {
                 SocketManager.emitLog(`[JUPITER] Refreshing global token list (Attempt ${attempts + 1}/${maxAttempts})...`, "info");
-                const res = await axios.get("https://token.jup.ag/all", { timeout: 15000 });
+                const res = await axios.get("https://token.jup.ag/all", { timeout: 20000 });
                 if (Array.isArray(res.data)) {
                     this.jupiterTokens.clear();
                     res.data.forEach((t: any) => {
                         this.jupiterTokens.set(t.address, t);
                     });
                     this.lastJupiterSync = Date.now();
+                    this.jupiterSyncFailed = false; // Reset failure flag on success
                     SocketManager.emitLog(`[JUPITER] Synced ${res.data.length} tokens for validation.`, "success");
                     return; // Success
                 }
@@ -95,7 +98,7 @@ export class MarketScanner {
                 const errMsg = isDnsError ? "DNS lookup failed (network glitch?)" : e.message;
 
                 if (attempts < maxAttempts) {
-                    const delay = attempts * 3000; // 3s, 6s
+                    const delay = attempts * 5000; // 5s, 10s, 15s
                     console.warn(`[JUPITER WARN] Sync attempt ${attempts} failed: ${errMsg}. Retrying in ${delay / 1000}s...`);
                     await new Promise(r => setTimeout(r, delay));
                 } else {
@@ -132,21 +135,54 @@ export class MarketScanner {
             } catch (error: any) {
                 console.error(`[SWEEPER ERROR] ${error.message}`);
             }
-            // Wait 30 seconds between sweeps to avoid rate limits
-            await new Promise(resolve => setTimeout(resolve, 30000));
+            // Wait 20 seconds between sweeps (Optimized for Helius Developer + Birdeye Lite)
+            await new Promise(resolve => setTimeout(resolve, 20000));
         }
     }
 
     private async performMarketSweep() {
-        SocketManager.emitLog("[SWEEPER] Harvesting the whole Solana ecosystem for opportunities...", "info");
+        const mode = this.criteria.mode || "DUAL";
+        SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Targeting Birdeye Pro feeds...`, "info");
 
         try {
             let allPairs: any[] = [];
 
-            // 1. HARVEST the "Whole Ecosystem" via GeckoTerminal Network Pools (Paginated)
-            for (let page = 1; page <= 6; page++) {
+            // 1. PRIMARY: Birdeye Engine Selection
+            try {
+                if (mode === "ANALYST" || mode === "DUAL") {
+                    const trending = await BirdeyeService.fetchTrendingTokens(this.criteria);
+                    allPairs = [...allPairs, ...trending];
+                }
+
+                if (mode === "SCOUT" || mode === "DUAL") {
+                    const newListings = await BirdeyeService.fetchNewListings(this.criteria);
+                    allPairs = [...allPairs, ...newListings];
+                }
+
+                // Fallback / High-Volume Baseline (Always good to have)
+                if (mode === "ANALYST" || mode === "DUAL") {
+                    const highVolume = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
+                    allPairs = [...allPairs, ...highVolume];
+                }
+            } catch (e) {
+                console.warn(`[BIRDEYE-SCAN] Error: ${e}`);
+            }
+
+            /* 
+            // 2. SECONDARY: DexScreener Search (Meteora focus)
+            const keywordQueries = ["meteora"];
+            for (const query of keywordQueries) {
                 try {
-                    // We use /pools to find tokens with activity.
+                    const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${query}`, { timeout: 5000 });
+                    if (searchRes.data.pairs) allPairs = [...allPairs, ...searchRes.data.pairs];
+                } catch (e) { }
+            }
+            */
+
+            /*
+            // 3. TERTIARY: GeckoTerminal Network Pools (Paginated Backup)
+            for (let page = 1; page <= 8; page++) {
+                try {
                     const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
                     if (geckoRes.data?.data) {
                         const pagePairs = geckoRes.data.data.map((p: any) => ({
@@ -174,59 +210,26 @@ export class MarketScanner {
                     }
                 } catch (e: any) {
                     if (e.response?.status === 429) {
-                        console.error(`[GECKO CIRCUIT BREAKER] 429 detected on Page ${page}. IP throttled. Halting.`);
+                        console.error(`[GECKO] 429 on Page ${page}. IP throttled.`);
                         break;
                     }
-                    console.error(`[GECKO ERROR] Page ${page} failed: ${e.message}`);
                 }
-                // Rate limit protection: Slow 15s between pages to avoid IP throttling
-                if (page < 6) await new Promise(r => setTimeout(r, 15000));
+                // Faster 5s delay for backup source
+                if (page < 8) await new Promise(r => setTimeout(r, 5000));
             }
+            */
 
-            // 2. Add Broad DexScreener Search (Meteora specifically)
-            const keywordQueries = ["meteora"];
-            for (const query of keywordQueries) {
-                try {
-                    const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${query}`, { timeout: 5000 });
-                    if (searchRes.data.pairs) allPairs = [...allPairs, ...searchRes.data.pairs];
-                } catch (e) { }
-            }
-
-            // 3. NEW: Birdeye High-Volume Tokens
-            try {
-                const birdeyeResults = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
-                if (birdeyeResults.length > 0) {
-                    allPairs = [...allPairs, ...birdeyeResults];
-                }
-            } catch (e) {
-                console.warn(`[BIRDEYE] Error: ${e}`);
-            }
-
-            // 3.5. NEW: Birdeye 'New Listing' Feed (DISABLED)
-            // try {
-            //     // const newTokens = await BirdeyeService.fetchNewTokenListings(20);
-            //     // if (newTokens.length > 0) {
-            //     //     allPairs = [...allPairs, ...newTokens];
-            //     // }
-            // } catch (e) {
-            //     console.warn(`[BIRDEYE] New Listing Error: ${e}`);
-            // }
-
-
-
-
-            // 5. NEW: DexScreener Boosted Tokens
+            /*
+            // 4. DexScreener Boosted Tokens (Trending)
             try {
                 const boostedRes = await axios.get("https://api.dexscreener.com/token-boosts/latest/v1", { timeout: 5000 });
                 if (Array.isArray(boostedRes.data)) {
-                    // Filter for Solana tokens only and mark as high-priority
                     const solanaBoosted = boostedRes.data.filter((t: any) => t.chainId === "solana");
                     const boostedPairs = solanaBoosted.map((t: any) => ({ ...t, isBoosted: true }));
                     allPairs = [...allPairs, ...boostedPairs];
                 }
-            } catch (e: any) {
-                // Not all endpoints are always stable, ignore failures
-            }
+            } catch (e: any) { }
+            */
 
             // Deduplicate pairs by address and FILTER FOR METEORA ONLY
             const uniquePairsMap = new Map();
@@ -234,7 +237,7 @@ export class MarketScanner {
                 // Handle different response formats between Gecko and DexScreener
                 const dexId = (p.dexId || p.relationships?.dex?.data?.id || "").toLowerCase();
                 const chainId = (p.chainId || "solana").toLowerCase();
-                const address = p.pairAddress || p.attributes?.address;
+                const address = p.pairAddress || p.attributes?.address || p.tokenAddress;
 
                 if (chainId === "solana" && address && !uniquePairsMap.has(address)) {
                     // Normalize standard format for internal loop
@@ -257,7 +260,7 @@ export class MarketScanner {
                         },
                         volume24h: p.volume24h || Number(p.attributes?.volume_usd?.h24 || 0),
                         liquidity: p.liquidity ? (typeof p.liquidity === 'object' ? p.liquidity : { usd: p.liquidity }) : { usd: Number(p.attributes?.reserve_in_usd || 0) },
-                        marketCap: p.marketCap || p.fdv || Number(p.attributes?.fdv_usd || 0)
+                        marketCap: p.mcap || p.marketCap || p.fdv || Number(p.attributes?.fdv_usd || 0)
                     });
                 }
             });
@@ -318,8 +321,8 @@ export class MarketScanner {
                     return minMatch && maxMatch;
                 };
 
-                const meetsVol5m = inRange(volume5m, this.criteria.volume5m);
-                const meetsVol1h = inRange(volume1h, this.criteria.volume1h);
+                const meetsVol5m = (volume5m === 0 && pair.dexId.startsWith('birdeye')) ? true : inRange(volume5m, this.criteria.volume5m);
+                const meetsVol1h = (volume1h === 0 && pair.dexId.startsWith('birdeye')) ? true : inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
                 const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
                 const meetsMcap = inRange(mcap, this.criteria.mcap);

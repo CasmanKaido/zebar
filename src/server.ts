@@ -67,6 +67,10 @@ app.get("/api/status", (req, res) => {
     res.json({ running: botManager.isRunning });
 });
 
+app.get("/api/settings", (req, res) => {
+    res.json(botManager.getSettings());
+});
+
 app.post("/api/start", async (req, res) => {
     try {
         await botManager.start(req.body);
@@ -143,7 +147,7 @@ app.get("/api/price", async (req, res) => {
 
 // Portfolio Endpoint (SOL/LPPP Balances)
 app.get("/api/portfolio", async (req, res) => {
-    const balance = await botManager.getWalletBalance(); // Corred method for UI widget
+    const balance = await botManager.getWalletBalance(); // Correct method for UI widget
     res.json(balance);
 });
 

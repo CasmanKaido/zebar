@@ -28,7 +28,7 @@ export interface BotSettings {
     volume24h: { min: number; max: number };
     liquidity: { min: number; max: number };
     mcap: { min: number; max: number };
-
+    mode?: "SCOUT" | "ANALYST" | "DUAL";
 }
 
 export class BotManager {
@@ -55,12 +55,16 @@ export class BotManager {
         volume24h: { min: 1000000, max: 0 },
         liquidity: { min: 60000, max: 0 },
         mcap: { min: 60000, max: 0 },
-
+        mode: "DUAL"
     };
 
     constructor() {
         this.strategy = new StrategyManager(connection, wallet);
         this.initialize();
+    }
+
+    public getSettings(): BotSettings {
+        return this.settings;
     }
 
     private async initialize() {
@@ -408,7 +412,7 @@ export class BotManager {
         }
 
         // Check Balance
-        const balance = await connection.getBalance(wallet.publicKey);
+        const balance = await safeRpc(() => connection.getBalance(wallet.publicKey), "getWalletBalance");
         if (balance === 0) {
             SocketManager.emitLog(`[WARNING] Your wallet (${wallet.publicKey.toBase58().slice(0, 8)}...) has 0 SOL. Buys will fail.`, "error");
         } else {
@@ -424,7 +428,8 @@ export class BotManager {
             volume1h: this.settings.volume1h,
             volume24h: this.settings.volume24h,
             liquidity: this.settings.liquidity,
-            mcap: this.settings.mcap
+            mcap: this.settings.mcap,
+            mode: this.settings.mode
         };
 
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
@@ -498,7 +503,7 @@ export class BotManager {
                     await new Promise(r => setTimeout(r, 1500));
 
                     // Fetch ACTUAL balance instead of relying on swap output
-                    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint });
+                    const tokenAccounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint }), "getPostSwapBalance");
                     const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
                     const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
 
@@ -544,7 +549,7 @@ export class BotManager {
                     let effectiveTokenAmount = tokenAmount;
                     const LPPP_DECIMALS = 9;
                     try {
-                        const lpppAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT });
+                        const lpppAccounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT }), "getLpppBalance");
                         const lpppBalanceRaw = lpppAccounts.value.reduce(
                             (acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n
                         );

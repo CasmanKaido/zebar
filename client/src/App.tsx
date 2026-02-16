@@ -238,6 +238,7 @@ function App() {
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
+    const [discoveryMode, setDiscoveryMode] = useState<'SCOUT' | 'ANALYST' | 'DUAL'>('DUAL');
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -393,7 +394,8 @@ function App() {
                     volume1h: { min: minVolume, max: maxVolume },
                     volume24h: { min: minVolume24h, max: maxVolume24h },
                     liquidity: { min: minLiquidity, max: maxLiquidity },
-                    mcap: { min: minMcap, max: maxMcap }
+                    mcap: { min: minMcap, max: maxMcap },
+                    mode: discoveryMode
                 })
             });
 
@@ -687,6 +689,34 @@ function App() {
                                 {solPrice && lpppPrice && lpppPrice > 0 && (
                                     <span className="text-[9px] text-muted-foreground/70">≈ ${(isBuyUsd ? buyAmount : buyAmount * solPrice).toFixed(2)} USD equivalent</span>
                                 )}
+                            </div>
+                        </div>
+
+                        {/* Discovery Engine Selection */}
+                        <div className="mb-6 pt-4 border-t border-border">
+                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 block">Discovery Engine</label>
+                            <div className="grid grid-cols-3 gap-1.5 p-1 bg-secondary rounded-lg border border-border">
+                                {['SCOUT', 'ANALYST', 'DUAL'].map((m) => (
+                                    <button
+                                        key={m}
+                                        onClick={() => setDiscoveryMode(m as any)}
+                                        disabled={running}
+                                        className={`py-2 rounded-md text-[10px] font-black transition-all border flex flex-col items-center gap-0.5 ${discoveryMode === m
+                                            ? 'bg-primary/20 border-primary text-primary shadow-[0_0_10px_rgba(16,185,129,0.1)] scale-[1.02]'
+                                            : 'bg-transparent border-transparent text-muted-foreground/60 hover:text-muted-foreground'
+                                            }`}
+                                    >
+                                        <span className="tracking-tighter">{m}</span>
+                                        {m === 'SCOUT' && <span className="text-[7px] opacity-60">New</span>}
+                                        {m === 'ANALYST' && <span className="text-[7px] opacity-60">Hot</span>}
+                                        {m === 'DUAL' && <span className="text-[7px] opacity-60">All</span>}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="mt-2 text-[9px] text-muted-foreground/60 italic px-1">
+                                {discoveryMode === 'SCOUT' && "• Targeting fresh token listings (< 10m old)"}
+                                {discoveryMode === 'ANALYST' && "• Targeting high-rank trending momentum"}
+                                {discoveryMode === 'DUAL' && "• Concurrent Scout + Analyst coverage"}
                             </div>
                         </div>
 
