@@ -80,7 +80,7 @@ export class MarketScanner {
 
         while (attempts < maxAttempts) {
             try {
-                SocketManager.emitLog(`[JUPITER] Refreshing global token list (Attempt ${attempts + 1}/${maxAttempts})...`, "info");
+                // Silent refresh
 
                 // Try multiple endpoints for the token list to handle DNS/cache issues
                 const endpoints = [

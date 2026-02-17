@@ -25,7 +25,7 @@ export class TokenMetadataService {
         if (this.syncFailureCount > 0 && Date.now() - this.lastFailureTimestamp < 5 * 60 * 1000) return;
 
         try {
-            console.log("[METADATA] Syncing Jupiter token list...");
+            // Silent sync
             const res = await axios.get("https://token.jup.ag/all", { timeout: 15000 });
             if (Array.isArray(res.data)) {
                 res.data.forEach((token: any) => {

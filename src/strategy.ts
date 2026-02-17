@@ -208,7 +208,7 @@ export class StrategyManager {
             if (!swapTransaction) {
                 throw new Error(`Ultra Order failed: No transaction returned. Response: ${JSON.stringify(orderResponse)}`);
             }
-            console.log(`[ULTRA] Order Created. Type: Ultra Direct. Request ID: ${requestId}`);
+            // Silent direct order log
 
 
             // 3. Deserialize and Sign
@@ -903,20 +903,14 @@ export class StrategyManager {
             // 1. Check customizable pool (seed "cpool") — this is what the bot creates with 200bps fee
             const customPoolAddress = deriveCustomizablePoolAddress(tokenA, tokenB);
             const customInfo = await this.connection.getAccountInfo(customPoolAddress);
-            if (customInfo) {
-                console.log(`[METEORA] Customizable pool already exists: ${customPoolAddress.toBase58()} for ${tokenA.toBase58().slice(0, 8)}/${tokenB.toBase58().slice(0, 8)}`);
-                return customPoolAddress.toBase58();
-            }
+            if (customInfo) return customPoolAddress.toBase58();
 
             // 2. Check standard pool (seed "pool" + config index 0) — for completeness
             const configIndex = new BN(0);
             const configAddress = deriveConfigAddress(configIndex);
             const stdPoolAddress = derivePoolAddress(configAddress, tokenA, tokenB);
             const stdInfo = await this.connection.getAccountInfo(stdPoolAddress);
-            if (stdInfo) {
-                console.log(`[METEORA] Standard pool already exists: ${stdPoolAddress.toBase58()} for ${tokenA.toBase58().slice(0, 8)}/${tokenB.toBase58().slice(0, 8)}`);
-                return stdPoolAddress.toBase58();
-            }
+            if (stdInfo) return stdPoolAddress.toBase58();
 
             return null;
         } catch (err: any) {
@@ -1100,9 +1094,7 @@ export class StrategyManager {
                 positionAddress = result.position;
             }
 
-            console.log(`[METEORA] SDK Transaction Instructions: ${transaction instanceof Transaction ? transaction.instructions.length : (transaction as any).instructions.length}`);
-            console.log(`[METEORA] Amounts -> A: ${bnAmountA.toString()} raw | B: ${bnAmountB.toString()} raw`);
-            console.log(`[METEORA] LiquidityDelta: ${poolParams.liquidityDelta.toString()}`);
+            // Silent SDK Debug logs
 
             // 9. Send & Confirm (MUST SIGN WITH POSITION NFT MINT)
             // Issue 40: Wrap in Jito Bundle if enabled

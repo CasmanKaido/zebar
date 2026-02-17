@@ -46,7 +46,7 @@ export async function safeRpc<T>(fn: () => Promise<T>, desc: string, maxRetries 
                 retries++;
                 // Aggressive backoff for strict RPCs
                 const backoff = Math.min(Math.pow(2, retries) * 1500, 30000);
-                console.log(`[RPC-RETRY] ${desc} throttled. Retrying in ${backoff}ms... (Attempt ${retries}/${maxRetries})`);
+                console.log(`[RPC] Throttled. Retrying in ${Math.round(backoff / 100) / 10}s... (${retries}/${maxRetries})`);
                 await new Promise(r => setTimeout(r, backoff));
                 continue;
             }

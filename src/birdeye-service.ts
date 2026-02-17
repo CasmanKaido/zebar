@@ -21,7 +21,7 @@ export class BirdeyeService {
         }
 
         const apiKey: string = BIRDEYE_API_KEY as string;
-        console.log(`[BIRDEYE] Starting market-wide scan... (API Key: ${apiKey.slice(0, 4)}****)`);
+        // Silent start unless debug
 
         const scanResults: ScanResult[] = [];
         let nextScrollId: string | null = null;
@@ -74,9 +74,7 @@ export class BirdeyeService {
                 const tokens = response.data.data?.items || [];
                 nextScrollId = response.data.data?.next_scroll_id;
 
-                if (tokens.length > 0) {
-                    console.log(`[BIRDEYE PRO] Page ${page + 1}: Found ${tokens.length} tokens.`);
-                }
+                // Pagination is silent, results consolidated at end
 
                 for (const t of tokens) {
                     if (!t.address) continue;
@@ -99,6 +97,9 @@ export class BirdeyeService {
 
                 // Stagger requests
                 page++;
+            }
+            if (scanResults.length > 0) {
+                console.log(`[BIRDEYE] Scan Complete: Found ${scanResults.length} tokens across ${page} pages.`);
             }
             return scanResults;
         }
