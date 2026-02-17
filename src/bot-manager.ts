@@ -434,7 +434,7 @@ export class BotManager {
             mode: this.settings.mode
         };
 
-        this.scanner = new MarketScanner(criteria, (result: ScanResult) => {
+        this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
             if (!this.isRunning) return;
             this.enqueueToken(result);
         }, connection);
