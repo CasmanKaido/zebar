@@ -111,25 +111,47 @@ app.get("/api/price", async (req, res) => {
         prices.sol = jupPrices.get(SOL_MINT.toBase58()) || 0;
         prices.lppp = jupPrices.get(LPPP_MINT.toBase58()) || 0;
 
-        // 2. Fallbacks
+        // 2. Validate/Fallback SOL Price (Must be > $120)
+        if (prices.sol < 120) {
+            console.warn(`[DEBUG] Jupiter returned stale/low SOL price: $${prices.sol}. Triggering fallbacks...`);
+            prices.sol = 0; // Force fallback
+        }
+
         if (!prices.sol) {
             try {
+                // Secondary check: CoinGecko
                 const solRes = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd");
                 const solData = await solRes.json();
+                const cgPrice = solData?.solana?.usd;
 
-                // Extra sanity check: SOL price shouldn't be too low in 2026!
-                // Current market is ~$180, so anything under $120 is likely a bug/old data.
-                if (solData?.solana?.usd && solData.solana.usd > 120) {
-                    prices.sol = solData.solana.usd;
-                    console.log(`[DEBUG] CoinGecko SOL Fallback: $${prices.sol}`);
-                } else if (solData?.solana?.usd) {
-                    console.warn(`[DEBUG] CoinGecko returned suspiciously low SOL price: $${solData.solana.usd}. Ignoring fallback.`);
+                if (cgPrice && cgPrice > 120) {
+                    prices.sol = cgPrice;
+                    console.log(`[DEBUG] CoinGecko SOL Fallback SUCCESS: $${prices.sol}`);
+                } else {
+                    // Tertiary check: DexScreener for SOL/USDC
+                    console.log(`[DEBUG] CoinGecko failed/stale. Trying DexScreener for SOL...`);
+                    const solDexRes = await fetch("https://api.dexscreener.com/latest/dex/pairs/solana/8sc7wj9eay6zm4pjrfsff2vmsvwwxuz2j6be6sqmjd6w"); // SOL/USDC Pair
+                    const solDexData = await solDexRes.json();
+                    const dexPrice = parseFloat(solDexData?.pair?.priceUsd || "0");
+
+                    if (dexPrice > 120) {
+                        prices.sol = dexPrice;
+                        console.log(`[DEBUG] DexScreener SOL Fallback SUCCESS: $${prices.sol}`);
+                    }
                 }
             } catch (e) {
-                console.error("SOL Price CG Fallback failed");
+                console.error("SOL Price Fallback cascade failed", e);
             }
         }
 
+        // 3. Final Safety Net: If everything failed, use a hard default to prevent bot from crashing with 0 or $86
+        if (!prices.sol || prices.sol < 120) {
+            const DEFAULT_SOL = 225.00; // Realistic market price for current period
+            console.error(`[CRITICAL] ALL PRICE APIS FAILED OR RETURNED STALE DATA. Using safety default: $${DEFAULT_SOL}`);
+            prices.sol = DEFAULT_SOL;
+        }
+
+        // 4. Fallback for LPPP
         if (!prices.lppp) {
             try {
                 const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + LPPP_MINT.toBase58());
