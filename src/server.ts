@@ -111,12 +111,7 @@ app.get("/api/price", async (req, res) => {
         prices.sol = jupPrices.get(SOL_MINT.toBase58()) || 0;
         prices.lppp = jupPrices.get(LPPP_MINT.toBase58()) || 0;
 
-        // 2. Validate/Fallback SOL Price (Must be > $120)
-        if (prices.sol < 10) {
-            console.warn(`[DEBUG] Jupiter returned critically low/stale SOL price: $${prices.sol}. Triggering fallbacks...`);
-            prices.sol = 0; // Force fallback
-        }
-
+        // 2. Fallbacks (only if primary Jupiter fails)
         if (!prices.sol) {
             try {
                 // Secondary check: CoinGecko
@@ -124,31 +119,24 @@ app.get("/api/price", async (req, res) => {
                 const solData = await solRes.json();
                 const cgPrice = solData?.solana?.usd;
 
-                if (cgPrice && cgPrice > 10) {
+                if (cgPrice) {
                     prices.sol = cgPrice;
-                    console.log(`[DEBUG] CoinGecko SOL Fallback SUCCESS: $${prices.sol}`);
+                    console.log(`[DEBUG] CoinGecko SOL Live: $${prices.sol}`);
                 } else {
                     // Tertiary check: DexScreener for SOL/USDC
-                    console.log(`[DEBUG] CoinGecko failed/stale. Trying DexScreener for SOL...`);
+                    console.log(`[DEBUG] CoinGecko failed. Trying DexScreener...`);
                     const solDexRes = await fetch("https://api.dexscreener.com/latest/dex/pairs/solana/8sc7wj9eay6zm4pjrfsff2vmsvwwxuz2j6be6sqmjd6w"); // SOL/USDC Pair
                     const solDexData = await solDexRes.json();
                     const dexPrice = parseFloat(solDexData?.pair?.priceUsd || "0");
 
-                    if (dexPrice > 10) {
+                    if (dexPrice > 0) {
                         prices.sol = dexPrice;
-                        console.log(`[DEBUG] DexScreener SOL Fallback SUCCESS: $${prices.sol}`);
+                        console.log(`[DEBUG] DexScreener SOL Live: $${prices.sol}`);
                     }
                 }
-            } catch (e) {
-                console.error("SOL Price Fallback cascade failed", e);
+            } catch (fallbackErr) {
+                console.error("[ERROR] All live price sources for SOL failed.");
             }
-        }
-
-        // 3. Final Safety Net: If everything failed, use a hard default to prevent bot from crashing with 0 or $86
-        if (!prices.sol || prices.sol < 10) {
-            const DEFAULT_SOL = 85.00; // Updated realistic market price
-            console.error(`[CRITICAL] ALL PRICE APIS FAILED OR RETURNED STALE DATA. Using safety default: $${DEFAULT_SOL}`);
-            prices.sol = DEFAULT_SOL;
         }
 
         // 4. Fallback for LPPP
