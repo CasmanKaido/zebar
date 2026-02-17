@@ -112,8 +112,8 @@ app.get("/api/price", async (req, res) => {
         prices.lppp = jupPrices.get(LPPP_MINT.toBase58()) || 0;
 
         // 2. Validate/Fallback SOL Price (Must be > $120)
-        if (prices.sol < 120) {
-            console.warn(`[DEBUG] Jupiter returned stale/low SOL price: $${prices.sol}. Triggering fallbacks...`);
+        if (prices.sol < 10) {
+            console.warn(`[DEBUG] Jupiter returned critically low/stale SOL price: $${prices.sol}. Triggering fallbacks...`);
             prices.sol = 0; // Force fallback
         }
 
@@ -124,7 +124,7 @@ app.get("/api/price", async (req, res) => {
                 const solData = await solRes.json();
                 const cgPrice = solData?.solana?.usd;
 
-                if (cgPrice && cgPrice > 120) {
+                if (cgPrice && cgPrice > 10) {
                     prices.sol = cgPrice;
                     console.log(`[DEBUG] CoinGecko SOL Fallback SUCCESS: $${prices.sol}`);
                 } else {
@@ -134,7 +134,7 @@ app.get("/api/price", async (req, res) => {
                     const solDexData = await solDexRes.json();
                     const dexPrice = parseFloat(solDexData?.pair?.priceUsd || "0");
 
-                    if (dexPrice > 120) {
+                    if (dexPrice > 10) {
                         prices.sol = dexPrice;
                         console.log(`[DEBUG] DexScreener SOL Fallback SUCCESS: $${prices.sol}`);
                     }
@@ -145,8 +145,8 @@ app.get("/api/price", async (req, res) => {
         }
 
         // 3. Final Safety Net: If everything failed, use a hard default to prevent bot from crashing with 0 or $86
-        if (!prices.sol || prices.sol < 120) {
-            const DEFAULT_SOL = 225.00; // Realistic market price for current period
+        if (!prices.sol || prices.sol < 10) {
+            const DEFAULT_SOL = 85.00; // Updated realistic market price
             console.error(`[CRITICAL] ALL PRICE APIS FAILED OR RETURNED STALE DATA. Using safety default: $${DEFAULT_SOL}`);
             prices.sol = DEFAULT_SOL;
         }
