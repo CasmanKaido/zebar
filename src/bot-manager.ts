@@ -44,6 +44,8 @@ export class BotManager {
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isUsingBackup: boolean = false;
     private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
+    private evaluationQueue: ScanResult[] = [];
+    private isProcessingQueue: boolean = false;
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
@@ -432,249 +434,138 @@ export class BotManager {
             mode: this.settings.mode
         };
 
-        this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
+        this.scanner = new MarketScanner(criteria, (result: ScanResult) => {
             if (!this.isRunning) return;
+            this.enqueueToken(result);
+        }, connection);
 
-            const mintAddress = result.mint.toBase58();
+        this.scanner.start();
+    }
 
+    private enqueueToken(result: ScanResult) {
+        this.evaluationQueue.push(result);
+        if (!this.isProcessingQueue) {
+            this.processQueue();
+        }
+    }
+
+    private async processQueue() {
+        if (this.evaluationQueue.length === 0) {
+            this.isProcessingQueue = false;
+            return;
+        }
+
+        this.isProcessingQueue = true;
+        const result = this.evaluationQueue.shift()!;
+        const mintAddress = result.mint.toBase58();
+
+        try {
             // Guard: Skip if already being processed (prevents race condition duplicate buys)
             if (this.pendingMints.has(mintAddress)) return;
 
             // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
-            // The on-chain pool address is deterministic — even exited pools can't be re-created.
             const activePools: PoolData[] = await this.getPortfolio();
-            if (activePools.some((p: PoolData) => p.mint === mintAddress)) {
-                // Silently skip to keep logs clean
-                return;
-            }
+            if (activePools.some((p: PoolData) => p.mint === mintAddress)) return;
 
-            // Fix 5: Check rejected token cache (skip tokens that failed safety checks recently)
+            // Check rejected token cache
             const cached = this.rejectedTokens.get(mintAddress);
-            if (cached && cached.expiry > Date.now()) {
-                return; // Silently skip — already failed safety within last 30 min
-            }
-            this.rejectedTokens.delete(mintAddress); // Clean up expired entries
+            if (cached && cached.expiry > Date.now()) return;
+            this.rejectedTokens.delete(mintAddress);
 
-            // Lock this mint to prevent duplicate buys during processing
             this.pendingMints.add(mintAddress);
 
-            SocketManager.emitLog(`[TARGET ACQUIRED] ${result.symbol} met all criteria!`, "success");
-            SocketManager.emitLog(`Mint: ${result.mint.toBase58()}`, "warning");
-            SocketManager.emitLog(`- 24h Vol: $${Math.floor(result.volume24h)} | Liq: $${Math.floor(result.liquidity)} | MCAP: $${Math.floor(result.mcap)}`, "info");
+            SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
-            try {
-                const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
-                if (!safety.safe) {
-                    SocketManager.emitLog(`[SAFETY] ❌ Skipped ${result.symbol}: ${safety.reason}`, "error");
-                    // Fix 5: Cache this rejection for 30 minutes
-                    this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });
-                    return;
-                }
-            } catch (safetyErr: any) {
-                console.warn("[SAFETY] Check failed:", safetyErr.message);
-                SocketManager.emitLog(`[SAFETY] ⚠️ Could not verify ${result.symbol} — skipping for safety`, "warning");
+            // 1. Safety Check
+            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
+            if (!safety.safe) {
+                SocketManager.emitLog(`[SAFETY] ❌ ${result.symbol}: ${safety.reason}`, "error");
+                this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });
                 return;
             }
 
-            // Pre-flight: Check if a Meteora pool already exists on-chain for this pair
-            // If it does, buying would waste SOL since pool creation will fail
-            try {
-                const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
-                if (existingPool) {
-                    SocketManager.emitLog(`[SKIP] ${result.symbol}: Meteora pool already exists on-chain (${existingPool.slice(0, 8)}...). Skipping to avoid wasted SOL.`, "warning");
+            // 2. Pool Check (Avoid duplicate pools)
+            const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
+            if (existingPool) {
+                SocketManager.emitLog(`[SKIP] Pool exists on-chain: ${existingPool.slice(0, 8)}...`, "warning");
+                return;
+            }
+
+            // 3. Execution (Swap + LP)
+            SocketManager.emitLog(`[EXEC] Buying ${this.settings.buyAmount} SOL of ${result.symbol}...`, "warning");
+            const { success, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
+
+            if (success) {
+                SocketManager.emitLog(`[EXEC] Buy Success! Seeding Liquidity...`, "success");
+                await new Promise(r => setTimeout(r, 2000)); // Wait for settlement
+
+                const tokenAccounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint }), "getPostSwapBalance");
+                const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+                const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+
+                if (actualAmountRaw === 0n) {
+                    SocketManager.emitLog(`[LP] No balance found. Aborting.`, "error");
                     return;
                 }
-            } catch (poolCheckErr: any) {
-                console.warn(`[POOL CHECK] Failed for ${result.symbol}: ${poolCheckErr.message}. Proceeding anyway.`);
-            }
 
-            // 1. Swap (Buy)
-            SocketManager.emitLog(`Executing Market Buy (${this.settings.buyAmount} SOL, Slippage: ${this.settings.slippage}%)...`, "warning");
-            try {
-                const { success, amount, uiAmount, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
+                const tokenAmount = (actualAmountRaw * 99n) / 100n;
+                const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
 
-                if (success) {
-                    SocketManager.emitLog(`Buy Transaction Sent! check Solscan/Wallet for incoming tokens.`, "success");
+                const lpppPrice = await this.getLpppPrice();
+                if (lpppPrice <= 0) {
+                    SocketManager.emitLog(`[LP] LPPP price error.`, "error");
+                    return;
+                }
 
-                    // 2. Refresh Balance & Create LP (Dynamic Fee & Price)
-                    const LPPP_MINT_ADDR = LPPP_MINT;
+                const tokenPriceLppp = result.priceUsd / lpppPrice;
+                const targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
+                const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e9 * 0.99));
 
-                    // Wait 1.5s for chain to reflect balance
-                    await new Promise(r => setTimeout(r, 1500));
+                const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
 
-                    // Fetch ACTUAL balance instead of relying on swap output
-                    const tokenAccounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint }), "getPostSwapBalance");
-                    const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
-                    const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+                if (poolInfo.success) {
+                    SocketManager.emitLog(`[SUCCESS] Pool Created: ${poolInfo.poolAddress}`, "success");
+                    const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / 1e9) / tokenUiAmountChecked : 0;
 
-                    if (actualAmountRaw === 0n) {
-                        SocketManager.emitLog(`[LP ERROR] No token balance found for ${result.symbol} after swap. Skipping pool creation.`, "error");
-                        return;
-                    }
+                    const fullPoolData: PoolData = {
+                        poolId: poolInfo.poolAddress || "",
+                        token: result.symbol,
+                        mint: result.mint.toBase58(),
+                        roi: "0%",
+                        netRoi: "0%",
+                        created: new Date().toISOString(),
+                        initialPrice,
+                        initialTokenAmount: tokenUiAmountChecked,
+                        initialLpppAmount: Number(lpppAmountBase) / 1e9,
+                        initialSolValue: (Number(lpppAmountBase) / 1e9) * 2, // Estimated baseline
+                        exited: false,
+                        positionId: poolInfo.positionAddress,
+                        unclaimedFees: { sol: "0", token: "0" },
+                        isBotCreated: true
+                    };
 
-                    // Use 99% of balance to avoid "Custom: 0" (Insufficient Balance)
-                    // CRITICAL: We scale BOTH sides to 99% to maintain the exact PRICE RATIO.
-                    const tokenAmount = (actualAmountRaw * 99n) / 100n;
-                    const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
+                    await this.savePools(fullPoolData);
+                    SocketManager.emitPool(fullPoolData);
+                    this.sessionPoolCount++;
 
-                    let targetLpppAmount = this.settings.lpppAmount;
-
-                    // Dynamic Price Calculation (always auto-sync)
-                    if (result.priceUsd > 0) {
-                        const lpppPrice = await this.getLpppPrice();
-                        if (lpppPrice > 0) {
-                            const tokenPriceLppp = result.priceUsd / lpppPrice;
-                            targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
-                            SocketManager.emitLog(`[AUTO-PRICE] Token: $${result.priceUsd} | LPPP: $${lpppPrice.toFixed(6)} | Target LPPP: ${targetLpppAmount.toFixed(2)}`, "info");
-                        } else {
-                            SocketManager.emitLog(`[AUTO-PRICE] LPPP price unavailable. Cannot create pool.`, "error");
-                            return;
-                        }
-                    }
-
-                    // Final guard: never create a pool with 0 LPPP
-                    if (targetLpppAmount <= 0) {
-                        SocketManager.emitLog(`[LP ERROR] Cannot seed pool: LPPP amount is 0. Aborting.`, "error");
-                        return;
-                    }
-
-                    // Apply the same 99% buffer to LPPP side to preserve ratio
-                    const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e9));
-                    let finalLpppAmountBase = (lpppAmountBase * 99n) / 100n;
-                    let finalLpppUiAmount = (targetLpppAmount * 99) / 100;
-
-                    // ═══ CRITICAL: Pre-Flight LPPP Balance Check (Batch 2.1) ═══
-                    // The LPPP token is Token-2022, which has transfer fees.
-                    // We MUST verify the wallet has enough LPPP before creating the pool.
-                    let effectiveTokenAmount = tokenAmount;
-                    const LPPP_DECIMALS = 9;
-                    try {
-                        const lpppAccounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT }), "getLpppBalance");
-                        const lpppBalanceRaw = lpppAccounts.value.reduce(
-                            (acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n
-                        );
-                        const lpppBalanceUi = Number(lpppBalanceRaw) / (10 ** LPPP_DECIMALS);
-
-                        // Apply 5% buffer for Token-2022 transfer fees
-                        const maxUsableLppp = (lpppBalanceRaw * 95n) / 100n;
-                        const maxUsableLpppUi = lpppBalanceUi * 0.95;
-
-                        if (lpppBalanceRaw < 100n * BigInt(10 ** LPPP_DECIMALS)) {
-                            SocketManager.emitLog(`[LP ERROR] LPPP balance too low (${lpppBalanceUi.toFixed(2)} LPPP). Need at least 100 LPPP to seed pool. Skipping.`, "error");
-                            return;
-                        }
-
-                        if (finalLpppAmountBase > maxUsableLppp) {
-                            SocketManager.emitLog(`[LP WARN] Required LPPP (${finalLpppUiAmount.toFixed(2)}) exceeds wallet balance (${lpppBalanceUi.toFixed(2)}). Capping to ${maxUsableLpppUi.toFixed(2)} LPPP.`, "warning");
-                            finalLpppAmountBase = maxUsableLppp;
-                            finalLpppUiAmount = maxUsableLpppUi;
-
-                            // Recalculate token amount to maintain price ratio
-                            if (targetLpppAmount > 0) {
-                                const ratio = maxUsableLpppUi / targetLpppAmount;
-                                const adjustedTokenRaw = BigInt(Math.floor(Number(tokenAmount) * ratio));
-                                // Use the smaller of the two to be safe
-                                effectiveTokenAmount = adjustedTokenRaw < tokenAmount ? adjustedTokenRaw : tokenAmount;
-                            }
-                        }
-                    } catch (balErr: any) {
-                        SocketManager.emitLog(`[LP WARN] Could not verify LPPP balance: ${balErr.message}. Proceeding with calculated amount.`, "warning");
-                    }
-
-                    // ═══ DIAGNOSTIC LOGGING ═══
-                    SocketManager.emitLog(`[POOL DIAG] LPPP Sending: ${finalLpppUiAmount.toFixed(2)} | Token Sending: ${Number(effectiveTokenAmount)} raw | Ratio: ${(finalLpppUiAmount / tokenUiAmountChecked).toFixed(4)} LPPP/Token`, "info");
-
-                    // We try-catch the LP creation to prevent crashing the whole bot if SDK fails
-                    try {
-                        const poolInfo = await this.strategy.createMeteoraPool(result.mint, effectiveTokenAmount, finalLpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
-
-                        if (poolInfo.success) {
-                            SocketManager.emitLog(`Meteora Pool Created: ${poolInfo.poolAddress}`, "success");
-                            const poolEvent = {
-                                poolId: poolInfo.poolAddress || "",
-                                token: result.symbol,
-                                roi: "0%", // Initial ROI
-                                created: new Date().toISOString()
-                            };
-
-                            const initialPrice = tokenUiAmountChecked > 0 ? finalLpppUiAmount / tokenUiAmountChecked : 0;
-                            // Estimated value in base units (LPPP) — will be overwritten by actual on-chain value
-                            let initialSolValue = finalLpppUiAmount + (tokenUiAmountChecked * initialPrice);
-
-                            // Query ACTUAL on-chain position value as our true baseline (with retry)
-                            try {
-                                const RETRY_DELAYS = [3000, 6000, 10000]; // Increasing delays for chain settlement
-                                const estimatedValue = initialSolValue;
-                                for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
-                                    await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt]));
-                                    const onChainValue = await this.strategy.getPositionValue(
-                                        poolInfo.poolAddress || "",
-                                        result.mint.toBase58(),
-                                        poolInfo.positionAddress
-                                    );
-                                    if (onChainValue.success && onChainValue.totalSol > 0) {
-                                        initialSolValue = onChainValue.totalSol;
-                                        const gap = Math.abs(initialSolValue - estimatedValue) / estimatedValue;
-                                        console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} | On-chain: ${initialSolValue.toFixed(4)} | Estimated: ${estimatedValue.toFixed(4)} | Gap: ${(gap * 100).toFixed(0)}%`);
-                                        if (gap <= 0.5) break; // Gap <50% — value has settled
-                                        if (attempt === RETRY_DELAYS.length - 1) {
-                                            console.warn(`[BASELINE] ${result.symbol} | Gap still ${(gap * 100).toFixed(0)}% after ${RETRY_DELAYS.length} retries. Using best on-chain value.`);
-                                        }
-                                    } else {
-                                        console.log(`[BASELINE] ${result.symbol} | Attempt ${attempt + 1} failed, ${attempt < RETRY_DELAYS.length - 1 ? 'retrying...' : 'using estimate.'}`);
-                                        if (attempt === RETRY_DELAYS.length - 1) initialSolValue = estimatedValue;
-                                    }
-                                }
-                                SocketManager.emitLog(`[BASELINE] True position value: ${initialSolValue.toFixed(4)} base units`, "info");
-                            } catch (baselineErr: any) {
-                                console.warn(`[BASELINE] Could not fetch on-chain value: ${baselineErr.message}`);
-                            }
-
-                            const fullPoolData: PoolData = {
-                                ...poolEvent,
-                                mint: result.mint.toBase58(),
-                                roi: "0%",
-                                netRoi: "0%",
-                                initialPrice,
-                                initialTokenAmount: tokenUiAmountChecked,
-                                initialLpppAmount: finalLpppUiAmount,
-                                initialSolValue,
-                                exited: false,
-                                positionId: poolInfo.positionAddress,
-                                unclaimedFees: { sol: "0", token: "0" },
-                                isBotCreated: true // High-priority tag for bot-created pools
-                            };
-
-                            SocketManager.emitPool(fullPoolData);
-                            await this.savePools(fullPoolData); // Ensure awaited (Issue 33)
-
-                            this.sessionPoolCount++;
-                            SocketManager.emitLog(`[SESSION] Pool Created: ${this.sessionPoolCount} / ${this.settings.maxPools}`, "info");
-
-                            if (this.sessionPoolCount >= this.settings.maxPools) {
-                                SocketManager.emitLog(`[LIMIT REACHED] Session limit of ${this.settings.maxPools} pools reached. Shutting down...`, "warning");
-                                this.stop();
-                            }
-                        } else {
-                            SocketManager.emitLog(`[LP ERROR] Pool Failed: ${poolInfo.error}`, "error");
-                        }
-                    } catch (lpError: any) {
-                        console.error("[BOT] LP Creation Critical Failure:", lpError);
-                        SocketManager.emitLog(`[ERROR] Failed to seed pool: ${lpError.message}`, "error");
+                    if (this.sessionPoolCount >= this.settings.maxPools) {
+                        SocketManager.emitLog(`[SESSION] Limit reached. Stopping scanner.`, "warning");
+                        this.stop();
                     }
                 } else {
-                    SocketManager.emitLog(`Buy Failed: ${error || "Unknown Error"}`, "error");
+                    SocketManager.emitLog(`[LP ERROR] ${poolInfo.error}`, "error");
                 }
-            } catch (swapError: any) {
-                console.error("[BOT] Swap Execution Failure:", swapError);
-                SocketManager.emitLog(`[ERROR] Swap execution failed: ${swapError.message}`, "error");
-            } finally {
-                // Release the mint lock so it can be re-evaluated in future sweeps
-                this.pendingMints.delete(mintAddress);
+            } else {
+                SocketManager.emitLog(`[BUY FAIL] ${error}`, "error");
             }
-        }, connection);
 
-        this.scanner.start();
+        } catch (err: any) {
+            console.error(`[QUEUE ERROR] ${err.message}`);
+        } finally {
+            this.pendingMints.delete(mintAddress);
+            // Wait 1 second between processing queue items to be very safe on RPC
+            setTimeout(() => this.processQueue(), 1000);
+        }
     }
 
     /**

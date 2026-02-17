@@ -62,6 +62,11 @@ export function updateConnection(newUrl: string) {
     });
 }
 
+// Low-Priority Connection for Informational Tasks (Metadata/Prices)
+export const secondaryConnection = BACKUP_RPC_URL
+    ? new Connection(BACKUP_RPC_URL, { commitment: "confirmed" })
+    : connection;
+
 // Load wallet from private key in .env
 // WARNING: NEVER COMMIT REAL PRIVATE KEYS
 const PRIVATE_KEY = process.env.PRIVATE_KEY;

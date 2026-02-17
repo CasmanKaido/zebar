@@ -2,11 +2,32 @@ import { Connection } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 
 /**
+ * Global RPC Header / Pacer for 15 RPS limit
+ */
+class RPCPacer {
+    private static lastRequest = 0;
+    private static MIN_DELAY = 70; // ~14.2 requests per second to be safe
+
+    static async wait() {
+        const now = Date.now();
+        const elapsed = now - this.lastRequest;
+        if (elapsed < this.MIN_DELAY) {
+            const delay = this.MIN_DELAY - elapsed;
+            await new Promise(r => setTimeout(r, delay));
+        }
+        this.lastRequest = Date.now();
+    }
+}
+
+/**
  * Global RPC Helper with exponential backoff and retry for 429/Deprioritized errors.
  */
 export async function safeRpc<T>(fn: () => Promise<T>, desc: string, maxRetries = 8): Promise<T> {
     let retries = 0;
     while (true) {
+        // Enforce Pacing
+        await RPCPacer.wait();
+
         try {
             return await fn();
         } catch (err: any) {

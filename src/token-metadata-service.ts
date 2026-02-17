@@ -1,6 +1,7 @@
 import axios from "axios";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { GeckoService } from "./gecko-service";
+import { secondaryConnection } from "./config";
 
 export interface TokenMetadata {
     symbol: string;
@@ -41,7 +42,7 @@ export class TokenMetadataService {
         }
     }
 
-    static async getSymbol(mint: string, connection: Connection): Promise<string> {
+    static async getSymbol(mint: string, connection?: Connection): Promise<string> {
         // 1. Jupiter Cache
         await this.syncJupiter();
         const jupToken = this.jupiterCache.get(mint);
@@ -59,11 +60,12 @@ export class TokenMetadataService {
         if (gecko) return gecko.symbol;
 
         // 4. On-Chain (Slowest, but works for everything)
+        // Use secondaryConnection by default to save RPS on main Helius node
+        const conn = connection || secondaryConnection;
         try {
-            const info = await connection.getParsedAccountInfo(new PublicKey(mint));
+            const info = await conn.getParsedAccountInfo(new PublicKey(mint));
             if (info.value?.data && "parsed" in info.value.data) {
                 const parsed: any = info.value.data.parsed;
-                // This usually requires the Metadata program, but some tokens have it parsed if they use Token2022
                 if (parsed.info?.symbol) return parsed.info.symbol;
             }
         } catch (e) { }
