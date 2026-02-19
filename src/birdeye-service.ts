@@ -75,18 +75,27 @@ export class BirdeyeService {
                 nextScrollId = response.data.data?.next_scroll_id;
 
                 // Pagination is silent, results consolidated at end
+                let qualifyingCount = 0;
 
                 for (const t of tokens) {
                     if (!t.address) continue;
                     if (seenMints.has(t.address)) continue;
                     seenMints.add(t.address);
 
+                    const vol24h = t.volume_24h_usd || t.v24hUSD || 0;
+                    const liq = t.liquidity || 0;
+
+                    // Track how many tokens on this page meet minimum criteria
+                    if (vol24h >= (criteria.volume24h.min || 0) && liq >= (criteria.liquidity.min || 0)) {
+                        qualifyingCount++;
+                    }
+
                     scanResults.push({
                         mint: new PublicKey(t.address),
                         pairAddress: t.address,
                         dexId: "birdeye",
-                        volume24h: t.volume_24h_usd || t.v24hUSD || 0,
-                        liquidity: t.liquidity || 0,
+                        volume24h: vol24h,
+                        liquidity: liq,
                         mcap: t.mc || t.market_cap || t.fdv || 0,
                         symbol: t.symbol || "UNKNOWN",
                         priceUsd: t.price || 0,
@@ -94,6 +103,8 @@ export class BirdeyeService {
                     });
                 }
 
+                // Fix #6: Stop paginating when data stops being useful
+                if (qualifyingCount < 5 && page > 2) break;
                 if (!nextScrollId && page > 5) break; // Exit if no more and we've searched deep enough
 
                 // Stagger requests

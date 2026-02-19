@@ -228,18 +228,23 @@ export class MarketScanner {
 
                 const inRange = (val: number, range: NumericRange) => {
                     const minMatch = Number(range.min) === 0 || val >= Number(range.min);
-                    const maxMatch = Number(range.max) === 0 || val <= Number(range.max);
+                    const hasMax = Number(range.max) > 0;
+                    const maxMatch = !hasMax || val <= Number(range.max);
                     return minMatch && maxMatch;
                 };
 
-                const meetsVol5m = (volume5m === 0 && pair.dexId.startsWith('birdeye')) ? true : inRange(volume5m, this.criteria.volume5m);
-                const meetsVol1h = (volume1h === 0 && pair.dexId.startsWith('birdeye')) ? true : inRange(volume1h, this.criteria.volume1h);
+                // Fix #2: No Birdeye bypass — treat 0 as 0 (strict filtering)
+                const meetsVol5m = inRange(volume5m, this.criteria.volume5m);
+                const meetsVol1h = inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
                 const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    // SocketManager.emitLog(`[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics! (Source: ${pair.source})`, "success");
+                    // Fix #1: Jupiter whitelist — skip tokens Jupiter can't swap
+                    if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(targetToken.address)) {
+                        continue;
+                    }
 
                     this.seenPairs.set(pair.pairAddress, Date.now());
                     await this.callback({
