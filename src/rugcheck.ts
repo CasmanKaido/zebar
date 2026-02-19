@@ -51,17 +51,6 @@ const DEX_PROGRAMS = {
 // Burn address (tokens sent here = permanently locked)
 const BURN_ADDRESS = "1111111111111111111111111111111111111111111";
 
-// Wrapped Blue-chips that fail mint/freeze checks but are reputable
-const KNOWN_SAFE_MINTS = new Set([
-    "So11111111111111111111111111111111111111112", // WSOL
-    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
-    "Es9vMFrzaDCSTMd98vXmBDF9G2vEACwxWzMt1Y465ST9", // USDT
-    "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij", // cbBTC
-    "7vfCXTUXx5xSsCAJEmxXBkuYWg5cQpkQh7uKnC4YUFoX", // WETH
-    "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh", // WBTC
-    "27G8MtK7VtTs3zhcnLEDs9H3HjEAnT2HqC9G7Uf9SpE8", // JLP
-]);
-
 export interface SafetyResult {
     safe: boolean;
     reason: string;
@@ -96,48 +85,41 @@ export class OnChainSafetyChecker {
             },
         };
 
-        // ═══ 0. Whitelist Check ═══
-        if (KNOWN_SAFE_MINTS.has(mintAddress)) {
-            SocketManager.emitLog(`[SAFETY] ✅ ${mintAddress.slice(0, 8)}... Recognized Blue-Chip Asset. Bypassing authority checks.`, "success");
-            result.checks.mintAuthority = "disabled";
-            result.checks.freezeAuthority = "disabled";
-        } else {
-            // ═══ 1. Mint Authority Check ═══
+        // ═══ 1. Mint Authority Check ═══
+        try {
+            let mintInfo;
             try {
-                let mintInfo;
-                try {
-                    mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
-                } catch {
-                    mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
-                }
+                mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
+            } catch {
+                mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
+            }
 
-                if (mintInfo.mintAuthority !== null) {
-                    result.safe = false;
-                    result.reason = "Mint Authority is ENABLED — dev can print unlimited tokens";
-                    result.checks.mintAuthority = "enabled";
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "error");
-                    return result;
-                }
-                result.checks.mintAuthority = "disabled";
-                SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
-
-                // ═══ 2. Freeze Authority Check ═══
-                if (mintInfo.freezeAuthority !== null) {
-                    result.safe = false;
-                    result.reason = "Freeze Authority is ENABLED — dev can freeze your tokens";
-                    result.checks.freezeAuthority = "enabled";
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED`, "error");
-                    return result;
-                }
-                result.checks.freezeAuthority = "disabled";
-                SocketManager.emitLog(`[SAFETY] ✅ Freeze Authority disabled`, "success");
-            } catch (err: any) {
-                const errMsg = err.message || String(err);
-                console.warn(`[SAFETY] Failed to fetch mint info: ${errMsg}`);
+            if (mintInfo.mintAuthority !== null) {
                 result.safe = false;
-                result.reason = `Could not verify mint info: ${errMsg}`;
+                result.reason = "Mint Authority is ENABLED — dev can print unlimited tokens";
+                result.checks.mintAuthority = "enabled";
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "error");
                 return result;
             }
+            result.checks.mintAuthority = "disabled";
+            SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
+
+            // ═══ 2. Freeze Authority Check ═══
+            if (mintInfo.freezeAuthority !== null) {
+                result.safe = false;
+                result.reason = "Freeze Authority is ENABLED — dev can freeze your tokens";
+                result.checks.freezeAuthority = "enabled";
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED`, "error");
+                return result;
+            }
+            result.checks.freezeAuthority = "disabled";
+            SocketManager.emitLog(`[SAFETY] ✅ Freeze Authority disabled`, "success");
+        } catch (err: any) {
+            const errMsg = err.message || String(err);
+            console.warn(`[SAFETY] Failed to fetch mint info: ${errMsg}`);
+            result.safe = false;
+            result.reason = `Could not verify mint info: ${errMsg}`;
+            return result;
         }
 
         // ═══ 3. Liquidity Lock Check ═══
@@ -171,9 +153,9 @@ export class OnChainSafetyChecker {
                 console.warn(`[SAFETY] Too many accounts or RPC limit for ${mintAddress}: ${accErr.message}`);
                 // If it fails, we can't do concentration checks, but if it's whitelisted we might still pass?
                 // Deciding: If it fails, and NOT whitelisted, fail the safety check for caution.
-                if (!KNOWN_SAFE_MINTS.has(mintAddress)) {
+                if (accErr.message.includes("Too many accounts requested")) {
                     result.safe = false;
-                    result.reason = "RPC Timeout/Limit on Holder Analysis (High account count?)";
+                    result.reason = "RPC Limit: Too many accounts for holder analysis";
                     return result;
                 }
                 largestAccounts = { value: [] };
