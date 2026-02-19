@@ -2,6 +2,7 @@ import axios from "axios";
 import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 import { BirdeyeService } from "./birdeye-service";
+import { DexScreenerService } from "./dexscreener-service";
 import { connection, IGNORED_MINTS, SOL_MINT, USDC_MINT } from "./config";
 
 export interface ScanResult {
@@ -37,14 +38,14 @@ export class MarketScanner {
     private isRunning: boolean = false;
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
-    private seenPairs: Map<string, number> = new Map(); // pairAddress -> timestamp
+    private seenPairs: Map<string, number> = new Map(); // mintAddress -> timestamp
     private SEEN_COOLDOWN = 5 * 60 * 1000; // 5 minute cooldown
     private scanInterval: NodeJS.Timeout | null = null;
     private jupiterTokens: Map<string, any> = new Map(); // mint -> metadata
     private lastJupiterSync = 0;
     private JUPITER_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
     private jupiterSyncFailed = false;
-    private jupiterFailCooldown = 0; // timestamp when we can retry after failure
+    private jupiterFailCooldown = 0;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any) {
         this.criteria = criteria;
@@ -143,63 +144,123 @@ export class MarketScanner {
 
     private async performMarketSweep() {
         const mode = this.criteria.mode || "DUAL";
-        SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Targeting Birdeye Pro feeds...`, "info");
+        const sourceLabel = mode === "SCOUT" ? "Birdeye New Listings" : mode === "ANALYST" ? "DexScreener Pro" : "DexScreener + Birdeye";
+        SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Source: ${sourceLabel}`, "info");
 
         try {
             let allPairs: any[] = [];
-            try {
-                if (mode === "ANALYST" || mode === "DUAL") {
-                    const trending = await BirdeyeService.fetchTrendingTokens(this.criteria);
-                    allPairs = [...allPairs, ...trending];
+
+            // ═══════════════════════════════════════════════════════
+            // ANALYST: DexScreener boosted/trending tokens (FREE)
+            // ═══════════════════════════════════════════════════════
+            if (mode === "ANALYST" || mode === "DUAL") {
+                try {
+                    const boosted = await DexScreenerService.fetchBoostedTokens();
+                    if (boosted.length > 0) {
+                        allPairs = [...allPairs, ...boosted];
+                        SocketManager.emitLog(`[DEXSCREENER] Found ${boosted.length} boosted/trending tokens.`, "info");
+                    }
+                } catch (e: any) {
+                    console.warn(`[DEXSCREENER] Boosted fetch error: ${e.message}`);
                 }
-                if (mode === "SCOUT" || mode === "DUAL") {
-                    const newListings = await BirdeyeService.fetchNewListings(this.criteria);
-                    allPairs = [...allPairs, ...newListings];
+
+                try {
+                    const profiles = await DexScreenerService.fetchLatestProfiles();
+                    if (profiles.length > 0) {
+                        allPairs = [...allPairs, ...profiles];
+                    }
+                } catch (e: any) {
+                    console.warn(`[DEXSCREENER] Profiles fetch error: ${e.message}`);
                 }
-                if (mode === "ANALYST" || mode === "DUAL") {
-                    const highVolume = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
-                    allPairs = [...allPairs, ...highVolume];
-                }
-            } catch (e) {
-                console.warn(`[BIRDEYE-SCAN] Error: ${e}`);
             }
 
-            const uniquePairsMap = new Map();
-            allPairs.forEach(p => {
-                const dexId = (p.dexId || "").toLowerCase();
-                const chainId = (p.chainId || "solana").toLowerCase();
+            // ═══════════════════════════════════════════════════════
+            // ANALYST: Birdeye high-volume scan (rolling pagination)
+            // Still useful — Birdeye's volume-sorted list has no DexScreener equivalent.
+            // But now we batch-resolve mints through DexScreener for real pair addresses.
+            // ═══════════════════════════════════════════════════════
+            if (mode === "ANALYST" || mode === "DUAL") {
+                try {
+                    const birdeyeTokens = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
+                    if (birdeyeTokens.length > 0) {
+                        // Extract mint addresses from Birdeye results
+                        const mints = birdeyeTokens
+                            .map((t: any) => t.mint ? (typeof t.mint === 'string' ? t.mint : t.mint.toBase58()) : "")
+                            .filter((m: string) => m.length > 10);
 
-                // Derive a mint address string from whichever field is available
-                const mintStr = p.mint ? (typeof p.mint === 'string' ? p.mint : p.mint.toBase58()) : (p.address || "");
-                // Use pairAddress if it exists and isn't empty, otherwise fall back to mint
-                const dedupKey = (p.pairAddress && p.pairAddress.length > 10) ? p.pairAddress : mintStr;
-
-                if (chainId === "solana" && dedupKey && !uniquePairsMap.has(dedupKey)) {
-                    const baseToken = p.baseToken || {
-                        address: mintStr || dedupKey,
-                        symbol: p.symbol || "TOKEN"
-                    };
-                    const quoteToken = p.quoteToken || {
-                        address: SOL_MINT.toBase58(),
-                        symbol: "SOL"
-                    };
-
-                    uniquePairsMap.set(dedupKey, {
-                        ...p,
-                        pairAddress: (p.pairAddress && p.pairAddress.length > 10) ? p.pairAddress : mintStr,
-                        dexId,
-                        baseToken,
-                        quoteToken,
-                        priceUsd: p.priceUsd || 0,
-                        volume: p.volume || { m5: 0, h1: 0, h24: p.volume24h || 0 },
-                        liquidity: p.liquidity ? (typeof p.liquidity === 'object' ? p.liquidity : { usd: p.liquidity }) : { usd: 0 },
-                        marketCap: p.mcap || p.marketCap || 0,
-                        source: p.source || "BASELINE"
-                    });
+                        if (mints.length > 0) {
+                            // Batch resolve through DexScreener to get real pair addresses
+                            const resolved = await DexScreenerService.batchLookupTokens(mints, "BIRDEYE_VOLUME");
+                            allPairs = [...allPairs, ...resolved];
+                            SocketManager.emitLog(`[BIRDEYE→DS] Resolved ${resolved.length}/${mints.length} tokens via DexScreener.`, "info");
+                        }
+                    }
+                } catch (e: any) {
+                    console.warn(`[BIRDEYE→DS] Volume scan error: ${e.message}`);
                 }
-            });
+            }
 
-            const pairs = Array.from(uniquePairsMap.values());
+            // ═══════════════════════════════════════════════════════
+            // SCOUT: Birdeye new listings (Birdeye's unique strength)
+            // Also batch-resolve through DexScreener for pair addresses
+            // ═══════════════════════════════════════════════════════
+            if (mode === "SCOUT" || mode === "DUAL") {
+                try {
+                    const newListings = await BirdeyeService.fetchNewListings(this.criteria);
+                    if (newListings.length > 0) {
+                        const mints = newListings
+                            .map((t: any) => t.mint ? (typeof t.mint === 'string' ? t.mint : t.mint.toBase58()) : "")
+                            .filter((m: string) => m.length > 10);
+
+                        if (mints.length > 0) {
+                            const resolved = await DexScreenerService.batchLookupTokens(mints, "SCOUT");
+                            allPairs = [...allPairs, ...resolved];
+                            SocketManager.emitLog(`[SCOUT] Resolved ${resolved.length}/${mints.length} new listings via DexScreener.`, "info");
+                        }
+
+                        // Also include raw Birdeye data for tokens DexScreener doesn't know about yet
+                        for (const t of newListings) {
+                            const mintStr = t.mint ? (typeof t.mint === 'string' ? t.mint : t.mint.toBase58()) : "";
+                            if (mintStr && !allPairs.some((p: any) => p.baseToken?.address === mintStr)) {
+                                allPairs.push({
+                                    pairAddress: mintStr, // Fallback: mint as pair (will be resolved during safety check)
+                                    baseToken: { address: mintStr, symbol: t.symbol || "NEW" },
+                                    quoteToken: { address: SOL_MINT.toBase58(), symbol: "SOL" },
+                                    dexId: "birdeye-new",
+                                    chainId: "solana",
+                                    priceUsd: t.priceUsd || "0",
+                                    volume: { m5: 0, h1: 0, h24: t.volume24h || 0 },
+                                    liquidity: { usd: t.liquidity || 0 },
+                                    marketCap: t.mcap || 0,
+                                    source: "SCOUT_RAW"
+                                });
+                            }
+                        }
+                    }
+                } catch (e: any) {
+                    console.warn(`[SCOUT] New listings error: ${e.message}`);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // DEDUPLICATION — by mint address
+            // ═══════════════════════════════════════════════════════
+            const uniqueByMint = new Map<string, any>();
+            for (const pair of allPairs) {
+                const mintAddr = pair.baseToken?.address;
+                if (!mintAddr || IGNORED_MINTS.includes(mintAddr)) continue;
+
+                const existing = uniqueByMint.get(mintAddr);
+                const pairLiq = pair.liquidity?.usd || 0;
+                const existingLiq = existing?.liquidity?.usd || 0;
+
+                // Keep the pair with highest liquidity
+                if (!existing || pairLiq > existingLiq) {
+                    uniqueByMint.set(mintAddr, pair);
+                }
+            }
+
+            const pairs = Array.from(uniqueByMint.values());
             if (pairs.length === 0) {
                 SocketManager.emitLog("[SWEEPER] Ecosystem harvest came up empty. Retrying...", "warning");
                 return;
@@ -207,21 +268,19 @@ export class MarketScanner {
 
             SocketManager.emitLog(`[SWEEPER] Evaluated ${pairs.length} assets. Mode: ${mode}`, "info");
 
+            // ═══════════════════════════════════════════════════════
+            // FILTER & EMIT — apply user criteria
+            // ═══════════════════════════════════════════════════════
             for (const pair of pairs) {
-                let targetToken = pair.baseToken;
-                let priceUSD = Number(pair.priceUsd || 0);
+                const mintAddress = pair.baseToken?.address;
+                if (!mintAddress || IGNORED_MINTS.includes(mintAddress)) continue;
 
-                if (!targetToken?.address || IGNORED_MINTS.includes(targetToken.address)) {
-                    targetToken = pair.quoteToken;
-                }
-
-                if (!targetToken?.address || IGNORED_MINTS.includes(targetToken.address)) continue;
-
-                // Deduplicate by MINT address (not pair address, which can be inconsistent)
-                const mintAddress = targetToken.address;
+                // Dedup cooldown
                 const lastSeen = this.seenPairs.get(mintAddress);
                 if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
 
+                const priceUSD = Number(pair.priceUsd || 0);
+                // Skip stablecoins
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
 
                 const volume5m = pair.volume?.m5 || 0;
@@ -230,6 +289,7 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || 0;
 
+                // Hard ceiling for mega-caps
                 const MCAP_HARD_CEILING = 50_000_000;
                 if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) continue;
 
@@ -240,6 +300,7 @@ export class MarketScanner {
                     return minMatch && maxMatch;
                 };
 
+                // If volume is 0, skip that check (not all sources report all timeframes)
                 const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
                 const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
@@ -247,29 +308,18 @@ export class MarketScanner {
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
+                    // Jupiter whitelist check
                     if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) continue;
-
-                    // Fix #4: Resolve real Pair Address BEFORE hitting the target queue
-                    let actualPair = pair.pairAddress;
-                    if (!actualPair || actualPair === mintAddress) {
-                        try {
-                            // Small throttle for DexScreener resolution during sweep
-                            await new Promise(r => setTimeout(r, 400));
-                            const dsRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`, { timeout: 5000 });
-                            const bestDS = dsRes.data.pairs?.find((p: any) => p.chainId === "solana" && p.dexId === "raydium");
-                            if (bestDS) actualPair = bestDS.pairAddress;
-                        } catch (e) { }
-                    }
 
                     this.seenPairs.set(mintAddress, Date.now());
                     await this.callback({
                         mint: new PublicKey(mintAddress),
-                        pairAddress: actualPair || pair.pairAddress || mintAddress,
+                        pairAddress: pair.pairAddress,  // DexScreener always gives real pair address
                         dexId: pair.dexId || 'unknown',
                         volume24h: Number(volume24h),
                         liquidity: Number(liquidity),
                         mcap: Number(mcap),
-                        symbol: targetToken.symbol,
+                        symbol: pair.baseToken?.symbol || "TOKEN",
                         priceUsd: priceUSD
                     });
                 }
