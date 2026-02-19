@@ -274,7 +274,7 @@ export class MarketScanner {
             const qualified: { pair: any; mintAddress: string; volume5m: number; volume1h: number; volume24h: number; liquidity: number; mcap: number; priceUSD: number }[] = [];
 
             // ── DIAGNOSTIC: Track rejection reasons ──
-            const rejectReasons = { noMint: 0, dedup: 0, stablecoin: 0, mcapCeiling: 0, vol5m: 0, vol1h: 0, vol24h: 0, liquidity: 0, mcap: 0, jupiter: 0, accepted: 0 };
+            const rejectReasons = { noMint: 0, dedup: 0, stablecoin: 0, vol5m: 0, vol1h: 0, vol24h: 0, liquidity: 0, mcap: 0, jupiter: 0, accepted: 0 };
             let sampleCount = 0;
 
             for (const pair of pairs) {
@@ -292,7 +292,7 @@ export class MarketScanner {
                 const volume1h = pair.volume?.h1 || 0;
                 const volume24h = pair.volume?.h24 || 0;
                 const liquidity = pair.liquidity?.usd || 0;
-                const mcap = pair.marketCap || 0;
+                const mcap = pair.marketCap || pair.fdv || 0;
 
                 // ── DIAGNOSTIC: Log first 3 tokens' raw values ──
                 if (sampleCount < 3) {
@@ -300,9 +300,6 @@ export class MarketScanner {
                     console.log(`[FILTER-DEBUG] #${sampleCount + 1} ${sym} | vol5m:${volume5m} vol1h:${volume1h} vol24h:${volume24h} liq:${liquidity} mcap:${mcap} | Criteria: vol1h>=${this.criteria.volume1h.min} vol24h>=${this.criteria.volume24h.min} liq>=${this.criteria.liquidity.min} mcap>=${this.criteria.mcap.min}`);
                     sampleCount++;
                 }
-
-                const MCAP_HARD_CEILING = 50_000_000;
-                if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) { rejectReasons.mcapCeiling++; continue; }
 
                 const inRange = (val: number, range: NumericRange) => {
                     const minMatch = Number(range.min) === 0 || val >= Number(range.min);
@@ -313,9 +310,10 @@ export class MarketScanner {
 
                 const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
                 const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
-                const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
+                const meetsVol24h = volume24h === 0 ? true : inRange(volume24h, this.criteria.volume24h);
                 const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
-                const meetsMcap = inRange(mcap, this.criteria.mcap);
+                // Bypass mcap check if DexScreener didn't return marketCap data (same pattern as volume)
+                const meetsMcap = mcap === 0 ? true : inRange(mcap, this.criteria.mcap);
 
                 if (!meetsVol5m) { rejectReasons.vol5m++; continue; }
                 if (!meetsVol1h) { rejectReasons.vol1h++; continue; }
