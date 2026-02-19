@@ -103,9 +103,7 @@ export class BirdeyeService {
                     });
                 }
 
-                // Fix #6: Stop paginating when data genuinely runs dry
-                if (qualifyingCount === 0 && page > 6) break; // 2+ consecutive empty results deep in
-                if (!nextScrollId && page > 3) break; // No more scroll data
+                // No early exit — exhaust all pages
 
                 // Stagger requests
                 page++;
