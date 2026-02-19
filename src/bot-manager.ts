@@ -461,23 +461,47 @@ export class BotManager {
 
         try {
             // Guard: Skip if already being processed (prevents race condition duplicate buys)
-            if (this.pendingMints.has(mintAddress)) return;
+            if (this.pendingMints.has(mintAddress)) {
+                // console.log(`[QUEUE] Skipping ${result.symbol}: Already pending.`);
+                return;
+            }
 
             // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
             const activePools: PoolData[] = await this.getPortfolio();
-            if (activePools.some((p: PoolData) => p.mint === mintAddress)) return;
+            if (activePools.some((p: PoolData) => p.mint === mintAddress)) {
+                // SocketManager.emitLog(`[QUEUE] Skipping ${result.symbol}: Already in portfolio.`, "info");
+                return;
+            }
 
             // Check rejected token cache
             const cached = this.rejectedTokens.get(mintAddress);
-            if (cached && cached.expiry > Date.now()) return;
+            if (cached && cached.expiry > Date.now()) {
+                // console.log(`[QUEUE] Skipping ${result.symbol}: Recently rejected (${cached.reason}).`);
+                return;
+            }
             this.rejectedTokens.delete(mintAddress);
 
             this.pendingMints.add(mintAddress);
 
             SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
+            // 0. Pair Address Verification (Critical for Safety Checks)
+            let actualPairAddress = result.pairAddress;
+            if (!actualPairAddress || actualPairAddress === mintAddress || result.dexId === "birdeye-new") {
+                try {
+                    const dexscreenerRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`, { timeout: 5000 });
+                    const bestPair = dexscreenerRes.data.pairs?.find((p: any) => p.chainId === "solana");
+                    if (bestPair) {
+                        actualPairAddress = bestPair.pairAddress;
+                        // console.log(`[TARGET] Resolved Pair Address: ${actualPairAddress.slice(0, 8)}...`);
+                    }
+                } catch (e) {
+                    console.warn(`[TARGET] Failed to resolve pair address for ${result.symbol}: ${e}`);
+                }
+            }
+
             // 1. Safety Check
-            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
+            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, actualPairAddress);
             if (!safety.safe) {
                 SocketManager.emitLog(`[SAFETY] ❌ ${result.symbol}: ${safety.reason}`, "error");
                 this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });

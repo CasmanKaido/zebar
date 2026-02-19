@@ -89,7 +89,8 @@ export class BirdeyeService {
                         liquidity: t.liquidity || 0,
                         mcap: t.mc || t.market_cap || t.fdv || 0,
                         symbol: t.symbol || "UNKNOWN",
-                        priceUsd: t.price || 0
+                        priceUsd: t.price || 0,
+                        source: "BASELINE"
                     });
                 }
 
@@ -127,7 +128,7 @@ export class BirdeyeService {
             // Removed 'meme_platform_enabled' as it can cause 400/Bad Request on some API tiers.
             const params = new URLSearchParams({
                 min_liquidity: (criteria.liquidity.min || 100).toString(),
-                limit: "10" // Safer limit for Lite/Free tiers
+                limit: "50" // Increased from 10 to 50 for better discovery
             });
 
             const response = await axios.get(`https://public-api.birdeye.so/defi/v2/tokens/new_listing?${params}`, {
@@ -146,7 +147,8 @@ export class BirdeyeService {
                 liquidity: t.liquidity || 0,
                 mcap: t.mc || t.market_cap || 0,
                 symbol: t.symbol || "NEW",
-                priceUsd: t.price || 0
+                priceUsd: t.price || 0,
+                source: "SCOUT"
             }));
         } catch (e: any) {
             const errorMsg = e.response?.data?.message || e.message;
@@ -189,7 +191,8 @@ export class BirdeyeService {
                 liquidity: t.liquidity || 0,
                 mcap: t.mc || 0,
                 symbol: t.symbol || "HOT",
-                priceUsd: t.price || 0
+                priceUsd: t.price || 0,
+                source: "ANALYST"
             }));
         } catch (e: any) {
             console.warn(`[BIRDEYE-ANALYST] Error: ${e.message}`);

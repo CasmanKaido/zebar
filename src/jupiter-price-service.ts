@@ -36,8 +36,8 @@ export class JupiterPriceService {
         if (toFetch.length === 0) return results;
 
         try {
-            // 2. Fetch from Jupiter
-            const ids = toFetch.join(",");
+            // Encode IDs for safety
+            const ids = encodeURIComponent(toFetch.join(","));
             const headers: Record<string, string> = {};
             if (process.env.JUPITER_API_KEY) {
                 headers["x-api-key"] = process.env.JUPITER_API_KEY;

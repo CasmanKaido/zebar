@@ -3,6 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 import { BirdeyeService } from "./birdeye-service";
 import { connection, IGNORED_MINTS, SOL_MINT, USDC_MINT } from "./config";
+
 export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
@@ -12,6 +13,7 @@ export interface ScanResult {
     mcap: number;
     symbol: string;
     priceUsd: number;
+    source?: string;
 }
 
 export interface NumericRange {
@@ -63,26 +65,19 @@ export class MarketScanner {
         console.log(startMsg);
         SocketManager.emitLog(startMsg, "success");
 
-        // Initial Jupiter Sync
         await this.syncJupiterTokens();
-
-        // Start the sweeping loop
         this.runSweeper();
     }
 
     private async syncJupiterTokens() {
         if (Date.now() - this.lastJupiterSync < this.JUPITER_SYNC_INTERVAL) return;
-        // If we failed recently, don't retry for 10 minutes
         if (this.jupiterSyncFailed && Date.now() < this.jupiterFailCooldown) return;
 
         let attempts = 0;
-        const maxAttempts = 4; // Increased from 2 for better resilience
+        const maxAttempts = 4;
 
         while (attempts < maxAttempts) {
             try {
-                // Silent refresh
-
-                // Try multiple endpoints for the token list to handle DNS/cache issues
                 const endpoints = [
                     "https://token.jup.ag/all",
                     "https://tokens.jup.ag/all",
@@ -94,9 +89,7 @@ export class MarketScanner {
                     try {
                         res = await axios.get(url, { timeout: 15000 });
                         if (res.data && Array.isArray(res.data)) break;
-                    } catch (urlErr) {
-                        // Try next URL
-                    }
+                    } catch (urlErr) { }
                 }
 
                 if (res && Array.isArray(res.data)) {
@@ -105,29 +98,20 @@ export class MarketScanner {
                         this.jupiterTokens.set(t.address, t);
                     });
                     this.lastJupiterSync = Date.now();
-                    this.jupiterSyncFailed = false; // Reset failure flag on success
+                    this.jupiterSyncFailed = false;
                     SocketManager.emitLog(`[JUPITER] Synced ${res.data.length} tokens for validation.`, "success");
-                    return; // Success
+                    return;
                 }
             } catch (e: any) {
                 attempts++;
-                const isDnsError = e.code === 'ENOTFOUND' || e.message.includes('getaddrinfo');
-                const errMsg = isDnsError ? "DNS lookup failed (network glitch?)" : e.message;
-
                 if (attempts < maxAttempts) {
-                    const delay = attempts * 5000; // 5s, 10s, 15s
-                    console.warn(`[JUPITER WARN] Sync attempt ${attempts} failed: ${errMsg}. Retrying in ${delay / 1000}s...`);
-                    await new Promise(r => setTimeout(r, delay));
+                    await new Promise(r => setTimeout(r, attempts * 5000));
                 } else {
                     this.jupiterSyncFailed = true;
-                    this.jupiterFailCooldown = Date.now() + (10 * 60 * 1000); // 10 min cooldown
-                    console.error(`[JUPITER ERROR] Sync failed after ${maxAttempts} attempts: ${errMsg}. Using hardcoded fallback for core tokens.`);
-
-                    // Critical Fallback: Ensure at least core tokens are known if Jupiter is down
+                    this.jupiterFailCooldown = Date.now() + (10 * 60 * 1000);
                     if (this.jupiterTokens.size === 0) {
                         this.jupiterTokens.set(SOL_MINT.toBase58(), { symbol: "SOL", decimals: 9, name: "Solana" });
                         this.jupiterTokens.set(USDC_MINT.toBase58(), { symbol: "USDC", decimals: 6, name: "USD Coin" });
-                        this.jupiterTokens.set("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV", { symbol: "LPPP", decimals: 9, name: "LPPP Liquidity" });
                     }
                 }
             }
@@ -139,17 +123,11 @@ export class MarketScanner {
         while (this.isRunning) {
             try {
                 sweepCount++;
-                // Log a heartbeat every 20 sweeps (~10 minutes)
                 if (sweepCount % 20 === 0) {
                     SocketManager.emitLog("[HEARTBEAT] LPPP BOT is actively scanning the market. All systems operational.", "success");
                 }
-
-                // Fire-and-forget Jupiter sync (don't block the sweep)
                 this.syncJupiterTokens().catch(() => { });
-
                 await this.performMarketSweep();
-
-                // Prune expired seenPairs to prevent memory leak
                 const now = Date.now();
                 for (const [key, timestamp] of this.seenPairs) {
                     if (now - timestamp > this.SEEN_COOLDOWN) {
@@ -159,7 +137,6 @@ export class MarketScanner {
             } catch (error: any) {
                 console.error(`[SWEEPER ERROR] ${error.message}`);
             }
-            // Wait 20 seconds between sweeps (Optimized for Helius Developer + Birdeye Lite)
             await new Promise(resolve => setTimeout(resolve, 20000));
         }
     }
@@ -170,20 +147,15 @@ export class MarketScanner {
 
         try {
             let allPairs: any[] = [];
-
-            // 1. PRIMARY: Birdeye Engine Selection
             try {
                 if (mode === "ANALYST" || mode === "DUAL") {
                     const trending = await BirdeyeService.fetchTrendingTokens(this.criteria);
                     allPairs = [...allPairs, ...trending];
                 }
-
                 if (mode === "SCOUT" || mode === "DUAL") {
                     const newListings = await BirdeyeService.fetchNewListings(this.criteria);
                     allPairs = [...allPairs, ...newListings];
                 }
-
-                // Fallback / High-Volume Baseline (Always good to have)
                 if (mode === "ANALYST" || mode === "DUAL") {
                     const highVolume = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
                     allPairs = [...allPairs, ...highVolume];
@@ -192,123 +164,46 @@ export class MarketScanner {
                 console.warn(`[BIRDEYE-SCAN] Error: ${e}`);
             }
 
-            /* 
-            // 2. SECONDARY: DexScreener Search (Meteora focus)
-            const keywordQueries = ["meteora"];
-            for (const query of keywordQueries) {
-                try {
-                    const searchRes = await axios.get(`https://api.dexscreener.com/latest/dex/search?q=${query}`, { timeout: 5000 });
-                    if (searchRes.data.pairs) allPairs = [...allPairs, ...searchRes.data.pairs];
-                } catch (e) { }
-            }
-            */
-
-            /*
-            // 3. TERTIARY: GeckoTerminal Network Pools (Paginated Backup)
-            for (let page = 1; page <= 8; page++) {
-                try {
-                    const geckoRes = await axios.get(`https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${page}`, { timeout: 8000 });
-                    if (geckoRes.data?.data) {
-                        const pagePairs = geckoRes.data.data.map((p: any) => ({
-                            pairAddress: p.attributes.address,
-                            chainId: "solana",
-                            dexId: p.relationships.dex.data.id,
-                            baseToken: {
-                                symbol: p.attributes.name.split(" / ")[0],
-                                address: p.relationships.base_token.data.id.split("_")[1]
-                            },
-                            quoteToken: {
-                                symbol: p.attributes.name.split(" / ")[1],
-                                address: p.relationships.quote_token.data.id.split("_")[1]
-                            },
-                            priceUsd: p.attributes.base_token_price_usd,
-                            volume: {
-                                m5: Number(p.attributes.volume_usd.m5),
-                                h1: Number(p.attributes.volume_usd.h1),
-                                h24: Number(p.attributes.volume_usd.h24)
-                            },
-                            liquidity: { usd: Number(p.attributes.reserve_in_usd) },
-                            marketCap: Number(p.attributes.fdv_usd) || 0
-                        }));
-                        allPairs = [...allPairs, ...pagePairs];
-                    }
-                } catch (e: any) {
-                    if (e.response?.status === 429) {
-                        console.error(`[GECKO] 429 on Page ${page}. IP throttled.`);
-                        break;
-                    }
-                }
-                // Faster 5s delay for backup source
-                if (page < 8) await new Promise(r => setTimeout(r, 5000));
-            }
-            */
-
-            /*
-            // 4. DexScreener Boosted Tokens (Trending)
-            try {
-                const boostedRes = await axios.get("https://api.dexscreener.com/token-boosts/latest/v1", { timeout: 5000 });
-                if (Array.isArray(boostedRes.data)) {
-                    const solanaBoosted = boostedRes.data.filter((t: any) => t.chainId === "solana");
-                    const boostedPairs = solanaBoosted.map((t: any) => ({ ...t, isBoosted: true }));
-                    allPairs = [...allPairs, ...boostedPairs];
-                }
-            } catch (e: any) { }
-            */
-
-            // Deduplicate pairs by address and FILTER FOR METEORA ONLY
             const uniquePairsMap = new Map();
             allPairs.forEach(p => {
-                // Handle different response formats between Gecko and DexScreener
-                const dexId = (p.dexId || p.relationships?.dex?.data?.id || "").toLowerCase();
+                const dexId = (p.dexId || "").toLowerCase();
                 const chainId = (p.chainId || "solana").toLowerCase();
-                const address = p.pairAddress || p.attributes?.address || p.tokenAddress;
+                const address = p.pairAddress || p.tokenAddress;
 
                 if (chainId === "solana" && address && !uniquePairsMap.has(address)) {
-                    // Normalize standard format for internal loop
                     const baseToken = p.baseToken || {
-                        address: p.mint ? (typeof p.mint === 'string' ? p.mint : p.mint.toBase58()) : p.relationships?.base_token?.data?.id?.split("_")[1],
-                        symbol: p.symbol || p.attributes?.name?.split(" / ")[0] || "TOKEN"
+                        address: p.mint ? (typeof p.mint === 'string' ? p.mint : p.mint.toBase58()) : (p.address || address),
+                        symbol: p.symbol || "TOKEN"
                     };
-
                     const quoteToken = p.quoteToken || {
-                        address: p.relationships?.quote_token?.data?.id?.split("_")[1] || SOL_MINT.toBase58(),
-                        symbol: p.attributes?.name?.split(" / ")[1] || "SOL"
+                        address: SOL_MINT.toBase58(),
+                        symbol: "SOL"
                     };
 
                     uniquePairsMap.set(address, {
+                        ...p,
                         pairAddress: address,
-                        dexId: dexId,
+                        dexId,
                         baseToken,
                         quoteToken,
-                        priceUsd: p.priceUsd || Number(p.attributes?.base_token_price_usd || 0),
-                        volume: p.volume || {
-                            m5: Number(p.attributes?.volume_usd?.m5 || 0),
-                            h1: Number(p.attributes?.volume_usd?.h1 || 0),
-                            h24: Number(p.volume24h || p.attributes?.volume_usd?.h24 || 0)
-                        },
-                        volume24h: p.volume24h || Number(p.attributes?.volume_usd?.h24 || 0),
-                        liquidity: p.liquidity ? (typeof p.liquidity === 'object' ? p.liquidity : { usd: p.liquidity }) : { usd: Number(p.attributes?.reserve_in_usd || 0) },
-                        marketCap: p.mcap || p.marketCap || p.fdv || Number(p.attributes?.fdv_usd || 0)
+                        priceUsd: p.priceUsd || 0,
+                        volume: p.volume || { m5: 0, h1: 0, h24: p.volume24h || 0 },
+                        liquidity: p.liquidity ? (typeof p.liquidity === 'object' ? p.liquidity : { usd: p.liquidity }) : { usd: 0 },
+                        marketCap: p.mcap || p.marketCap || 0,
+                        source: p.source || "BASELINE"
                     });
                 }
             });
 
             const pairs = Array.from(uniquePairsMap.values());
-
             if (pairs.length === 0) {
                 SocketManager.emitLog("[SWEEPER] Ecosystem harvest came up empty. Retrying...", "warning");
                 return;
             }
 
-            console.log(`[SWEEPER] Evaluating ${pairs.length} unique assets from across the ecosystem...`);
-            SocketManager.emitLog(`[SWEEPER] Evaluated ${pairs.length} assets. No caps applied.`, "info");
-
-            let candidatesFound = 0;
+            SocketManager.emitLog(`[SWEEPER] Evaluated ${pairs.length} assets. Mode: ${mode}`, "info");
 
             for (const pair of pairs) {
-                // Check seenPairs with cooldown (DISABLED PER USER REQUEST)
-                // const lastSeen = this.seenPairs.get(pair.pairAddress);
-                // if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
                 let targetToken = pair.baseToken;
                 let priceUSD = Number(pair.priceUsd || 0);
 
@@ -316,34 +211,15 @@ export class MarketScanner {
                     targetToken = pair.quoteToken;
                 }
 
-                // Final safety check for targetToken
                 if (!targetToken?.address || IGNORED_MINTS.includes(targetToken.address)) continue;
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
-
-                // metadata Check / Fallback (Batch 2.0)
-                let tokenInfo = this.jupiterTokens.get(targetToken.address);
-                if (!tokenInfo) {
-                    try {
-                        const mintPubkey = new PublicKey(targetToken.address);
-                        const info = await connection.getParsedAccountInfo(mintPubkey);
-                        if (info.value && (info.value.data as any).parsed) {
-                            const parsed = (info.value.data as any).parsed.info;
-                            tokenInfo = {
-                                symbol: targetToken.symbol || "Unknown",
-                                decimals: parsed.decimals || 9,
-                                name: "Discovery Token"
-                            };
-                        }
-                    } catch (e) { }
-                }
 
                 const volume5m = pair.volume?.m5 || 0;
                 const volume1h = pair.volume?.h1 || 0;
                 const volume24h = pair.volume?.h24 || 0;
                 const liquidity = pair.liquidity?.usd || 0;
-                const mcap = pair.marketCap || pair.fdv || 0;
+                const mcap = pair.marketCap || 0;
 
-                // Range validation helper
                 const inRange = (val: number, range: NumericRange) => {
                     const minMatch = Number(range.min) === 0 || val >= Number(range.min);
                     const maxMatch = Number(range.max) === 0 || val <= Number(range.max);
@@ -357,14 +233,12 @@ export class MarketScanner {
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    const matchMsg = `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics!`;
-
+                    const matchMsg = `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics! (Source: ${pair.source})`;
                     console.log(matchMsg);
                     SocketManager.emitLog(matchMsg, "success");
 
                     this.seenPairs.set(pair.pairAddress, Date.now());
-
-                    const result: ScanResult = {
+                    await this.callback({
                         mint: new PublicKey(targetToken.address),
                         pairAddress: pair.pairAddress,
                         dexId: pair.dexId || 'unknown',
@@ -373,10 +247,7 @@ export class MarketScanner {
                         mcap: Number(mcap),
                         symbol: targetToken.symbol,
                         priceUsd: priceUSD
-                    };
-
-                    await this.callback(result);
-                    candidatesFound++;
+                    });
                 }
             }
 
@@ -391,14 +262,8 @@ export class MarketScanner {
         }
     }
 
-
-    /**
-     * External trigger for token evaluation (e.g. from Webhooks)
-     */
     async evaluateToken(result: ScanResult) {
         if (!this.isRunning) return;
-
-        // Check cooldown
         const lastSeen = this.seenPairs.get(result.pairAddress);
         if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return;
 
@@ -412,4 +277,3 @@ export class MarketScanner {
         console.log("LPPP BOT Sweeper Service Stopped.");
     }
 }
-
