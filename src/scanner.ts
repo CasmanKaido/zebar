@@ -327,15 +327,6 @@ export class MarketScanner {
             // ── Track rejection reasons ──
             const rejectReasons = { noMint: 0, dedup: 0, stablecoin: 0, vol5m: 0, vol1h: 0, vol24h: 0, liquidity: 0, mcap: 0, jupiter: 0, accepted: 0 };
 
-            const inRange = (val: number, range: NumericRange) => {
-                const minMatch = Number(range.min) === 0 || val >= Number(range.min);
-                const hasMax = Number(range.max) > 0;
-                const maxMatch = !hasMax || val <= Number(range.max);
-                return minMatch && maxMatch;
-            };
-
-            const fmtK = (v: number) => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(1)}K` : `$${v.toFixed(0)}`;
-
             for (const pair of pairs) {
                 const mintAddress = pair.baseToken?.address;
                 if (!mintAddress || IGNORED_MINTS.includes(mintAddress)) { rejectReasons.noMint++; continue; }
@@ -364,13 +355,27 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
-                const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
-                const meetsVol24h = volume24h === 0 ? true : inRange(volume24h, this.criteria.volume24h);
-                const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
-                const meetsMcap = mcap === 0 ? true : inRange(mcap, this.criteria.mcap);
+                // MOMENTUM FILTERS for SCOUT Mode
+                // If token is < 15m old (estimated by low h1/h24 volume), prioritize 5m velocity.
+                const isVeryNew = volume1h < (this.criteria.volume1h.min * 0.5) || volume24h < (this.criteria.volume24h.min * 0.5);
+                const isScoutMode = this.criteria.mode === "SCOUT" || this.criteria.mode === "DUAL";
 
-                const tag = `${sym} | ${dex} | Vol5m:${fmtK(volume5m)} Vol1h:${fmtK(volume1h)} Vol24h:${fmtK(volume24h)} Liq:${fmtK(liquidity)} MCap:${fmtK(mcap)}`;
+                let meetsVol5m = volume5m === 0 ? true : this.inRange(volume5m, this.criteria.volume5m);
+                let meetsVol1h = volume1h === 0 ? true : this.inRange(volume1h, this.criteria.volume1h);
+                let meetsVol24h = volume24h === 0 ? true : this.inRange(volume24h, this.criteria.volume24h);
+
+                // Scout Momentum Override: If 5m volume is 3x the minimum, allow lower 1h/24h volume.
+                if (isScoutMode && isVeryNew && volume5m >= (this.criteria.volume5m.min * 3)) {
+                    meetsVol1h = true;
+                    meetsVol24h = true;
+                    // Tag it as a momentum play
+                    (pair as any).isMomentumPlay = true;
+                }
+
+                const meetsLiquidity = this.inRange(liquidity, this.criteria.liquidity);
+                const meetsMcap = mcap === 0 ? true : this.inRange(mcap, this.criteria.mcap);
+
+                const tag = `${sym} | ${dex} | Vol5m:${this.fmtK(volume5m)} Vol1h:${this.fmtK(volume1h)} Vol24h:${this.fmtK(volume24h)} Liq:${this.fmtK(liquidity)} MCap:${this.fmtK(mcap)}`;
 
                 if (!meetsVol5m) { rejectReasons.vol5m++; console.log(`[EVAL] ${tag} | ❌ VOL5M`); continue; }
                 if (!meetsVol1h) { rejectReasons.vol1h++; console.log(`[EVAL] ${tag} | ❌ VOL1H`); continue; }
@@ -391,7 +396,7 @@ export class MarketScanner {
 
                 rejectReasons.accepted++;
                 console.log(`[EVAL] ${tag} | ✅ QUALIFIED`);
-                SocketManager.emitLog(`⚡ [PASS] ${sym} | Liq: ${fmtK(liquidity)} | Vol24h: ${fmtK(volume24h)}`, "success");
+                SocketManager.emitLog(`⚡ [PASS] ${sym} | Liq: ${this.fmtK(liquidity)} | Vol24h: ${this.fmtK(volume24h)}`, "success");
                 qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
             }
 
@@ -437,7 +442,8 @@ export class MarketScanner {
                     liquidity: Number(q.liquidity),
                     mcap: Number(q.mcap),
                     symbol: q.pair.baseToken?.symbol || "TOKEN",
-                    priceUsd: q.priceUSD
+                    priceUsd: q.priceUSD,
+                    source: q.pair.isMomentumPlay ? "SCOUT_MOMENTUM" : q.pair.source
                 });
             }
 
@@ -458,12 +464,39 @@ export class MarketScanner {
 
     async evaluateToken(result: ScanResult) {
         if (!this.isRunning) return;
-        const lastSeen = this.seenPairs.get(result.pairAddress);
+        const mintAddress = result.mint.toBase58();
+        const lastSeen = this.seenPairs.get(mintAddress);
         if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return;
 
-        SocketManager.emitLog(`[EVALUATOR] High-Priority Evaluation for ${result.symbol}...`, "info");
-        this.seenPairs.set(result.pairAddress, Date.now());
-        await this.callback(result);
+        SocketManager.emitLog(`[FLASH-EVAL] Real-time check for ${result.symbol}...`, "info");
+
+        // Use more lenient criteria for High-Priority Flash Evaluation
+        const liquidity = result.liquidity || 0;
+        const mcap = result.mcap || 0;
+        const vol5m = (result as any).volume5m || 0;
+
+        const meetsLiq = this.inRange(liquidity, this.criteria.liquidity);
+        const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min * 0.5, max: this.criteria.mcap.max }); // 50% discount on min mcap for fresh tokens
+        const meetsMomentum = vol5m >= (this.criteria.volume5m.min * 2); // Must show immediate velocity
+
+        if (meetsLiq && meetsMcap && (meetsMomentum || (result as any).volume1h > this.criteria.volume1h.min)) {
+            SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
+            this.seenPairs.set(mintAddress, Date.now());
+            await this.callback(result);
+        } else {
+            console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Liq:${meetsLiq}, Mcap:${meetsMcap}, Momentum:${meetsMomentum})`);
+        }
+    }
+
+    private inRange(val: number, range: NumericRange) {
+        const minMatch = Number(range.min) === 0 || val >= Number(range.min);
+        const hasMax = Number(range.max) > 0;
+        const maxMatch = !hasMax || val <= Number(range.max);
+        return minMatch && maxMatch;
+    }
+
+    private fmtK(v: number) {
+        return v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(1)}K` : `$${v.toFixed(0)}`;
     }
 
     stop() {

@@ -10,6 +10,7 @@ import { SocketManager } from "./socket";
 import { GeckoService } from "./gecko-service";
 import { SOL_MINT, LPPP_MINT } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
+import { HeliusWebhookService } from "./helius-webhook-service";
 
 const app = express();
 app.use(cors());
@@ -212,7 +213,20 @@ app.post("/api/config/key", async (req, res) => {
 });
 
 // Helius Webhook Endpoint for Real-Time Discovery
-// Handler removed per audit cleanup.
+app.post("/api/webhooks/helius", async (req, res) => {
+    try {
+        const authHeader = req.headers["authorization"] as string;
+        const success = await HeliusWebhookService.handleWebhook(req.body, botManager, authHeader);
+        if (success) {
+            res.status(200).send("OK");
+        } else {
+            res.status(401).send("Unauthorized");
+        }
+    } catch (error) {
+        console.error("[SERVER] Webhook Error:", error);
+        res.status(500).send("Internal Server Error");
+    }
+});
 
 // Catch-all to serve React's index.html
 app.use((req, res) => {

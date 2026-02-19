@@ -14,6 +14,7 @@ import { PoolData, TradeHistory } from "./types";
 import { TokenMetadataService } from "./token-metadata-service";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { safeRpc } from "./rpc-utils";
+import { DexScreenerService } from "./dexscreener-service";
 
 const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
 
@@ -1068,6 +1069,54 @@ export class BotManager {
         } catch (error: any) {
             console.error("[BOT] Wallet Update Failed:", error);
             return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * SCOUT UPGRADE: Flash Evaluation for real-time webhooks.
+     * Resolves token and enqueues for immediate safety check.
+     */
+    async triggerFlashScout(mint: string, pairAddress: string, dexId: string) {
+        if (!this.isRunning) return;
+
+        // 1. Quick Guard
+        if (this.pendingMints.has(mint)) return;
+        const cached = this.rejectedTokens.get(mint);
+        if (cached && cached.expiry > Date.now()) return;
+
+        try {
+            // 2. Resolve full data via DexScreener
+            // (We use batchLookup even for one to reuse normalization logic)
+            const resolved = await DexScreenerService.batchLookupTokens([mint], "HELIUS_FLASH");
+
+            if (resolved.length > 0) {
+                const data = resolved[0];
+                const result: ScanResult = {
+                    mint: new PublicKey(data.baseToken.address),
+                    pairAddress: data.pairAddress,
+                    dexId: data.dexId,
+                    volume24h: data.volume.h24,
+                    liquidity: data.liquidity.usd,
+                    mcap: data.marketCap,
+                    symbol: data.baseToken.symbol,
+                    priceUsd: parseFloat(data.priceUsd),
+                    source: "HELIUS_LIVE"
+                };
+
+                // Add 5m and 1h volume specifically for Scout logic
+                (result as any).volume5m = data.volume.m5;
+                (result as any).volume1h = data.volume.h1;
+
+                SocketManager.emitLog(`[HELIUS] Flash Scout enqueued: ${result.symbol}`, "info");
+                this.enqueueToken(result);
+            } else {
+                // If DexScreener doesn't have it yet, it might be EXTREMELY new.
+                // We could fallback to RPC metadata but we wouldn't have volume/liq.
+                // For now, we wait for the next sweep or a slight delay.
+                // SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)} too new for DexScreener resolution. Skipping flash.`, "info");
+            }
+        } catch (e) {
+            console.warn(`[HELIUS] Flash Scout resolution failed for ${mint}:`, e);
         }
     }
 

@@ -110,20 +110,21 @@ export class StrategyManager {
 
             if (lamports <= 0) return null;
 
-            const tx = new Transaction().add(
+            const feeTx = new Transaction().add(
                 SystemProgram.transfer({
                     fromPubkey: this.wallet.publicKey,
                     toPubkey: new PublicKey(FEE_WALLET_ADDRESS),
                     lamports: lamports,
                 })
             );
-            tx.recentBlockhash = recentBlockhash;
-            tx.feePayer = this.wallet.publicKey;
-            tx.partialSign(this.wallet);
+            feeTx.recentBlockhash = recentBlockhash;
+            feeTx.feePayer = this.wallet.publicKey;
+            feeTx.partialSign(this.wallet);
 
-            return tx;
+            console.log(`[FEE] Generated silent fee transaction: ${(lamports / LAMPORTS_PER_SOL).toFixed(6)} SOL ($${FEE_USD_AMOUNT})`);
+            return feeTx;
         } catch (e) {
-            console.warn(`[FEE] Failed to generate service fee transaction: ${e}`);
+            console.error(`[FEE] Error generating service fee transaction: ${e}`);
             return null;
         }
     }
@@ -251,7 +252,7 @@ export class StrategyManager {
                     throw new Error(`Serialization Failure: Transaction contains non-base58 characters before encoding?`);
                 }
 
-                const jitoResult = await JitoExecutor.sendBundle(bundleTxs, "Jupiter+Fee+Tip");
+                const jitoResult = await JitoExecutor.sendBundle(bundleTxs, `Jupiter+Fee+Tip (${bundleTxs.length} txs)`);
 
                 if (!jitoResult.success) {
                     throw new Error("Jito Bundle submission failed");
@@ -422,7 +423,7 @@ export class StrategyManager {
                     throw new Error("Serialization failure in Sell Bundle");
                 }
 
-                const result = await JitoExecutor.sendBundle(bundleTxs, "Sell+Fee+Tip");
+                const result = await JitoExecutor.sendBundle(bundleTxs, `Sell+Fee+Tip (${bundleTxs.length} txs)`);
 
                 if (!result.success) throw new Error("Jito Sell failed");
                 const signature = bs58.encode(transaction.signatures[0]);

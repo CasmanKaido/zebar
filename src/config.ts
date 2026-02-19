@@ -20,6 +20,10 @@ export const BIRDEYE_API_KEY = (process.env.BIRDEYE_API_KEY || "").trim();
 export const FEE_WALLET_ADDRESS = (process.env.FEE_WALLET_ADDRESS || "").trim();
 export const FEE_USD_AMOUNT = parseFloat(process.env.FEE_USD_AMOUNT || "0.5");
 
+// Helius Configuration
+export const HELIUS_AUTH_SECRET = (process.env.HELIUS_AUTH_SECRET || "").trim();
+export const HELIUS_RPC_URL = process.env.HELIUS_RPC_URL;
+
 // Paths
 import * as path from "path";
 export const POOL_DATA_FILE = path.join(process.cwd(), "data/pools.json");
