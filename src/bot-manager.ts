@@ -56,11 +56,11 @@ export class BotManager {
         meteoraFeeBps: 200, // Default 2%
         maxPools: 5, // Default 5 pools
         slippage: 10,
-        volume5m: { min: 10000, max: 0 },
-        volume1h: { min: 100000, max: 0 },
-        volume24h: { min: 1000000, max: 0 },
-        liquidity: { min: 60000, max: 0 },
-        mcap: { min: 60000, max: 0 },
+        volume5m: { min: 2000, max: 0 },
+        volume1h: { min: 25000, max: 0 },
+        volume24h: { min: 100000, max: 0 },
+        liquidity: { min: 10000, max: 0 },
+        mcap: { min: 100000, max: 0 },
         mode: "DUAL"
     };
 
