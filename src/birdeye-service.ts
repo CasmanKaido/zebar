@@ -8,10 +8,14 @@ const BIRDEYE_NEW_LISTING_URL = "https://public-api.birdeye.so/defi/v2/tokens/ne
 
 export class BirdeyeService {
     static isEnabled = true;
+    // Rolling pagination state — persists between sweeps
+    private static savedScrollId: string | null = null;
+    private static savedPageOffset: number = 0;
 
     /**
      * Fetches high-volume tokens from Birdeye API using the frontend's filter criteria.
-     * Uses the /v3/token/list/scroll endpoint for pagination.
+     * Uses rolling pagination: 3 pages per sweep, continues from last position.
+     * Resets to page 0 when API data is exhausted.
      */
     static async fetchHighVolumeTokens(criteria: ScannerCriteria): Promise<ScanResult[]> {
         if (!BIRDEYE_API_KEY || !this.isEnabled) {
@@ -21,19 +25,18 @@ export class BirdeyeService {
         }
 
         const apiKey: string = BIRDEYE_API_KEY as string;
-        // Silent start unless debug
 
         const scanResults: ScanResult[] = [];
-        let nextScrollId: string | null = null;
+        let nextScrollId: string | null = this.savedScrollId;
         const seenMints = new Set<string>();
-
-        // Limit pages to stay within plan limits. Lite plan can handle much more.
-        const MAX_PAGES = Number(process.env.BIRDEYE_MAX_PAGES) || 15;
-        const REQUEST_DELAY = 200; // 200ms delay for Lite Tier (Safe & Fast)
+        const PAGES_PER_SWEEP = 3;
+        const REQUEST_DELAY = 200;
 
         try {
-            let page = 0;
-            while (page < MAX_PAGES) {
+            let pagesThisSweep = 0;
+            let currentPage = this.savedPageOffset;
+
+            while (pagesThisSweep < PAGES_PER_SWEEP) {
                 const headers = {
                     "X-API-KEY": apiKey,
                     "x-chain": "solana",
@@ -43,7 +46,7 @@ export class BirdeyeService {
                 const queryParts: string[] = [
                     `sort_by=volume_24h_usd`,
                     `sort_type=desc`,
-                    `offset=${page * 50}`, // Manual pagination if scroll is slow
+                    `offset=${currentPage * 50}`,
                     `limit=50`
                 ];
 
@@ -74,8 +77,13 @@ export class BirdeyeService {
                 const tokens = response.data.data?.items || [];
                 nextScrollId = response.data.data?.next_scroll_id;
 
-                // Pagination is silent, results consolidated at end
-                let qualifyingCount = 0;
+                // No more data — reset to beginning for next sweep
+                if (tokens.length === 0) {
+                    this.savedScrollId = null;
+                    this.savedPageOffset = 0;
+                    console.log(`[BIRDEYE] Reached end of data at page ${currentPage}. Will restart from page 0 next sweep.`);
+                    break;
+                }
 
                 for (const t of tokens) {
                     if (!t.address) continue;
@@ -84,11 +92,6 @@ export class BirdeyeService {
 
                     const vol24h = t.volume_24h_usd || t.v24hUSD || 0;
                     const liq = t.liquidity || 0;
-
-                    // Track how many tokens on this page meet minimum criteria
-                    if (vol24h >= (criteria.volume24h.min || 0) && liq >= (criteria.liquidity.min || 0)) {
-                        qualifyingCount++;
-                    }
 
                     scanResults.push({
                         mint: new PublicKey(t.address),
@@ -103,13 +106,20 @@ export class BirdeyeService {
                     });
                 }
 
-                // No early exit — exhaust all pages
-
                 // Stagger requests
-                page++;
+                pagesThisSweep++;
+                currentPage++;
+                if (pagesThisSweep < PAGES_PER_SWEEP) {
+                    await new Promise(r => setTimeout(r, REQUEST_DELAY));
+                }
             }
+
+            // Save position for next sweep
+            this.savedScrollId = nextScrollId;
+            this.savedPageOffset = currentPage;
+
             if (scanResults.length > 0) {
-                console.log(`[BIRDEYE] Scan Complete: Found ${scanResults.length} tokens across ${page} pages.`);
+                console.log(`[BIRDEYE] Sweep: pages ${this.savedPageOffset - pagesThisSweep}-${this.savedPageOffset - 1} | Found ${scanResults.length} tokens.`);
             }
             return scanResults;
         }
