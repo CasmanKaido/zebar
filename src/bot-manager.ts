@@ -487,7 +487,6 @@ export class BotManager {
 
             this.pendingMints.add(mintAddress);
 
-            SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
             SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 

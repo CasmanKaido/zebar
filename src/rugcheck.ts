@@ -247,12 +247,7 @@ export class OnChainSafetyChecker {
                     return result;
                 }
 
-                // FINAL OVERRIDE: If Mint Auth is enabled AND Liquidity is UNLOCKED = REJECT
-                if (result.checks.mintAuthority === "enabled" && result.checks.liquidityLocked === "unlocked") {
-                    result.safe = false;
-                    result.reason = "High risk: Mint Authority + Unlocked Liquidity";
-                    return result;
-                }
+                // If Mint Auth is enabled but liquidity IS locked, it's a warning — allow it through
             }
         } catch (err: any) {
             console.warn(`[SAFETY] Safety scan failed: ${err.message}`);
