@@ -16,6 +16,8 @@ export class HeliusWebhookService {
      * @param authHeader (Optional) Authentication secret from Helius
      */
     static async handleWebhook(payload: any, botManager: BotManager, authHeader?: string): Promise<boolean> {
+        if (!botManager.isRunning) return true; // Silently ignore if bot is stopped
+
         console.log(`[HELIUS] Webhook received at ${new Date().toISOString()}`);
         // 1. Security Check
         if (HELIUS_AUTH_SECRET) {
