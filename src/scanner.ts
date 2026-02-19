@@ -324,20 +324,39 @@ export class MarketScanner {
             // ═══════════════════════════════════════════════════════
             const qualified: { pair: any; mintAddress: string; volume5m: number; volume1h: number; volume24h: number; liquidity: number; mcap: number; priceUSD: number }[] = [];
 
-            // ── DIAGNOSTIC: Track rejection reasons ──
+            // ── Track rejection reasons ──
             const rejectReasons = { noMint: 0, dedup: 0, stablecoin: 0, vol5m: 0, vol1h: 0, vol24h: 0, liquidity: 0, mcap: 0, jupiter: 0, accepted: 0 };
-            let sampleCount = 0;
+
+            const inRange = (val: number, range: NumericRange) => {
+                const minMatch = Number(range.min) === 0 || val >= Number(range.min);
+                const hasMax = Number(range.max) > 0;
+                const maxMatch = !hasMax || val <= Number(range.max);
+                return minMatch && maxMatch;
+            };
+
+            const fmtK = (v: number) => v >= 1_000_000 ? `$${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `$${(v / 1_000).toFixed(1)}K` : `$${v.toFixed(0)}`;
 
             for (const pair of pairs) {
                 const mintAddress = pair.baseToken?.address;
                 if (!mintAddress || IGNORED_MINTS.includes(mintAddress)) { rejectReasons.noMint++; continue; }
 
+                const sym = pair.baseToken?.symbol || mintAddress.slice(0, 6);
+                const dex = pair.dexId || "?";
+
                 // Dedup cooldown
                 const lastSeen = this.seenPairs.get(mintAddress);
-                if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) { rejectReasons.dedup++; continue; }
+                if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) {
+                    rejectReasons.dedup++;
+                    console.log(`[EVAL] ${sym} | ⏳ COOLDOWN (seen ${Math.round((Date.now() - lastSeen) / 1000)}s ago)`);
+                    continue;
+                }
 
                 const priceUSD = Number(pair.priceUsd || 0);
-                if (priceUSD > 0.98 && priceUSD < 1.02) { rejectReasons.stablecoin++; continue; }
+                if (priceUSD > 0.98 && priceUSD < 1.02) {
+                    rejectReasons.stablecoin++;
+                    console.log(`[EVAL] ${sym} | ❌ STABLECOIN ($${priceUSD.toFixed(4)})`);
+                    continue;
+                }
 
                 const volume5m = pair.volume?.m5 || 0;
                 const volume1h = pair.volume?.h1 || 0;
@@ -345,43 +364,33 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || pair.fdv || 0;
 
-                // ── DIAGNOSTIC: Log first 3 tokens' raw values ──
-                if (sampleCount < 3) {
-                    const sym = pair.baseToken?.symbol || "???";
-                    console.log(`[FILTER-DEBUG] #${sampleCount + 1} ${sym} | vol5m:${volume5m} vol1h:${volume1h} vol24h:${volume24h} liq:${liquidity} mcap:${mcap} | Criteria: vol1h>=${this.criteria.volume1h.min} vol24h>=${this.criteria.volume24h.min} liq>=${this.criteria.liquidity.min} mcap>=${this.criteria.mcap.min}`);
-                    sampleCount++;
-                }
-
-                const inRange = (val: number, range: NumericRange) => {
-                    const minMatch = Number(range.min) === 0 || val >= Number(range.min);
-                    const hasMax = Number(range.max) > 0;
-                    const maxMatch = !hasMax || val <= Number(range.max);
-                    return minMatch && maxMatch;
-                };
-
                 const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
                 const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = volume24h === 0 ? true : inRange(volume24h, this.criteria.volume24h);
                 const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
-                // Bypass mcap check if DexScreener didn't return marketCap data (same pattern as volume)
                 const meetsMcap = mcap === 0 ? true : inRange(mcap, this.criteria.mcap);
 
-                if (!meetsVol5m) { rejectReasons.vol5m++; continue; }
-                if (!meetsVol1h) { rejectReasons.vol1h++; continue; }
-                if (!meetsVol24h) { rejectReasons.vol24h++; continue; }
-                if (!meetsLiquidity) { rejectReasons.liquidity++; continue; }
-                if (!meetsMcap) { rejectReasons.mcap++; continue; }
+                const tag = `${sym} | ${dex} | Vol5m:${fmtK(volume5m)} Vol1h:${fmtK(volume1h)} Vol24h:${fmtK(volume24h)} Liq:${fmtK(liquidity)} MCap:${fmtK(mcap)}`;
 
-                if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) { rejectReasons.jupiter++; continue; }
+                if (!meetsVol5m) { rejectReasons.vol5m++; console.log(`[EVAL] ${tag} | ❌ VOL5M`); continue; }
+                if (!meetsVol1h) { rejectReasons.vol1h++; console.log(`[EVAL] ${tag} | ❌ VOL1H`); continue; }
+                if (!meetsVol24h) { rejectReasons.vol24h++; console.log(`[EVAL] ${tag} | ❌ VOL24H`); continue; }
+                if (!meetsLiquidity) { rejectReasons.liquidity++; console.log(`[EVAL] ${tag} | ❌ LIQUIDITY`); continue; }
+                if (!meetsMcap) { rejectReasons.mcap++; console.log(`[EVAL] ${tag} | ❌ MCAP`); continue; }
+
+                if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) {
+                    rejectReasons.jupiter++;
+                    console.log(`[EVAL] ${tag} | ❌ NOT ON JUPITER`);
+                    continue;
+                }
 
                 rejectReasons.accepted++;
+                console.log(`[EVAL] ${tag} | ✅ QUALIFIED`);
                 qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
             }
 
-            // ── DIAGNOSTIC: Log filter summary ──
-            if (qualified.length === 0) {
-                console.log(`[FILTER-SUMMARY] 0 qualified out of ${pairs.length}. Rejections: ${JSON.stringify(rejectReasons)}`);
-            }
+            // ── Log filter summary (always) ──
+            console.log(`[FILTER-SUMMARY] ${rejectReasons.accepted} qualified out of ${pairs.length}. Rejections: ${JSON.stringify(rejectReasons)}`);
 
             // ═══════════════════════════════════════════════════════
             // DISPLAY ALL MATCHES (FREE — no RPC, just DexScreener data)
