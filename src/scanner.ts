@@ -273,16 +273,20 @@ export class MarketScanner {
             // ═══════════════════════════════════════════════════════
             const qualified: { pair: any; mintAddress: string; volume5m: number; volume1h: number; volume24h: number; liquidity: number; mcap: number; priceUSD: number }[] = [];
 
+            // ── DIAGNOSTIC: Track rejection reasons ──
+            const rejectReasons = { noMint: 0, dedup: 0, stablecoin: 0, mcapCeiling: 0, vol5m: 0, vol1h: 0, vol24h: 0, liquidity: 0, mcap: 0, jupiter: 0, accepted: 0 };
+            let sampleCount = 0;
+
             for (const pair of pairs) {
                 const mintAddress = pair.baseToken?.address;
-                if (!mintAddress || IGNORED_MINTS.includes(mintAddress)) continue;
+                if (!mintAddress || IGNORED_MINTS.includes(mintAddress)) { rejectReasons.noMint++; continue; }
 
                 // Dedup cooldown
                 const lastSeen = this.seenPairs.get(mintAddress);
-                if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
+                if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) { rejectReasons.dedup++; continue; }
 
                 const priceUSD = Number(pair.priceUsd || 0);
-                if (priceUSD > 0.98 && priceUSD < 1.02) continue;
+                if (priceUSD > 0.98 && priceUSD < 1.02) { rejectReasons.stablecoin++; continue; }
 
                 const volume5m = pair.volume?.m5 || 0;
                 const volume1h = pair.volume?.h1 || 0;
@@ -290,8 +294,15 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || 0;
 
+                // ── DIAGNOSTIC: Log first 3 tokens' raw values ──
+                if (sampleCount < 3) {
+                    const sym = pair.baseToken?.symbol || "???";
+                    console.log(`[FILTER-DEBUG] #${sampleCount + 1} ${sym} | vol5m:${volume5m} vol1h:${volume1h} vol24h:${volume24h} liq:${liquidity} mcap:${mcap} | Criteria: vol1h>=${this.criteria.volume1h.min} vol24h>=${this.criteria.volume24h.min} liq>=${this.criteria.liquidity.min} mcap>=${this.criteria.mcap.min}`);
+                    sampleCount++;
+                }
+
                 const MCAP_HARD_CEILING = 50_000_000;
-                if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) continue;
+                if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) { rejectReasons.mcapCeiling++; continue; }
 
                 const inRange = (val: number, range: NumericRange) => {
                     const minMatch = Number(range.min) === 0 || val >= Number(range.min);
@@ -306,10 +317,21 @@ export class MarketScanner {
                 const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
-                if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) continue;
-                    qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
-                }
+                if (!meetsVol5m) { rejectReasons.vol5m++; continue; }
+                if (!meetsVol1h) { rejectReasons.vol1h++; continue; }
+                if (!meetsVol24h) { rejectReasons.vol24h++; continue; }
+                if (!meetsLiquidity) { rejectReasons.liquidity++; continue; }
+                if (!meetsMcap) { rejectReasons.mcap++; continue; }
+
+                if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) { rejectReasons.jupiter++; continue; }
+
+                rejectReasons.accepted++;
+                qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
+            }
+
+            // ── DIAGNOSTIC: Log filter summary ──
+            if (qualified.length === 0) {
+                console.log(`[FILTER-SUMMARY] 0 qualified out of ${pairs.length}. Rejections: ${JSON.stringify(rejectReasons)}`);
             }
 
             // ═══════════════════════════════════════════════════════
