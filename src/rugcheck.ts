@@ -90,8 +90,20 @@ export class OnChainSafetyChecker {
             let mintInfo;
             try {
                 mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
-            } catch {
-                mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
+            } catch (e1: any) {
+                try {
+                    mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
+                } catch (e2: any) {
+                    // Neither standard nor Token-2022 program owns this mint
+                    const errMsg = e2.message || String(e2);
+                    if (errMsg.includes("TokenInvalidAccountOwner")) {
+                        result.safe = false;
+                        result.reason = "Unsupported token program (not SPL Token or Token-2022)";
+                        SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Unsupported token program`, "warning");
+                        return result;
+                    }
+                    throw e2; // Re-throw other errors to outer catch
+                }
             }
 
             if (mintInfo.mintAuthority !== null) {

@@ -767,7 +767,7 @@ export class BotManager {
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
                             // ═══ AUTO-RECALIBRATION (Simplified) ═══
-                            if (roiVal < -90) {
+                            if (roiVal < -90 && !pool.priceReconstructed) {
                                 if (roiVal < -95 && (pool.roi === "0%" || pool.roi === "0.00%")) {
                                     const invertedInitial = 1 / pool.initialPrice;
                                     const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
@@ -775,10 +775,12 @@ export class BotManager {
                                         console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
                                         pool.initialPrice = invertedInitial;
                                         roiVal = newRoi;
+                                        pool.priceReconstructed = true;
                                     } else {
                                         console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
                                         pool.initialPrice = normalizedPrice;
                                         roiVal = 0;
+                                        pool.priceReconstructed = true;
                                     }
                                 }
                             }

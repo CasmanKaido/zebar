@@ -9,7 +9,7 @@ export interface JupiterPrice {
 export type JupiterPriceResponse = Record<string, JupiterPrice> | { data: Record<string, JupiterPrice> };
 
 export class JupiterPriceService {
-    private static BASE_URL = "https://api.jup.ag/price/v2";
+    private static BASE_URL = "https://api.jup.ag/price/v3";
     private static cache = new Map<string, { price: number; timestamp: number }>();
     private static CACHE_TTL = 15000; // 15 seconds (reduced for more real-time prices)
 

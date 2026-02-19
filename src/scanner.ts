@@ -220,6 +220,12 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || 0;
 
+                // Quick reject: mega-cap tokens are not targets for LP creation
+                const MCAP_HARD_CEILING = 50_000_000;
+                if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) {
+                    continue;
+                }
+
                 const inRange = (val: number, range: NumericRange) => {
                     const minMatch = Number(range.min) === 0 || val >= Number(range.min);
                     const maxMatch = Number(range.max) === 0 || val <= Number(range.max);
@@ -233,9 +239,7 @@ export class MarketScanner {
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    const matchMsg = `[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics! (Source: ${pair.source})`;
-                    console.log(matchMsg);
-                    SocketManager.emitLog(matchMsg, "success");
+                    SocketManager.emitLog(`[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics! (Source: ${pair.source})`, "success");
 
                     this.seenPairs.set(pair.pairAddress, Date.now());
                     await this.callback({
