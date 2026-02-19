@@ -81,7 +81,7 @@ export class BirdeyeService {
                 if (tokens.length === 0) {
                     this.savedScrollId = null;
                     this.savedPageOffset = 0;
-                    console.log(`[BIRDEYE] Reached end of data at page ${currentPage}. Will restart from page 0 next sweep.`);
+                    console.log(`[BIRDEYE] Reached end of data at page ${currentPage}. Restarting from page 0 next sweep.`);
                     break;
                 }
 
@@ -114,12 +114,11 @@ export class BirdeyeService {
                 }
             }
 
-            // Save position for next sweep
-            this.savedScrollId = nextScrollId;
-            this.savedPageOffset = currentPage;
-
+            // Save position for next sweep — but only if we didn't already reset to 0
             if (scanResults.length > 0) {
-                console.log(`[BIRDEYE] Sweep: pages ${this.savedPageOffset - pagesThisSweep}-${this.savedPageOffset - 1} | Found ${scanResults.length} tokens.`);
+                this.savedScrollId = nextScrollId;
+                this.savedPageOffset = currentPage;
+                console.log(`[BIRDEYE] Sweep: pages ${currentPage - pagesThisSweep}-${currentPage - 1} | Found ${scanResults.length} tokens.`);
             }
             return scanResults;
         }
