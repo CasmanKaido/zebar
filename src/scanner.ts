@@ -239,7 +239,7 @@ export class MarketScanner {
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    SocketManager.emitLog(`[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics! (Source: ${pair.source})`, "success");
+                    // SocketManager.emitLog(`[ECOSYSTEM MATCH] ${targetToken.symbol} passed all metrics! (Source: ${pair.source})`, "success");
 
                     this.seenPairs.set(pair.pairAddress, Date.now());
                     await this.callback({
