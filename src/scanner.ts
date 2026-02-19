@@ -46,6 +46,9 @@ export class MarketScanner {
     private JUPITER_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
     private jupiterSyncFailed = false;
     private jupiterFailCooldown = 0;
+    private geckoPage = 1;
+    private readonly GECKO_PAGES_PER_SWEEP = 2;
+    private readonly GECKO_MAX_PAGE = 10;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any) {
         this.criteria = criteria;
@@ -144,33 +147,81 @@ export class MarketScanner {
 
     private async performMarketSweep() {
         const mode = this.criteria.mode || "DUAL";
-        const sourceLabel = mode === "SCOUT" ? "Birdeye New Listings" : mode === "ANALYST" ? "DexScreener Pro" : "DexScreener + Birdeye";
+        const sourceLabel = mode === "SCOUT" ? "Birdeye New Listings" : mode === "ANALYST" ? "GeckoTerminal + Birdeye" : "Gecko + Birdeye";
         SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Source: ${sourceLabel}`, "info");
 
         try {
             let allPairs: any[] = [];
 
             // ═══════════════════════════════════════════════════════
-            // ANALYST: DexScreener boosted/trending tokens (FREE)
+            // ANALYST: GeckoTerminal Solana Pools (rolling pagination)
+            // Returns complete pair data: pairAddress, volume, liq, mcap
+            // No resolution step needed — data is ready to filter.
             // ═══════════════════════════════════════════════════════
             if (mode === "ANALYST" || mode === "DUAL") {
-                try {
-                    const boosted = await DexScreenerService.fetchBoostedTokens();
-                    if (boosted.length > 0) {
-                        allPairs = [...allPairs, ...boosted];
-                        SocketManager.emitLog(`[DEXSCREENER] Found ${boosted.length} boosted/trending tokens.`, "info");
+                const startPage = this.geckoPage;
+                let pagesThisSweep = 0;
+
+                while (pagesThisSweep < this.GECKO_PAGES_PER_SWEEP) {
+                    try {
+                        const geckoRes = await axios.get(
+                            `https://api.geckoterminal.com/api/v2/networks/solana/pools?page=${this.geckoPage}`,
+                            { timeout: 8000 }
+                        );
+
+                        if (geckoRes.data?.data && geckoRes.data.data.length > 0) {
+                            const pagePairs = geckoRes.data.data.map((p: any) => ({
+                                pairAddress: p.attributes?.address || "",
+                                chainId: "solana",
+                                dexId: p.relationships?.dex?.data?.id || "unknown",
+                                baseToken: {
+                                    symbol: (p.attributes?.name || "?").split(" / ")[0],
+                                    address: (p.relationships?.base_token?.data?.id || "").split("_")[1] || ""
+                                },
+                                quoteToken: {
+                                    symbol: (p.attributes?.name || "?").split(" / ")[1] || "?",
+                                    address: (p.relationships?.quote_token?.data?.id || "").split("_")[1] || ""
+                                },
+                                priceUsd: p.attributes?.base_token_price_usd || "0",
+                                volume: {
+                                    m5: Number(p.attributes?.volume_usd?.m5 || 0),
+                                    h1: Number(p.attributes?.volume_usd?.h1 || 0),
+                                    h24: Number(p.attributes?.volume_usd?.h24 || 0)
+                                },
+                                liquidity: { usd: Number(p.attributes?.reserve_in_usd || 0) },
+                                marketCap: Number(p.attributes?.fdv_usd || 0),
+                                source: "GECKO"
+                            }));
+                            allPairs = [...allPairs, ...pagePairs];
+                        } else {
+                            // No data on this page — reset to page 1
+                            this.geckoPage = 1;
+                            break;
+                        }
+                    } catch (e: any) {
+                        if (e.response?.status === 429) {
+                            console.warn(`[GECKO] Rate limited on page ${this.geckoPage}. Pausing.`);
+                            break;
+                        }
+                        console.warn(`[GECKO] Page ${this.geckoPage} error: ${e.message}`);
                     }
-                } catch (e: any) {
-                    console.warn(`[DEXSCREENER] Boosted fetch error: ${e.message}`);
+
+                    this.geckoPage++;
+                    pagesThisSweep++;
+
+                    // Reset pagination when we've gone deep enough
+                    if (this.geckoPage > this.GECKO_MAX_PAGE) {
+                        this.geckoPage = 1;
+                    }
+
+                    // Rate limit between pages
+                    if (pagesThisSweep < this.GECKO_PAGES_PER_SWEEP) {
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
                 }
 
-                try {
-                    const profiles = await DexScreenerService.fetchLatestProfiles();
-                    if (profiles.length > 0) {
-                        allPairs = [...allPairs, ...profiles];
-                    }
-                } catch (e: any) {
-                    console.warn(`[DEXSCREENER] Profiles fetch error: ${e.message}`);
+                if (allPairs.length > 0) {
+                    SocketManager.emitLog(`[GECKO] Pages ${startPage}-${startPage + pagesThisSweep - 1} | Found ${allPairs.length} pools.`, "info");
                 }
             }
 
