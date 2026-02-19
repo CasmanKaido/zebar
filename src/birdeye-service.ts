@@ -43,17 +43,16 @@ export class BirdeyeService {
                     "accept": "application/json"
                 };
 
+                // Fetch broadly — don't pre-filter with user criteria.
+                // Birdeye and DexScreener disagree on liquidity/mcap values,
+                // so let the scanner filter using DexScreener's authoritative data.
                 const queryParts: string[] = [
                     `sort_by=volume_24h_usd`,
                     `sort_type=desc`,
                     `offset=${currentPage * 50}`,
-                    `limit=50`
+                    `limit=50`,
+                    `min_liquidity=1000`  // Only exclude total dust (< $1K liq)
                 ];
-
-                if (criteria.volume1h.min > 0) queryParts.push(`min_volume_1h=${criteria.volume1h.min}`);
-                if (criteria.volume24h.min > 0) queryParts.push(`min_volume_24h=${criteria.volume24h.min}`);
-                if (criteria.liquidity.min > 0) queryParts.push(`min_liquidity=${criteria.liquidity.min}`);
-                if (criteria.mcap.min > 0) queryParts.push(`min_market_cap=${criteria.mcap.min}`);
 
                 const requestUrl: string = nextScrollId
                     ? `${BIRDEYE_BASE_URL}?scroll_id=${nextScrollId}`
