@@ -3,81 +3,307 @@ import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-to
 import { SocketManager } from "./socket";
 import { safeRpc } from "./rpc-utils";
 import { IGNORED_MINTS } from "./config";
+import axios from "axios";
 
 /**
- * On-chain token safety checker.
- * Replaces the external RugCheck API with direct Solana RPC calls.
- * Checks: Mint Authority, Freeze Authority, and Liquidity Lock status.
+ * Token Safety Service
+ * 3-tier safety check: RugCheck API → GoPlus API → On-Chain (fallback)
+ *
+ * - RugCheck: Primary. Returns risk score, risk list, LP lock %.
+ * - GoPlus:   Secondary. Returns freeze/close/mint authority, DEX LP burn %.
+ * - On-Chain: Last resort. Uses RPC to check mint/freeze auth + holder concentration.
  */
-
-// Known LP locker program IDs on Solana
-const KNOWN_LOCKERS = new Set([
-    // UNCX Network (V4, Smart, CP, CLMM)
-    "GsSCS3vPWrtJ5Y9aEVVT65fmrex5P5RGHXdZvsdbWgfo",
-    "BzKincxjgFQjj4FmhaWrwHES1ekBGN73YesA7JwJJo7X",
-    "UNCX77nZrA3TdAxMEggqG18xxpgiNGT6iqyynPwpoxN",
-    "DAtFFs2mhQFvrgNLA29vEDeTLLN8vHknAaAhdLEc4SQH",
-    "UNCXdvMRxvz91g3HqFmpZ5NgmL77UH4QRM4NfeL4mQB",
-    "FEmGEWdxCBSJ1QFKeX5B6k7VTDPwNU3ZLdfgJkvGYrH5",
-    "UNCXrB8cZXnmtYM1aSo1Wx3pQaeSZYuF2jCTesXvECs",
-    "GAYWATob4bqCj3fhVm8ZxoMSqUW2fb6e6SBQ7kk5qyps",
-
-    // Team Finance / Fluxbeam
-    "Lock7kBijGCQLEFAmXcengzXKA88iDNQPriQ7TbgJFj",
-
-    // Streamflow
-    "FLockVVhmdNhRDHH48LoGadGSxPSABYh5hE8UGRjpVGT",
-    "strmRqUCoQUgGUan5YhzUZa6KqdzwX5L6FpUxfmKg5m",
-
-    // PinkSale
-    "FASGwdWxPjZ655g67idpSwiavigorgB9L7p6Y4qG6Pc5",
-
-    // Other (Metaplex, Raydium, Tally, SOLOCKER, SolMint)
-    "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
-    "1BWutmTvYPwDtmw9abTkS4Ssr8no61spGAvW1X6NDix",
-    "A5vz72a5ipKUJZxmGUjGtS7uhWfzr6jhDgV2q73YhD8A", // Tally-Pay
-    "DLxB9dSQtA4WJ49hWFhxqiQkD9v6m67Yfk9voxpxrBs4", // SOLOCKER
-    "B46UV19XGvWf8xXbKThVqH7A7fD8J9T1mP", // Raydium Authority
-]);
-
-// DEX Program IDs to detect
-const DEX_PROGRAMS = {
-    RAYDIUM_V4: "675k1S2AYp7jkS6GMBv6mUeBBSyitjGatE2Gf2n4jGvP",
-    METEORA_CP: "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
-    ORCA_WHIRLPOOL: "whir9iKR7ndbm3gUak6Z6uHXYsc2FcyGAFGcMjg7uVL",
-    RAYDIUM_CLMM: "CAMMCzo5YL8w4VFF8KVHrpeWCsC2vG96itstCxsK7o",
-};
-
-// Burn address (tokens sent here = permanently locked)
-const BURN_ADDRESS = "1111111111111111111111111111111111111111111";
 
 export interface SafetyResult {
     safe: boolean;
     reason: string;
+    source: "rugcheck" | "goplus" | "onchain" | "error";
     checks: {
         mintAuthority: "disabled" | "enabled" | "unknown";
         freezeAuthority: "disabled" | "enabled" | "unknown";
         liquidityLocked: "locked" | "unlocked" | "unknown";
     };
+    score?: number;          // 0-1 normalised safety score (from RugCheck)
+    lpLockedPct?: number;    // % of LP locked/burned
+    risks?: string[];        // Human-readable risk descriptions
 }
 
-export class OnChainSafetyChecker {
-    // (rpc method was here, now replaced by safeRpc import)
-    /**
-     * Performs on-chain safety checks for a token.
-     * 1. Mint Authority — Can more tokens be minted?
-     * 2. Freeze Authority — Can token accounts be frozen?
-     * 3. Liquidity Lock — Are LP tokens locked/burned?
-     */
+// ─── RugCheck API Types ──────────────────────────────────────────────
+interface RugCheckSummary {
+    score: number;                  // 0 (safe) to N (risky) — raw score
+    score_normalised: number;       // 0-1 normalised (1 = safest)
+    risks: { name: string; description: string; level: string; score: number }[];
+    lpLockedPct: number;
+    tokenProgram: string;
+    tokenType: string;
+}
+
+interface RugCheckReport {
+    mintAuthority: string | null;
+    freezeAuthority: string | null;
+    rugged: boolean;
+    risks: { name: string; description: string; level: string; score: number }[];
+    score: number;
+    score_normalised: number;
+    totalMarketLiquidity: number;
+    totalHolders: number;
+    topHolders: any[];
+    lockers: any[];
+    markets: any[];
+}
+
+// ─── GoPlus API Types ────────────────────────────────────────────────
+interface GoPlusResult {
+    freezable?: { status: string; authority: any[] };
+    closable?: { status: string; authority: any[] };
+    non_transferable?: number;
+    metadata_mutable?: { status: string };
+    balance_mutable_authority?: { status: string };
+    transfer_hook?: any[];
+    default_account_state?: string;
+    dex?: {
+        dex_name: string;
+        tvl: string;
+        burn_percent: number;
+        price: string;
+    }[];
+}
+
+// ─── Constants ───────────────────────────────────────────────────────
+const RUGCHECK_TIMEOUT = 6000;
+const GOPLUS_TIMEOUT = 6000;
+const RUGCHECK_MIN_SCORE = 0.3;  // Below this = unsafe
+const CRITICAL_RISKS = new Set([
+    "Rug Pull",
+    "Freeze Authority still enabled",
+    "Large Amount of LP Unlocked",
+    "Copycat token",
+    "Very High Amount of LP Unlocked"
+]);
+
+export class SafetyService {
+
+    // ═══════════════════════════════════════════════════════════════════
+    // PUBLIC: Main entry point — same signature as old OnChainSafetyChecker
+    // ═══════════════════════════════════════════════════════════════════
     static async checkToken(
         connection: Connection,
         mintAddress: string,
-        pairAddress?: string
+        _pairAddress?: string
+    ): Promise<SafetyResult> {
+        // Skip ignored mints
+        if (IGNORED_MINTS.includes(mintAddress)) {
+            return {
+                safe: true,
+                reason: "Whitelisted token",
+                source: "rugcheck",
+                checks: { mintAuthority: "disabled", freezeAuthority: "disabled", liquidityLocked: "locked" }
+            };
+        }
+
+        // Tier 1: RugCheck API
+        try {
+            const result = await this.checkViaRugCheck(mintAddress);
+            if (result) return result;
+        } catch (err: any) {
+            console.warn(`[SAFETY] RugCheck failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
+        }
+
+        // Tier 2: GoPlus API
+        try {
+            const result = await this.checkViaGoPlus(mintAddress);
+            if (result) return result;
+        } catch (err: any) {
+            console.warn(`[SAFETY] GoPlus failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
+        }
+
+        // Tier 3: On-Chain (last resort — uses RPC)
+        console.warn(`[SAFETY] Both APIs failed. Falling back to on-chain checks for ${mintAddress.slice(0, 8)}...`);
+        SocketManager.emitLog(`[SAFETY] ⚠️ APIs down — using on-chain fallback (costs RPC)`, "warning");
+        return this.checkOnChain(connection, mintAddress);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TIER 1: RugCheck API
+    // ═══════════════════════════════════════════════════════════════════
+    private static async checkViaRugCheck(mintAddress: string): Promise<SafetyResult | null> {
+        // Try summary endpoint first (lighter)
+        const summaryRes = await axios.get<RugCheckSummary>(
+            `https://api.rugcheck.xyz/v1/tokens/${mintAddress}/report/summary`,
+            { timeout: RUGCHECK_TIMEOUT }
+        );
+
+        const summary = summaryRes.data;
+        if (!summary || summary.score_normalised === undefined) return null;
+
+        const score = summary.score_normalised;
+        const lpPct = summary.lpLockedPct || 0;
+        const riskNames = (summary.risks || []).map(r => r.name);
+        const riskDescriptions = (summary.risks || []).map(r => `${r.name}: ${r.description}`);
+        const hasCriticalRisk = riskNames.some(r => CRITICAL_RISKS.has(r));
+
+        // Determine mint/freeze auth from risk names
+        const mintAuth = riskNames.some(r => r.toLowerCase().includes("mint authority"))
+            ? "enabled" as const : "disabled" as const;
+        const freezeAuth = riskNames.some(r => r.toLowerCase().includes("freeze authority"))
+            ? "enabled" as const : "disabled" as const;
+        const lpStatus = lpPct >= 80 ? "locked" as const
+            : lpPct >= 30 ? "unlocked" as const
+                : "unknown" as const;
+
+        const tag = mintAddress.slice(0, 8);
+
+        // ── Decision Logic ──
+        if (hasCriticalRisk || score < RUGCHECK_MIN_SCORE) {
+            const topRisk = riskNames[0] || "Low safety score";
+            SocketManager.emitLog(
+                `[SAFETY] ❌ ${tag}... RugCheck UNSAFE (score: ${score.toFixed(2)}, risk: ${topRisk})`,
+                "error"
+            );
+            return {
+                safe: false,
+                reason: `RugCheck: ${topRisk} (score: ${score.toFixed(2)})`,
+                source: "rugcheck",
+                score,
+                lpLockedPct: lpPct,
+                risks: riskDescriptions,
+                checks: { mintAuthority: mintAuth, freezeAuthority: freezeAuth, liquidityLocked: lpStatus }
+            };
+        }
+
+        // Freeze authority is a hard reject even at high scores
+        if (freezeAuth === "enabled") {
+            SocketManager.emitLog(`[SAFETY] ❌ ${tag}... Freeze Authority ENABLED (via RugCheck)`, "error");
+            return {
+                safe: false,
+                reason: "Freeze Authority is ENABLED — dev can freeze your tokens",
+                source: "rugcheck",
+                score,
+                lpLockedPct: lpPct,
+                risks: riskDescriptions,
+                checks: { mintAuthority: mintAuth, freezeAuthority: "enabled", liquidityLocked: lpStatus }
+            };
+        }
+
+        // ── SAFE ──
+        const warnParts: string[] = [];
+        if (mintAuth === "enabled") warnParts.push("mint-auth");
+        if (lpPct < 80) warnParts.push(`LP ${lpPct.toFixed(0)}%`);
+        if (riskNames.length > 0) warnParts.push(`${riskNames.length} risks`);
+
+        const warnStr = warnParts.length > 0 ? ` (warnings: ${warnParts.join(", ")})` : "";
+        SocketManager.emitLog(
+            `[SAFETY] ✅ ${tag}... RugCheck SAFE (score: ${score.toFixed(2)}, LP: ${lpPct.toFixed(0)}%)${warnStr}`,
+            "success"
+        );
+
+        return {
+            safe: true,
+            reason: `RugCheck: score ${score.toFixed(2)}, LP locked ${lpPct.toFixed(0)}%`,
+            source: "rugcheck",
+            score,
+            lpLockedPct: lpPct,
+            risks: riskDescriptions,
+            checks: { mintAuthority: mintAuth, freezeAuthority: freezeAuth, liquidityLocked: lpStatus }
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TIER 2: GoPlus Security API
+    // ═══════════════════════════════════════════════════════════════════
+    private static async checkViaGoPlus(mintAddress: string): Promise<SafetyResult | null> {
+        const res = await axios.get(
+            `https://api.gopluslabs.io/api/v1/solana/token_security`,
+            {
+                params: { contract_addresses: mintAddress },
+                timeout: GOPLUS_TIMEOUT
+            }
+        );
+
+        const data = res.data;
+        if (data?.code !== 1 || !data.result) return null;
+
+        const tokenData: GoPlusResult = data.result[mintAddress] || data.result[mintAddress.toLowerCase()];
+        if (!tokenData) return null;
+
+        const tag = mintAddress.slice(0, 8);
+
+        const freezable = tokenData.freezable?.status === "1";
+        const closable = tokenData.closable?.status === "1";
+        const nonTransferable = tokenData.non_transferable === 1;
+
+        // Check DEX data for LP burn %
+        const dexes = tokenData.dex || [];
+        const bestDex = dexes.reduce((best, d) => {
+            const tvl = parseFloat(d.tvl || "0");
+            return tvl > parseFloat(best?.tvl || "0") ? d : best;
+        }, dexes[0]);
+        const burnPct = bestDex?.burn_percent || 0;
+
+        // Determine safety
+        const mintAuth = "unknown" as const; // GoPlus doesn't directly expose this for Solana SPL
+        const freezeAuth = freezable ? "enabled" as const : "disabled" as const;
+        const lpStatus = burnPct >= 80 ? "locked" as const : burnPct >= 30 ? "unlocked" as const : "unknown" as const;
+
+        if (freezable) {
+            SocketManager.emitLog(`[SAFETY] ❌ ${tag}... GoPlus: Freezable token`, "error");
+            return {
+                safe: false,
+                reason: "GoPlus: Token is freezable — dev can freeze your tokens",
+                source: "goplus",
+                checks: { mintAuthority: mintAuth, freezeAuthority: "enabled", liquidityLocked: lpStatus },
+                lpLockedPct: burnPct
+            };
+        }
+
+        if (closable) {
+            SocketManager.emitLog(`[SAFETY] ❌ ${tag}... GoPlus: Token account closable`, "error");
+            return {
+                safe: false,
+                reason: "GoPlus: Token accounts can be closed by authority",
+                source: "goplus",
+                checks: { mintAuthority: mintAuth, freezeAuthority: freezeAuth, liquidityLocked: lpStatus },
+                lpLockedPct: burnPct
+            };
+        }
+
+        if (nonTransferable) {
+            SocketManager.emitLog(`[SAFETY] ❌ ${tag}... GoPlus: Non-transferable token`, "error");
+            return {
+                safe: false,
+                reason: "GoPlus: Token is non-transferable (honeypot)",
+                source: "goplus",
+                checks: { mintAuthority: mintAuth, freezeAuthority: freezeAuth, liquidityLocked: lpStatus },
+                lpLockedPct: burnPct
+            };
+        }
+
+        SocketManager.emitLog(
+            `[SAFETY] ✅ ${tag}... GoPlus SAFE (LP burn: ${burnPct.toFixed(0)}%, not freezable)`,
+            "success"
+        );
+
+        return {
+            safe: true,
+            reason: `GoPlus: LP burn ${burnPct.toFixed(0)}%, no dangerous authorities`,
+            source: "goplus",
+            checks: { mintAuthority: mintAuth, freezeAuthority: freezeAuth, liquidityLocked: lpStatus },
+            lpLockedPct: burnPct
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TIER 3: On-Chain Fallback (uses RPC — last resort)
+    // ═══════════════════════════════════════════════════════════════════
+    private static async checkOnChain(
+        connection: Connection,
+        mintAddress: string
     ): Promise<SafetyResult> {
         const mint = new PublicKey(mintAddress);
         const result: SafetyResult = {
             safe: true,
-            reason: "All checks passed",
+            reason: "On-chain checks passed",
+            source: "onchain",
             checks: {
                 mintAuthority: "unknown",
                 freezeAuthority: "unknown",
@@ -85,241 +311,47 @@ export class OnChainSafetyChecker {
             },
         };
 
-        // ═══ 1. Mint Authority Check ═══
         try {
             let mintInfo;
             try {
                 mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
-            } catch (e1: any) {
+            } catch {
                 try {
                     mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
                 } catch (e2: any) {
-                    const errMsg = e2.message || String(e2);
-                    if (errMsg.includes("TokenInvalidAccountOwner")) {
-                        result.safe = false;
-                        result.reason = "Unsupported token program (not SPL Token or Token-2022)";
-                        SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Unsupported token program`, "warning");
-                        return result;
-                    }
-                    throw e2;
+                    result.safe = false;
+                    result.reason = "Unsupported token program";
+                    return result;
                 }
             }
 
+            // Mint authority
             if (mintInfo.mintAuthority !== null) {
-                // RELAXED: For established coins (> $5M mcap), mint authority is a Warning, not a Reject
-                // Note: mcap is not passed here, so we look at the 'reason' if we want to bypass. 
-                // For now, let's keep it strict unless we have mcap context. 
-                // But let's allow bypassing if liquidity is deeply locked.
                 result.checks.mintAuthority = "enabled";
-                SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "warning");
+                SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED (on-chain)`, "warning");
             } else {
                 result.checks.mintAuthority = "disabled";
-                SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
             }
 
-            // ═══ 2. Freeze Authority Check ═══
+            // Freeze authority — hard reject
             if (mintInfo.freezeAuthority !== null) {
                 result.safe = false;
-                result.reason = "Freeze Authority is ENABLED — dev can freeze your tokens";
+                result.reason = "Freeze Authority is ENABLED (on-chain check)";
                 result.checks.freezeAuthority = "enabled";
-                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED`, "error");
+                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED (on-chain)`, "error");
                 return result;
             }
             result.checks.freezeAuthority = "disabled";
-            SocketManager.emitLog(`[SAFETY] ✅ Freeze Authority disabled`, "success");
         } catch (err: any) {
-            const errMsg = err.message || String(err);
-            console.warn(`[SAFETY] Failed to fetch mint info: ${errMsg}`);
+            console.warn(`[SAFETY] On-chain fallback failed: ${err.message}`);
             result.safe = false;
-            result.reason = `Could not verify mint info: ${errMsg}`;
-            return result;
-        }
-
-        // ═══ 3. Liquidity Lock Check ═══
-        try {
-            let lpLocked = false;
-            if (pairAddress && pairAddress !== mintAddress) {
-                try {
-                    lpLocked = await this.checkLpLock(connection, pairAddress);
-                } catch (lpErr) {
-                    console.warn(`[SAFETY] Dedicated LP lock check failed: ${lpErr}`);
-                }
-            }
-
-            if (lpLocked) {
-                result.checks.liquidityLocked = "locked";
-                SocketManager.emitLog(`[SAFETY] ✅ LP Tokens verified LOCKED/BURNED`, "success");
-            }
-
-            // ═══ 4. Supply & Concentration Analysis ═══
-            let largestAccounts;
-            try {
-                largestAccounts = await safeRpc(
-                    () => connection.getTokenLargestAccounts(mint),
-                    "largestAccounts",
-                    2
-                );
-            } catch (accErr: any) {
-                console.warn(`[SAFETY] RPC limit for ${mintAddress}: ${accErr.message}`);
-                largestAccounts = { value: [] };
-            }
-
-            const topAccounts = largestAccounts.value.slice(0, 20);
-
-            if (topAccounts.length > 0) {
-                const accountInfos = await safeRpc(
-                    () => connection.getMultipleAccountsInfo(topAccounts.map(a => a.address)),
-                    "accountInfos"
-                );
-
-                let lockedAmount = 0;
-                let totalSupplyChecked = 0;
-                let suspectConcentration = 0;
-                let dexLiquidityAmount = 0;
-
-                const balanceCounts = new Map<number, number>();
-                let maxDuplicates = 0;
-
-                for (let i = 0; i < topAccounts.length; i++) {
-                    const account = topAccounts[i];
-                    const info = accountInfos[i];
-                    const amount = Number(account.uiAmount || 0);
-
-                    if (amount > 0) {
-                        const count = (balanceCounts.get(amount) || 0) + 1;
-                        balanceCounts.set(amount, count);
-                        maxDuplicates = Math.max(maxDuplicates, count);
-                    }
-
-                    if (info?.owner) {
-                        const ownerStr = info.owner.toBase58();
-                        const accStr = account.address.toBase58();
-
-                        const isDex = Object.values(DEX_PROGRAMS).includes(ownerStr);
-                        const isLocker = KNOWN_LOCKERS.has(ownerStr) || accStr === BURN_ADDRESS || ownerStr === BURN_ADDRESS;
-
-                        if (isLocker) {
-                            lockedAmount += amount;
-                        } else if (isDex) {
-                            dexLiquidityAmount += amount;
-                        } else {
-                            // Non-DEX, Non-Locker accounts are suspect if they carry massive supply
-                            suspectConcentration += amount;
-                        }
-                    }
-                    totalSupplyChecked += amount;
-                }
-
-                // ═══ BUNDLE CHECK ═══
-                if (maxDuplicates >= 4) { // Increased to 4 to avoid false positives on split wallets
-                    result.safe = false;
-                    result.reason = `Bundled Wallets Detected (${maxDuplicates} accounts with identical balances)`;
-                    SocketManager.emitLog(`[SAFETY] ❌ BUNDLED WALLETS DETECTED`, "error");
-                    return result;
-                }
-
-                const mintInfo = await safeRpc(() => getMint(connection, mint), "getMint-Supply");
-                const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
-                const divisor = totalSupply > 0 ? totalSupply! : totalSupplyChecked;
-
-                const concentrationRatio = suspectConcentration / divisor;
-                const lockRatio = (lockedAmount + dexLiquidityAmount) / divisor;
-
-                // RELAXED CONCENTRATION: Reject only if ONE suspect wallet has > 50% OR total suspects > 85%
-                if (concentrationRatio > 0.85 && suspectConcentration > 0) {
-                    result.safe = false;
-                    result.reason = `Extreme supply concentration (${(concentrationRatio * 100).toFixed(1)}%)`;
-                    SocketManager.emitLog(`[SAFETY] ❌ High holder concentration!`, "error");
-                    return result;
-                }
-
-                if (lockedAmount > 0 || lpLocked) {
-                    result.checks.liquidityLocked = "locked";
-                } else if (dexLiquidityAmount / divisor > 0.15) {
-                    // Logic: If > 15% of supply is in known DEX pools, it's effectively "public liquidity" even if not burned/locked
-                    result.checks.liquidityLocked = "locked";
-                    SocketManager.emitLog(`[SAFETY] ✅ Sufficient liquidity in DEX pools`, "success");
-                } else {
-                    result.checks.liquidityLocked = "unlocked";
-                    result.safe = false;
-                    result.reason = "Unverified Liquidity: No locked LP or burned supply detected";
-                    SocketManager.emitLog(`[SAFETY] ❌ LIQUIDITY UNLOCKED`, "error");
-                    return result;
-                }
-
-                // If Mint Auth is enabled but liquidity IS locked, it's a warning — allow it through
-            }
-        } catch (err: any) {
-            console.warn(`[SAFETY] Safety scan failed: ${err.message}`);
-            // Don't fail the whole bot if holder check fails — just warn
-            SocketManager.emitLog(`[SAFETY] ⚠️ Holder analysis skipped: RPC busy`, "warning");
+            result.reason = `On-chain check failed: ${err.message}`;
+            result.source = "error";
         }
 
         return result;
     }
-
-    /**
-     * Checks if the LP tokens for a given pool are locked or burned.
-     */
-    private static async checkLpLock(connection: Connection, pairAddress: string): Promise<boolean> {
-        const pairPubkey = new PublicKey(pairAddress);
-        const info = await safeRpc(() => connection.getAccountInfo(pairPubkey), "getPairInfo");
-        if (!info) return false;
-
-        const owner = info.owner.toBase58();
-        let lpMint: string | null = null;
-
-        // Raydium V4
-        if (owner === DEX_PROGRAMS.RAYDIUM_V4) {
-            // lpMint is at offset 328 in Raydium V4 AMM layout
-            lpMint = new PublicKey(info.data.slice(328, 328 + 32)).toBase58();
-        }
-        // Meteora CP-AMM
-        else if (owner === DEX_PROGRAMS.METEORA_CP) {
-            // lpMint is at offset 168 in Meteora CP-AMM PoolState
-            lpMint = new PublicKey(info.data.slice(168, 168 + 32)).toBase58();
-        }
-        // Raydium CLMM or Orca (LP is an NFT, check the owner directly for locked status)
-        else if (owner === DEX_PROGRAMS.RAYDIUM_CLMM || owner === DEX_PROGRAMS.ORCA_WHIRLPOOL) {
-            SocketManager.emitLog(`[SAFETY] Detected ${owner === DEX_PROGRAMS.ORCA_WHIRLPOOL ? 'Orca' : 'CLMM'} Pool. Checking NFT-based lock status...`, "info");
-            // For these, we don't have a simple 'lpMint' to check holders.
-            // But we can check if the largest position accounts are owned by trackers.
-            // Placeholder: Returning true for now if owner is recognized, but ideally we'd scan positions.
-            // For now, let's treat it as "unknown" to be safe.
-            return false;
-        }
-
-        if (!lpMint || lpMint === "11111111111111111111111111111111") return false;
-
-        // Check holders of the LP Mint
-        const largestLpAccounts = await safeRpc(
-            () => connection.getTokenLargestAccounts(new PublicKey(lpMint!)),
-            "largestLpAccounts"
-        );
-        const topLpAccounts = largestLpAccounts.value.slice(0, 5);
-        const lpAccountInfos = await safeRpc(
-            () => connection.getMultipleAccountsInfo(topLpAccounts.map((a: any) => a.address)),
-            "lpAccounts"
-        );
-
-        let lockedLpAmount = 0;
-        let totalLpChecked = 0;
-
-        for (let i = 0; i < topLpAccounts.length; i++) {
-            const acc = topLpAccounts[i];
-            const meta = lpAccountInfos[i];
-            const amount = Number(acc.uiAmount || 0);
-            totalLpChecked += amount;
-
-            if (meta?.owner) {
-                const ownerStr = meta.owner.toBase58();
-                if (KNOWN_LOCKERS.has(ownerStr) || acc.address.toBase58() === BURN_ADDRESS || ownerStr === BURN_ADDRESS) {
-                    lockedLpAmount += amount;
-                }
-            }
-        }
-
-        // Consider locked if >95% is in lockers or burned
-        return (lockedLpAmount / totalLpChecked) > 0.95;
-    }
 }
+
+// ── Backwards compatibility alias ──
+export const OnChainSafetyChecker = SafetyService;

@@ -421,11 +421,11 @@ export class MarketScanner {
             }
 
             // ═══════════════════════════════════════════════════════
-            // EXECUTE — only send top 3 to safety pipeline per sweep
-            // This conserves RPC: ~15 calls max instead of ~60+
+            // EXECUTE — send all qualified to safety pipeline
+            // Safety checks now use free APIs (RugCheck + GoPlus),
+            // so there's no RPC cost limit.
             // ═══════════════════════════════════════════════════════
-            const MAX_SAFETY_CHECKS_PER_SWEEP = 3;
-            const toExecute = qualified.slice(0, MAX_SAFETY_CHECKS_PER_SWEEP);
+            const toExecute = qualified;
 
             for (const q of toExecute) {
                 this.seenPairs.set(q.mintAddress, Date.now());
