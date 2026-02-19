@@ -47,8 +47,8 @@ export class MarketScanner {
     private jupiterSyncFailed = false;
     private jupiterFailCooldown = 0;
     private geckoPage = 1;
-    private readonly GECKO_PAGES_PER_SWEEP = 2;
-    private readonly GECKO_MAX_PAGE = 10;
+    private readonly GECKO_PAGES_PER_SWEEP = 6;
+    private readonly GECKO_MAX_PAGE = 30;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any) {
         this.criteria = criteria;
@@ -148,7 +148,7 @@ export class MarketScanner {
     private async performMarketSweep() {
         const mode = this.criteria.mode || "DUAL";
         const sourceLabel = mode === "SCOUT" ? "Birdeye New Listings" : mode === "ANALYST" ? "GeckoTerminal + Birdeye" : "Gecko + Birdeye";
-        SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Source: ${sourceLabel}`, "info");
+        SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Source: ${sourceLabel} | Next Gecko Page: ${this.geckoPage}`, "info");
 
         try {
             let allPairs: any[] = [];
@@ -386,11 +386,14 @@ export class MarketScanner {
 
                 rejectReasons.accepted++;
                 console.log(`[EVAL] ${tag} | ✅ QUALIFIED`);
+                SocketManager.emitLog(`⚡ [PASS] ${sym} | Liq: ${fmtK(liquidity)} | Vol24h: ${fmtK(volume24h)}`, "success");
                 qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
             }
 
-            // ── Log filter summary (always) ──
-            console.log(`[FILTER-SUMMARY] ${rejectReasons.accepted} qualified out of ${pairs.length}. Rejections: ${JSON.stringify(rejectReasons)}`);
+            // ── Log filter summary (to both console and frontend) ──
+            const filterSummary = `[FILTER-SUMMARY] ${rejectReasons.accepted} qualified out of ${pairs.length}. Rejections: ${JSON.stringify(rejectReasons)}`;
+            console.log(filterSummary);
+            SocketManager.emitLog(filterSummary, "info");
 
             // ═══════════════════════════════════════════════════════
             // DISPLAY ALL MATCHES (FREE — no RPC, just DexScreener data)

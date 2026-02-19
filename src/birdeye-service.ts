@@ -29,7 +29,7 @@ export class BirdeyeService {
         const scanResults: ScanResult[] = [];
         let nextScrollId: string | null = this.savedScrollId;
         const seenMints = new Set<string>();
-        const PAGES_PER_SWEEP = 3;
+        const PAGES_PER_SWEEP = 6;
         const REQUEST_DELAY = 200;
 
         try {
