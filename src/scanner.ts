@@ -168,11 +168,15 @@ export class MarketScanner {
             allPairs.forEach(p => {
                 const dexId = (p.dexId || "").toLowerCase();
                 const chainId = (p.chainId || "solana").toLowerCase();
-                const address = p.pairAddress || p.tokenAddress;
 
-                if (chainId === "solana" && address && !uniquePairsMap.has(address)) {
+                // Derive a mint address string from whichever field is available
+                const mintStr = p.mint ? (typeof p.mint === 'string' ? p.mint : p.mint.toBase58()) : (p.address || "");
+                // Use pairAddress if it exists and isn't empty, otherwise fall back to mint
+                const dedupKey = (p.pairAddress && p.pairAddress.length > 10) ? p.pairAddress : mintStr;
+
+                if (chainId === "solana" && dedupKey && !uniquePairsMap.has(dedupKey)) {
                     const baseToken = p.baseToken || {
-                        address: p.mint ? (typeof p.mint === 'string' ? p.mint : p.mint.toBase58()) : (p.address || address),
+                        address: mintStr || dedupKey,
                         symbol: p.symbol || "TOKEN"
                     };
                     const quoteToken = p.quoteToken || {
@@ -180,9 +184,9 @@ export class MarketScanner {
                         symbol: "SOL"
                     };
 
-                    uniquePairsMap.set(address, {
+                    uniquePairsMap.set(dedupKey, {
                         ...p,
-                        pairAddress: address,
+                        pairAddress: (p.pairAddress && p.pairAddress.length > 10) ? p.pairAddress : mintStr,
                         dexId,
                         baseToken,
                         quoteToken,
