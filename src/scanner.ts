@@ -353,14 +353,11 @@ export class MarketScanner {
                 });
             }
 
-            // Mark remaining as seen so they get picked up next sweep if still qualifying
-            for (let i = MAX_SAFETY_CHECKS_PER_SWEEP; i < qualified.length; i++) {
-                // Don't mark as seen — let them re-qualify next sweep for their turn
-            }
+            // Remaining tokens are NOT marked as seen — they re-qualify next sweep for their turn
 
             const summaryMsg = qualified.length > 0
-                ? `[SWEEP] ${qualified.length} matches found, ${toExecute.length} sent to safety check. Next sweep in 30s.`
-                : `[ECOSYSTEM SWEEP COMPLETE] Next harvest in 30s.`;
+                ? `[SWEEP] ${qualified.length} matches found, ${toExecute.length} sent to safety check. Next sweep in 20s.`
+                : `[ECOSYSTEM SWEEP COMPLETE] Next harvest in 20s.`;
             console.log(summaryMsg);
             SocketManager.emitLog(summaryMsg, "info");
 

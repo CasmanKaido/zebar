@@ -344,8 +344,8 @@ export class BotManager {
     /**
      * Updates the ROI of a pool in SQL and emits to socket.
      */
-    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees?: { sol: string; token: string; totalLppp?: string }, partial?: Partial<PoolData>) {
-        if (this.activeTpSlActions.has(poolId)) return;
+    async updatePoolROI(poolId: string, roi: string, exited: boolean = false, fees?: { sol: string; token: string; totalLppp?: string }, partial?: Partial<PoolData>, forceUpdate: boolean = false) {
+        if (this.activeTpSlActions.has(poolId) && !forceUpdate) return;
 
         try {
             const pool = await dbService.getPool(poolId);
@@ -463,12 +463,14 @@ export class BotManager {
         const result = this.evaluationQueue.shift()!;
         const mintAddress = result.mint.toBase58();
 
+        // Guard: Skip if already being processed (prevents race condition duplicate buys)
+        if (this.pendingMints.has(mintAddress)) {
+            // Skip directly without entering try/finally (which would delete the other call's guard)
+            setTimeout(() => this.processQueue(), 500);
+            return;
+        }
+
         try {
-            // Guard: Skip if already being processed (prevents race condition duplicate buys)
-            if (this.pendingMints.has(mintAddress)) {
-                // console.log(`[QUEUE] Skipping ${result.symbol}: Already pending.`);
-                return;
-            }
 
             // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
             const activePools: PoolData[] = await this.getPortfolio();
@@ -802,7 +804,7 @@ export class BotManager {
                             pool.netRoi = `${netRoiVal.toFixed(2)}%`;
 
                             // Log state for visibility (Reduced frequency)
-                            if (sweepCount % 20 === 0 || usdMultiplier !== 1) {
+                            if (sweepCount % 20 === 0 || usdMultiplier >= 3.5 || usdMultiplier <= 0.75) {
                                 console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(3)}x | Net ROI: ${pool.netRoi}`);
                                 // console.log(`[MONITOR]  ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP`);
                             }
@@ -964,7 +966,7 @@ export class BotManager {
                             await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", false, undefined, {
                                 withdrawalPending: false,
                                 initialSolValue: newInitialVal
-                            });
+                            }, true);
 
                             SocketManager.emitLog(`[ROI FIX] Adjusted Entry Value: ${pool.initialSolValue.toFixed(4)} -> ${newInitialVal.toFixed(4)} LPPP`, "info");
                         } else {
