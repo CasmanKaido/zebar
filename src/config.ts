@@ -46,6 +46,10 @@ export const IGNORED_MINTS = [
     "7dHbS7zSToynF6L8abS2yz7iYit2tiX1XW1tH8YqXgH",   // stSOL
     "J1tosoecvw9U96jrN17H8NfE59p5RST213R9RNoeWCH",   // jitoSOL
     "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", // RAY
+    "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij", // cbBTC
+    "7vfCXTUXx5xSsCAJEmxXBkuYWg5cQpkQh7uKnC4YUFoX", // WETH
+    "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh", // WBTC
+    "27G8MtK7VtTs3zhcnLEDs9H3HjEAnT2HqC9G7Uf9SpE8", // JLP
 ];
 
 export let connection = new Connection(RPC_URL, {

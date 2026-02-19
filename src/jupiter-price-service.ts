@@ -36,14 +36,15 @@ export class JupiterPriceService {
         if (toFetch.length === 0) return results;
 
         try {
-            // Encode IDs for safety
-            const ids = encodeURIComponent(toFetch.join(","));
             const headers: Record<string, string> = {};
             if (process.env.JUPITER_API_KEY) {
                 headers["x-api-key"] = process.env.JUPITER_API_KEY;
             }
 
-            const response = await axios.get<any>(`${this.BASE_URL}?ids=${ids}`, {
+            const response = await axios.get<any>(this.BASE_URL, {
+                params: {
+                    ids: toFetch.join(",")
+                },
                 timeout: 5000,
                 headers
             });
