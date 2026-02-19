@@ -16,6 +16,7 @@ export class HeliusWebhookService {
      * @param authHeader (Optional) Authentication secret from Helius
      */
     static async handleWebhook(payload: any, botManager: BotManager, authHeader?: string): Promise<boolean> {
+        console.log(`[HELIUS] Webhook received at ${new Date().toISOString()}`);
         // 1. Security Check
         if (HELIUS_AUTH_SECRET) {
             // Normalize header (handle potential "Bearer " prefix from Helius or proxies)
