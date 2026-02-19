@@ -269,8 +269,10 @@ export class MarketScanner {
             SocketManager.emitLog(`[SWEEPER] Evaluated ${pairs.length} assets. Mode: ${mode}`, "info");
 
             // ═══════════════════════════════════════════════════════
-            // FILTER & EMIT — apply user criteria
+            // FILTER — apply user criteria, collect all matches
             // ═══════════════════════════════════════════════════════
+            const qualified: { pair: any; mintAddress: string; volume5m: number; volume1h: number; volume24h: number; liquidity: number; mcap: number; priceUSD: number }[] = [];
+
             for (const pair of pairs) {
                 const mintAddress = pair.baseToken?.address;
                 if (!mintAddress || IGNORED_MINTS.includes(mintAddress)) continue;
@@ -280,7 +282,6 @@ export class MarketScanner {
                 if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
 
                 const priceUSD = Number(pair.priceUsd || 0);
-                // Skip stablecoins
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
 
                 const volume5m = pair.volume?.m5 || 0;
@@ -289,7 +290,6 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || 0;
 
-                // Hard ceiling for mega-caps
                 const MCAP_HARD_CEILING = 50_000_000;
                 if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) continue;
 
@@ -300,7 +300,6 @@ export class MarketScanner {
                     return minMatch && maxMatch;
                 };
 
-                // If volume is 0, skip that check (not all sources report all timeframes)
                 const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
                 const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
@@ -308,24 +307,60 @@ export class MarketScanner {
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    // Jupiter whitelist check
                     if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) continue;
-
-                    this.seenPairs.set(mintAddress, Date.now());
-                    await this.callback({
-                        mint: new PublicKey(mintAddress),
-                        pairAddress: pair.pairAddress,  // DexScreener always gives real pair address
-                        dexId: pair.dexId || 'unknown',
-                        volume24h: Number(volume24h),
-                        liquidity: Number(liquidity),
-                        mcap: Number(mcap),
-                        symbol: pair.baseToken?.symbol || "TOKEN",
-                        priceUsd: priceUSD
-                    });
+                    qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
                 }
             }
 
-            const summaryMsg = `[ECOSYSTEM SWEEP COMPLETE] Next harvest in 30s.`;
+            // ═══════════════════════════════════════════════════════
+            // DISPLAY ALL MATCHES (FREE — no RPC, just DexScreener data)
+            // ═══════════════════════════════════════════════════════
+            if (qualified.length > 0) {
+                // Sort by liquidity descending (best opportunities first)
+                qualified.sort((a, b) => b.liquidity - a.liquidity);
+
+                const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(0)}K` : `${n.toFixed(0)}`;
+
+                SocketManager.emitLog(`[MATCHES] ${qualified.length} tokens meet criteria:`, "info");
+                for (const q of qualified) {
+                    const sym = q.pair.baseToken?.symbol || "???";
+                    const dex = q.pair.dexId || "?";
+                    SocketManager.emitLog(
+                        `  ⚡ ${sym} | Liq: $${fmt(q.liquidity)} | MCap: $${fmt(q.mcap)} | Vol1h: $${fmt(q.volume1h)} | Vol24h: $${fmt(q.volume24h)} | DEX: ${dex}`,
+                        "info"
+                    );
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // EXECUTE — only send top 3 to safety pipeline per sweep
+            // This conserves RPC: ~15 calls max instead of ~60+
+            // ═══════════════════════════════════════════════════════
+            const MAX_SAFETY_CHECKS_PER_SWEEP = 3;
+            const toExecute = qualified.slice(0, MAX_SAFETY_CHECKS_PER_SWEEP);
+
+            for (const q of toExecute) {
+                this.seenPairs.set(q.mintAddress, Date.now());
+                await this.callback({
+                    mint: new PublicKey(q.mintAddress),
+                    pairAddress: q.pair.pairAddress,
+                    dexId: q.pair.dexId || 'unknown',
+                    volume24h: Number(q.volume24h),
+                    liquidity: Number(q.liquidity),
+                    mcap: Number(q.mcap),
+                    symbol: q.pair.baseToken?.symbol || "TOKEN",
+                    priceUsd: q.priceUSD
+                });
+            }
+
+            // Mark remaining as seen so they get picked up next sweep if still qualifying
+            for (let i = MAX_SAFETY_CHECKS_PER_SWEEP; i < qualified.length; i++) {
+                // Don't mark as seen — let them re-qualify next sweep for their turn
+            }
+
+            const summaryMsg = qualified.length > 0
+                ? `[SWEEP] ${qualified.length} matches found, ${toExecute.length} sent to safety check. Next sweep in 30s.`
+                : `[ECOSYSTEM SWEEP COMPLETE] Next harvest in 30s.`;
             console.log(summaryMsg);
             SocketManager.emitLog(summaryMsg, "info");
 
