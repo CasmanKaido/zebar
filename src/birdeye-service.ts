@@ -139,7 +139,7 @@ export class BirdeyeService {
             // Removed 'meme_platform_enabled' as it can cause 400/Bad Request on some API tiers.
             const params = new URLSearchParams({
                 min_liquidity: (criteria.liquidity.min || 100).toString(),
-                limit: "50" // Increased from 10 to 50 for better discovery
+                limit: "20" // Birdeye API max for new_listing is 20
             });
 
             const response = await axios.get(`https://public-api.birdeye.so/defi/v2/tokens/new_listing?${params}`, {

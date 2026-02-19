@@ -233,9 +233,10 @@ export class MarketScanner {
                     return minMatch && maxMatch;
                 };
 
-                // Fix #2: No Birdeye bypass — treat 0 as 0 (strict filtering)
-                const meetsVol5m = inRange(volume5m, this.criteria.volume5m);
-                const meetsVol1h = inRange(volume1h, this.criteria.volume1h);
+                // vol5m/vol1h: skip check when value is 0 (Birdeye doesn't report these metrics)
+                // vol24h: always enforced (all sources report it)
+                const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
+                const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
                 const meetsLiquidity = inRange(liquidity, this.criteria.liquidity);
                 const meetsMcap = inRange(mcap, this.criteria.mcap);

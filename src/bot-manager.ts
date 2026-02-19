@@ -839,6 +839,8 @@ export class BotManager {
                             await this.updatePoolROI(pool.poolId, roiString, false, pool.unclaimedFees, {
                                 netRoi: pool.netRoi,
                                 initialSolValue: pool.initialSolValue,
+                                initialPrice: pool.initialPrice,
+                                priceReconstructed: pool.priceReconstructed,
                                 positionValue: pool.positionValue,
                                 entryUsdValue: pool.entryUsdValue
                             });
