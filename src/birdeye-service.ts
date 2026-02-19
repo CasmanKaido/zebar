@@ -103,9 +103,9 @@ export class BirdeyeService {
                     });
                 }
 
-                // Fix #6: Stop paginating when data stops being useful
-                if (qualifyingCount < 5 && page > 2) break;
-                if (!nextScrollId && page > 5) break; // Exit if no more and we've searched deep enough
+                // Fix #6: Stop paginating when data genuinely runs dry
+                if (qualifyingCount === 0 && page > 6) break; // 2+ consecutive empty results deep in
+                if (!nextScrollId && page > 3) break; // No more scroll data
 
                 // Stagger requests
                 page++;
