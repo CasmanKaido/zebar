@@ -48,7 +48,7 @@ export class MarketScanner {
     private jupiterFailCooldown = 0;
     private geckoPage = 1;
     private readonly GECKO_PAGES_PER_SWEEP = 6;
-    private readonly GECKO_MAX_PAGE = 30;
+    private readonly GECKO_MAX_PAGE = 10;
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any) {
         this.criteria = criteria;
@@ -379,9 +379,14 @@ export class MarketScanner {
                 if (!meetsMcap) { rejectReasons.mcap++; console.log(`[EVAL] ${tag} | ❌ MCAP`); continue; }
 
                 if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) {
-                    rejectReasons.jupiter++;
-                    console.log(`[EVAL] ${tag} | ❌ NOT ON JUPITER`);
-                    continue;
+                    // High-liquidity tokens bypass Jupiter check — they're clearly established
+                    if (liquidity >= 500_000) {
+                        console.log(`[EVAL] ${tag} | ⚠️ NOT ON JUPITER (bypassed: high liq)`);
+                    } else {
+                        rejectReasons.jupiter++;
+                        console.log(`[EVAL] ${tag} | ❌ NOT ON JUPITER`);
+                        continue;
+                    }
                 }
 
                 rejectReasons.accepted++;
