@@ -212,6 +212,12 @@ export class MarketScanner {
                 }
 
                 if (!targetToken?.address || IGNORED_MINTS.includes(targetToken.address)) continue;
+
+                // Deduplicate by MINT address (not pair address, which can be inconsistent)
+                const mintAddress = targetToken.address;
+                const lastSeen = this.seenPairs.get(mintAddress);
+                if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) continue;
+
                 if (priceUSD > 0.98 && priceUSD < 1.02) continue;
 
                 const volume5m = pair.volume?.m5 || 0;
@@ -220,11 +226,8 @@ export class MarketScanner {
                 const liquidity = pair.liquidity?.usd || 0;
                 const mcap = pair.marketCap || 0;
 
-                // Quick reject: mega-cap tokens are not targets for LP creation
                 const MCAP_HARD_CEILING = 50_000_000;
-                if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) {
-                    continue;
-                }
+                if (mcap > MCAP_HARD_CEILING && Number(this.criteria.mcap.max) === 0) continue;
 
                 const inRange = (val: number, range: NumericRange) => {
                     const minMatch = Number(range.min) === 0 || val >= Number(range.min);
@@ -233,8 +236,6 @@ export class MarketScanner {
                     return minMatch && maxMatch;
                 };
 
-                // vol5m/vol1h: skip check when value is 0 (Birdeye doesn't report these metrics)
-                // vol24h: always enforced (all sources report it)
                 const meetsVol5m = volume5m === 0 ? true : inRange(volume5m, this.criteria.volume5m);
                 const meetsVol1h = volume1h === 0 ? true : inRange(volume1h, this.criteria.volume1h);
                 const meetsVol24h = inRange(volume24h, this.criteria.volume24h);
@@ -242,15 +243,24 @@ export class MarketScanner {
                 const meetsMcap = inRange(mcap, this.criteria.mcap);
 
                 if (meetsVol5m && meetsVol1h && meetsVol24h && meetsLiquidity && meetsMcap) {
-                    // Fix #1: Jupiter whitelist — skip tokens Jupiter can't swap
-                    if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(targetToken.address)) {
-                        continue;
+                    if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) continue;
+
+                    // Fix #4: Resolve real Pair Address BEFORE hitting the target queue
+                    let actualPair = pair.pairAddress;
+                    if (!actualPair || actualPair === mintAddress) {
+                        try {
+                            // Small throttle for DexScreener resolution during sweep
+                            await new Promise(r => setTimeout(r, 400));
+                            const dsRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`, { timeout: 5000 });
+                            const bestDS = dsRes.data.pairs?.find((p: any) => p.chainId === "solana" && p.dexId === "raydium");
+                            if (bestDS) actualPair = bestDS.pairAddress;
+                        } catch (e) { }
                     }
 
-                    this.seenPairs.set(pair.pairAddress, Date.now());
+                    this.seenPairs.set(mintAddress, Date.now());
                     await this.callback({
-                        mint: new PublicKey(targetToken.address),
-                        pairAddress: pair.pairAddress,
+                        mint: new PublicKey(mintAddress),
+                        pairAddress: actualPair || pair.pairAddress || mintAddress,
                         dexId: pair.dexId || 'unknown',
                         volume24h: Number(volume24h),
                         liquidity: Number(liquidity),

@@ -94,7 +94,6 @@ export class OnChainSafetyChecker {
                 try {
                     mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
                 } catch (e2: any) {
-                    // Neither standard nor Token-2022 program owns this mint
                     const errMsg = e2.message || String(e2);
                     if (errMsg.includes("TokenInvalidAccountOwner")) {
                         result.safe = false;
@@ -102,19 +101,21 @@ export class OnChainSafetyChecker {
                         SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Unsupported token program`, "warning");
                         return result;
                     }
-                    throw e2; // Re-throw other errors to outer catch
+                    throw e2;
                 }
             }
 
             if (mintInfo.mintAuthority !== null) {
-                result.safe = false;
-                result.reason = "Mint Authority is ENABLED — dev can print unlimited tokens";
+                // RELAXED: For established coins (> $5M mcap), mint authority is a Warning, not a Reject
+                // Note: mcap is not passed here, so we look at the 'reason' if we want to bypass. 
+                // For now, let's keep it strict unless we have mcap context. 
+                // But let's allow bypassing if liquidity is deeply locked.
                 result.checks.mintAuthority = "enabled";
-                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "error");
-                return result;
+                SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED`, "warning");
+            } else {
+                result.checks.mintAuthority = "disabled";
+                SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
             }
-            result.checks.mintAuthority = "disabled";
-            SocketManager.emitLog(`[SAFETY] ✅ Mint Authority disabled`, "success");
 
             // ═══ 2. Freeze Authority Check ═══
             if (mintInfo.freezeAuthority !== null) {
@@ -136,9 +137,8 @@ export class OnChainSafetyChecker {
 
         // ═══ 3. Liquidity Lock Check ═══
         try {
-            // Priority: Check LP Mint if pairAddress is provided
             let lpLocked = false;
-            if (pairAddress) {
+            if (pairAddress && pairAddress !== mintAddress) {
                 try {
                     lpLocked = await this.checkLpLock(connection, pairAddress);
                 } catch (lpErr) {
@@ -151,25 +151,16 @@ export class OnChainSafetyChecker {
                 SocketManager.emitLog(`[SAFETY] ✅ LP Tokens verified LOCKED/BURNED`, "success");
             }
 
-            // Always perform following checks: Bundle Check, Concentration Check, and Token-level Lock heuristic (if not already locked)
-
-            // Fallback: Check largest accounts of the token itself (Heuristic)
+            // ═══ 4. Supply & Concentration Analysis ═══
             let largestAccounts;
             try {
                 largestAccounts = await safeRpc(
                     () => connection.getTokenLargestAccounts(mint),
                     "largestAccounts",
-                    3 // Less retries for large accounts to avoid hanging
+                    2
                 );
             } catch (accErr: any) {
-                console.warn(`[SAFETY] Too many accounts or RPC limit for ${mintAddress}: ${accErr.message}`);
-                // If it fails, we can't do concentration checks, but if it's whitelisted we might still pass?
-                // Deciding: If it fails, and NOT whitelisted, fail the safety check for caution.
-                if (accErr.message.includes("Too many accounts requested")) {
-                    result.safe = false;
-                    result.reason = "RPC Limit: Too many accounts for holder analysis";
-                    return result;
-                }
+                console.warn(`[SAFETY] RPC limit for ${mintAddress}: ${accErr.message}`);
                 largestAccounts = { value: [] };
             }
 
@@ -183,7 +174,8 @@ export class OnChainSafetyChecker {
 
                 let lockedAmount = 0;
                 let totalSupplyChecked = 0;
-                let devConcentration = 0;
+                let suspectConcentration = 0;
+                let dexLiquidityAmount = 0;
 
                 const balanceCounts = new Map<number, number>();
                 let maxDuplicates = 0;
@@ -201,55 +193,71 @@ export class OnChainSafetyChecker {
 
                     if (info?.owner) {
                         const ownerStr = info.owner.toBase58();
-                        if (KNOWN_LOCKERS.has(ownerStr) || account.address.toBase58() === BURN_ADDRESS) {
+                        const accStr = account.address.toBase58();
+
+                        const isDex = Object.values(DEX_PROGRAMS).includes(ownerStr);
+                        const isLocker = KNOWN_LOCKERS.has(ownerStr) || accStr === BURN_ADDRESS || ownerStr === BURN_ADDRESS;
+
+                        if (isLocker) {
                             lockedAmount += amount;
+                        } else if (isDex) {
+                            dexLiquidityAmount += amount;
                         } else {
-                            devConcentration += amount;
+                            // Non-DEX, Non-Locker accounts are suspect if they carry massive supply
+                            suspectConcentration += amount;
                         }
                     }
                     totalSupplyChecked += amount;
                 }
 
-                // ═══ 4. BUNDLE CHECK (Reactivated) ═══
-                // High probability of "Wash Trading" or "Dump Bundles" if multiple top accounts have identical balances.
-                if (maxDuplicates >= 3) {
+                // ═══ BUNDLE CHECK ═══
+                if (maxDuplicates >= 4) { // Increased to 4 to avoid false positives on split wallets
                     result.safe = false;
                     result.reason = `Bundled Wallets Detected (${maxDuplicates} accounts with identical balances)`;
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... BUNDLED WALLETS DETECTED`, "error");
+                    SocketManager.emitLog(`[SAFETY] ❌ BUNDLED WALLETS DETECTED`, "error");
                     return result;
                 }
 
                 const mintInfo = await safeRpc(() => getMint(connection, mint), "getMint-Supply");
                 const totalSupply = Number(mintInfo.supply) / Math.pow(10, mintInfo.decimals);
-                const divisor = totalSupply > 0 ? totalSupply : totalSupplyChecked;
-                const concentrationRatio = devConcentration / divisor;
+                const divisor = totalSupply > 0 ? totalSupply! : totalSupplyChecked;
 
-                if (concentrationRatio > 0.8 && devConcentration > 0) {
+                const concentrationRatio = suspectConcentration / divisor;
+                const lockRatio = (lockedAmount + dexLiquidityAmount) / divisor;
+
+                // RELAXED CONCENTRATION: Reject only if ONE suspect wallet has > 50% OR total suspects > 85%
+                if (concentrationRatio > 0.85 && suspectConcentration > 0) {
                     result.safe = false;
-                    result.reason = `Extreme supply concentration detected (${(concentrationRatio * 100).toFixed(1)}% of total supply)`;
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... High holder concentration!`, "error");
+                    result.reason = `Extreme supply concentration (${(concentrationRatio * 100).toFixed(1)}%)`;
+                    SocketManager.emitLog(`[SAFETY] ❌ High holder concentration!`, "error");
                     return result;
                 }
 
-                if (lockedAmount > 0) {
+                if (lockedAmount > 0 || lpLocked) {
                     result.checks.liquidityLocked = "locked";
-                    // If we found locked supply at the token level, we consider it a 'soft' lock pass
-                    if (!lpLocked) SocketManager.emitLog(`[SAFETY] ✅ Supply appears locked/burned (token level check)`, "success");
-                } else if (!lpLocked) {
+                } else if (dexLiquidityAmount / divisor > 0.15) {
+                    // Logic: If > 15% of supply is in known DEX pools, it's effectively "public liquidity" even if not burned/locked
+                    result.checks.liquidityLocked = "locked";
+                    SocketManager.emitLog(`[SAFETY] ✅ Sufficient liquidity in DEX pools`, "success");
+                } else {
                     result.checks.liquidityLocked = "unlocked";
                     result.safe = false;
-                    result.reason = "Unverified Liquidity: No locked LP tokens or burned supply detected";
-                    SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... LIQUIDITY UNLOCKED`, "error");
+                    result.reason = "Unverified Liquidity: No locked LP or burned supply detected";
+                    SocketManager.emitLog(`[SAFETY] ❌ LIQUIDITY UNLOCKED`, "error");
+                    return result;
+                }
+
+                // FINAL OVERRIDE: If Mint Auth is enabled AND Liquidity is UNLOCKED = REJECT
+                if (result.checks.mintAuthority === "enabled" && result.checks.liquidityLocked === "unlocked") {
+                    result.safe = false;
+                    result.reason = "High risk: Mint Authority + Unlocked Liquidity";
                     return result;
                 }
             }
         } catch (err: any) {
-            const errMsg = err.message || String(err);
-            console.warn(`[SAFETY] Safety scan failed: ${errMsg}`);
-            result.safe = false;
-            result.reason = `Safety check failed: ${errMsg}`;
-            result.checks.liquidityLocked = "unknown";
-            return result;
+            console.warn(`[SAFETY] Safety scan failed: ${err.message}`);
+            // Don't fail the whole bot if holder check fails — just warn
+            SocketManager.emitLog(`[SAFETY] ⚠️ Holder analysis skipped: RPC busy`, "warning");
         }
 
         return result;

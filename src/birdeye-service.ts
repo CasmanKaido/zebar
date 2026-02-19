@@ -95,8 +95,11 @@ export class BirdeyeService {
 
                     scanResults.push({
                         mint: new PublicKey(t.address),
-                        pairAddress: t.address,
-                        dexId: "birdeye",
+                        // IMPORTANT: pairAddress is NOT the same as token address. 
+                        // Birdeye/scroll doesn't always provide the pool address.
+                        // We leave it empty if not explicitly provided as 'pair_address' or similar.
+                        pairAddress: t.pair_address || "",
+                        dexId: t.source || "birdeye",
                         volume24h: vol24h,
                         liquidity: liq,
                         mcap: t.mc || t.market_cap || t.fdv || 0,
@@ -159,7 +162,9 @@ export class BirdeyeService {
             const tokens = response.data.data?.items || [];
             return tokens.map((t: any) => ({
                 mint: new PublicKey(t.address),
-                pairAddress: t.address,
+                // IMPORTANT: do not default pairAddress to t.address (token mint).
+                // New listings often don't have a pairAddress field in the items.
+                pairAddress: t.pair_address || "",
                 dexId: "birdeye-new",
                 volume24h: t.v24hUSD || t.volume_24h_usd || 0,
                 liquidity: t.liquidity || 0,

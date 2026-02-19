@@ -489,37 +489,10 @@ export class BotManager {
 
             SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
-            // 0. Pair Address Verification (Critical for Safety Checks)
-            let actualPairAddress = result.pairAddress;
-            if (!actualPairAddress || actualPairAddress === mintAddress || result.dexId === "birdeye-new") {
-                // Fix #4: Check cache first
-                const cached = this.dexPairCache.get(mintAddress);
-                if (cached && cached.expiry > Date.now()) {
-                    actualPairAddress = cached.pairAddress;
-                } else {
-                    try {
-                        // Rate limit DexScreener calls
-                        const now = Date.now();
-                        const elapsed = now - this.lastDexScreenerCall;
-                        if (elapsed < this.DEXSCREENER_MIN_DELAY) {
-                            await new Promise(r => setTimeout(r, this.DEXSCREENER_MIN_DELAY - elapsed));
-                        }
-                        this.lastDexScreenerCall = Date.now();
+            SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
-                        const dexscreenerRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mintAddress}`, { timeout: 5000 });
-                        const bestPair = dexscreenerRes.data.pairs?.find((p: any) => p.chainId === "solana");
-                        if (bestPair) {
-                            actualPairAddress = bestPair.pairAddress;
-                            this.dexPairCache.set(mintAddress, { pairAddress: bestPair.pairAddress, expiry: Date.now() + 5 * 60 * 1000 });
-                        }
-                    } catch (e) {
-                        console.warn(`[TARGET] Failed to resolve pair address for ${result.symbol}: ${e}`);
-                    }
-                }
-            }
-
-            // 1. Safety Check
-            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, actualPairAddress);
+            // 1. Safety Check (Now very fast since pairAddress is pre-resolved)
+            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
             if (!safety.safe) {
                 SocketManager.emitLog(`[SAFETY] ❌ ${result.symbol}: ${safety.reason}`, "error");
                 this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });

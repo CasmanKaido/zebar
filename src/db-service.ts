@@ -70,13 +70,15 @@ export class DatabaseService {
         } catch (e) { }
 
         try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN entryUsdValue REAL");
-            console.log("[DB] Migrated: Added entryUsdValue column to pools table.");
+            this.db.exec("ALTER TABLE pools ADD COLUMN fee_total_lppp TEXT");
+            console.log("[DB] Migrated: Added fee_total_lppp column to pools table.");
         } catch (e) { }
 
         try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN fee_total_lppp TEXT");
-            console.log("[DB] Migrated: Added fee_total_lppp column to pools table.");
+            this.db.exec("ALTER TABLE pools ADD COLUMN pos_base_lp TEXT");
+            this.db.exec("ALTER TABLE pools ADD COLUMN pos_token_lp TEXT");
+            this.db.exec("ALTER TABLE pools ADD COLUMN pos_total_lppp TEXT");
+            console.log("[DB] Migrated: Added positionValue columns to pools table.");
         } catch (e) { }
     }
 
@@ -99,13 +101,15 @@ export class DatabaseService {
                 initialTokenAmount, initialLpppAmount, exited, 
                 tp1Done, takeProfitDone, stopLossDone, positionId, 
                 fee_sol, fee_token, fee_total_lppp, withdrawalPending, priceReconstructed,
-                netRoi, initialSolValue, isBotCreated, entryUsdValue
+                netRoi, initialSolValue, isBotCreated, entryUsdValue,
+                pos_base_lp, pos_token_lp, pos_total_lppp
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
                 @tp1Done, @takeProfitDone, @stopLossDone, @positionId,
                 @fee_sol, @fee_token, @fee_total_lppp, @withdrawalPending, @priceReconstructed,
-                @netRoi, @initialSolValue, @isBotCreated, @entryUsdValue
+                @netRoi, @initialSolValue, @isBotCreated, @entryUsdValue,
+                @pos_base_lp, @pos_token_lp, @pos_total_lppp
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
                 exited = excluded.exited,
@@ -122,6 +126,9 @@ export class DatabaseService {
                 initialSolValue = excluded.initialSolValue,
                 isBotCreated = excluded.isBotCreated,
                 entryUsdValue = excluded.entryUsdValue,
+                pos_base_lp = excluded.pos_base_lp,
+                pos_token_lp = excluded.pos_token_lp,
+                pos_total_lppp = excluded.pos_total_lppp,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -147,7 +154,10 @@ export class DatabaseService {
             netRoi: pool.netRoi || "0%",
             initialSolValue: pool.initialSolValue || 0,
             isBotCreated: pool.isBotCreated ? 1 : 0,
-            entryUsdValue: pool.entryUsdValue || 0
+            entryUsdValue: pool.entryUsdValue || 0,
+            pos_base_lp: pool.positionValue?.baseLp || "0",
+            pos_token_lp: pool.positionValue?.tokenLp || "0",
+            pos_total_lppp: pool.positionValue?.totalLppp || "0"
         });
     }
 
@@ -200,6 +210,11 @@ export class DatabaseService {
                 sol: row.fee_sol || "0",
                 token: row.fee_token || "0",
                 totalLppp: row.fee_total_lppp || "0"
+            },
+            positionValue: {
+                baseLp: row.pos_base_lp || "0",
+                tokenLp: row.pos_token_lp || "0",
+                totalLppp: row.pos_total_lppp || "0"
             },
             withdrawalPending: !!row.withdrawalPending,
             priceReconstructed: !!row.priceReconstructed,
