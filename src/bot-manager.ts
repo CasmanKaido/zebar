@@ -372,7 +372,8 @@ export class BotManager {
                 netRoi: updatedPool.netRoi,
                 exited,
                 unclaimedFees: updatedPool.unclaimedFees,
-                positionValue: updatedPool.positionValue
+                positionValue: updatedPool.positionValue,
+                currentMcap: partial?.currentMcap
             });
         } catch (e) {
             console.error("[DB] Update ROI Failed:", e);
@@ -569,6 +570,10 @@ export class BotManager {
                     SocketManager.emitLog(`[SUCCESS] Pool Created: ${poolInfo.poolAddress}`, "success");
                     const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / 1e9) / tokenUiAmountChecked : 0;
 
+                    const supplyRes = await safeRpc(() => connection.getTokenSupply(result.mint), "getTokenSupply");
+                    const totalSupply = supplyRes.value.uiAmount || 0;
+                    const initialMcap = totalSupply * result.priceUsd;
+
                     const fullPoolData: PoolData = {
                         poolId: poolInfo.poolAddress || "",
                         token: result.symbol,
@@ -585,7 +590,9 @@ export class BotManager {
                         unclaimedFees: { sol: "0", token: "0" },
                         isBotCreated: true,
                         entryUsdValue: 0, // Will be populated in first monitor tick
-                        baseToken: this.settings.baseToken
+                        baseToken: this.settings.baseToken,
+                        totalSupply,
+                        initialMcap
                     };
 
                     await this.savePools(fullPoolData);
@@ -837,14 +844,25 @@ export class BotManager {
                             const currentUsdValue = (totalTokenAmount * tokenPrice) + (totalBaseAmount * basePrice);
                             const usdMultiplier = pool.entryUsdValue > 0 ? (currentUsdValue / pool.entryUsdValue) : 1;
 
+                            // ── MCAP STRATEGY ──
+                            let currentMcap = 0;
+                            if (pool.totalSupply && pool.totalSupply > 0) {
+                                currentMcap = tokenPrice * pool.totalSupply;
+                            }
+
+                            // Use MCAP multiplier if available, otherwise fallback to position USD multiplier
+                            const mcapMultiplier = (currentMcap > 0 && pool.initialMcap && pool.initialMcap > 0)
+                                ? (currentMcap / pool.initialMcap)
+                                : usdMultiplier;
+
                             // Keep Net ROI for UI display only
                             const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
                             const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
                             pool.netRoi = `${netRoiVal.toFixed(2)}%`;
 
                             // Log state for visibility (Reduced frequency)
-                            if (sweepCount % 20 === 0 || usdMultiplier >= 3.5 || usdMultiplier <= 0.75) {
-                                console.log(`[STRATEGY] ${pool.token} | Multiplier: ${usdMultiplier.toFixed(3)}x | Net ROI: ${pool.netRoi}`);
+                            if (sweepCount % 20 === 0 || mcapMultiplier >= 3.5 || mcapMultiplier <= 0.75) {
+                                console.log(`[STRATEGY] ${pool.token} | MCAP Multiplier: ${mcapMultiplier.toFixed(3)}x | Net ROI: ${pool.netRoi}`);
                                 // console.log(`[MONITOR]  ${pool.token} | Spot: ${roiString} | Net: ${pool.netRoi} | Curr: ${posValue.totalSol.toFixed(4)} LPPP`);
                             }
 
@@ -855,16 +873,17 @@ export class BotManager {
                                 initialPrice: pool.initialPrice,
                                 priceReconstructed: pool.priceReconstructed,
                                 positionValue: pool.positionValue,
-                                entryUsdValue: pool.entryUsdValue
+                                entryUsdValue: pool.entryUsdValue,
+                                currentMcap: currentMcap
                             });
 
                             // Small delay to prevent 429s in big loops - Be aggressive for DRPC
                             await new Promise(r => setTimeout(r, 1000));
 
                             // ── Take Profit Stage 1: 4x Value → Close 40% ──
-                            if (usdMultiplier >= 4.0 && !pool.tp1Done) {
+                            if (mcapMultiplier >= 4.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} reached 4x Value ($${currentUsdValue.toFixed(2)})! Withdrawing 40%...`, "success");
+                                SocketManager.emitLog(`[TP1] ${pool.token} reached 4x MCAP! Withdrawing 40%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
@@ -874,9 +893,9 @@ export class BotManager {
                             }
 
                             // ── Take Profit Stage 2: 7x Value → Close another 40% ──
-                            if (usdMultiplier >= 7.0 && pool.tp1Done && !pool.takeProfitDone) {
+                            if (mcapMultiplier >= 7.0 && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} reached 7x Value ($${currentUsdValue.toFixed(2)})! Withdrawing 40%...`, "success");
+                                SocketManager.emitLog(`[TP2] ${pool.token} reached 7x MCAP! Withdrawing 40%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
@@ -890,23 +909,23 @@ export class BotManager {
                             const poolAgeMs = Date.now() - new Date(pool.created).getTime();
                             const SL_COOLDOWN_MS = 3 * 60 * 1000;
 
-                            if (usdMultiplier <= 0.7 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
+                            if (mcapMultiplier <= 0.7 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 // 1. Internal Math Check (Glitch Protection Layer A)
                                 // If the token-to-lppp ratio (spotPrice) hasn't dropped but USD has, it's an LPPP price glitch.
                                 const priceRatioMultiplier = pool.initialPrice > 0 ? (posValue.spotPrice / pool.initialPrice) : 1;
 
                                 if (priceRatioMultiplier > 0.8 && basePrice < 0.00001) {
-                                    console.warn(`[GLITCH PREVENT] ${pool.token} USD dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible Base Token Price Glitch. Skipping SL strike.`);
+                                    console.warn(`[GLITCH PREVENT] ${pool.token} MCAP dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible Base Token Price Glitch. Skipping SL strike.`);
                                 } else {
                                     // 2. Wait and See (Glitch Protection Layer B - 3 consecutive strikes)
                                     const strikes = (this.slStrikeCount.get(pool.poolId) || 0) + 1;
                                     this.slStrikeCount.set(pool.poolId, strikes);
 
                                     if (strikes < 3) {
-                                        console.warn(`[STOP LOSS STRIKE] ${pool.token} hit ${strikes}/3 strikes (Value: ${usdMultiplier.toFixed(2)}x). Waiting for confirmation...`);
+                                        console.warn(`[STOP LOSS STRIKE] ${pool.token} hit ${strikes}/3 strikes (Value: ${mcapMultiplier.toFixed(2)}x). Waiting for confirmation...`);
                                     } else {
                                         this.activeTpSlActions.add(pool.poolId);
-                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} confirmed 0.7x Value drop! Withdrawing 80%...`, "error");
+                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} confirmed 0.7x MCAP drop! Withdrawing 80%...`, "error");
                                         const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                                         if (result.success) {
                                             await this.liquidatePoolToSol(pool.mint);

@@ -39,6 +39,9 @@ interface Pool {
     exited?: boolean;
     isBotCreated?: boolean;
     baseToken?: string;
+    totalSupply?: number;
+    initialMcap?: number;
+    currentMcap?: number;
 }
 
 interface PoolUpdate {
@@ -48,6 +51,7 @@ interface PoolUpdate {
     unclaimedFees?: { sol: string; token: string; totalLppp?: string };
     positionValue?: { baseLp: string; tokenLp: string; totalLppp: string };
     exited?: boolean;
+    currentMcap?: number;
 }
 
 interface SettingInputProps {
@@ -163,6 +167,27 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                 {Number(pool.positionValue?.tokenLp || 0).toFixed(6)} {pool.token}
             </p>
         </div>
+
+        {/* ═══ Market Cap ═══ */}
+        {pool.initialMcap && pool.initialMcap > 0 && pool.currentMcap ? (
+            <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
+                <p className="text-[10px] text-muted-foreground/70 mb-1">Market Cap</p>
+                <div className="flex justify-between items-center">
+                    <div>
+                        <p className="text-lg font-bold text-white">
+                            ${pool.currentMcap.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                            Initial: ${pool.initialMcap.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </p>
+                    </div>
+                    <div className={`px-2 py-1 rounded-lg text-xs font-bold ${(pool.currentMcap / pool.initialMcap) >= 1 ? 'bg-primary/20 text-primary border border-primary/30' : 'bg-red-500/20 text-red-500 border border-red-500/30'
+                        }`}>
+                        {((pool.currentMcap / pool.initialMcap)).toFixed(2)}x
+                    </div>
+                </div>
+            </div>
+        ) : null}
 
         {/* ═══ Fees from position ═══ */}
         <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
@@ -325,7 +350,8 @@ function App() {
                 netRoi: update.netRoi || p.netRoi,
                 unclaimedFees: update.unclaimedFees || p.unclaimedFees,
                 positionValue: update.positionValue || p.positionValue,
-                exited: update.exited !== undefined ? update.exited : p.exited
+                exited: update.exited !== undefined ? update.exited : p.exited,
+                currentMcap: update.currentMcap !== undefined ? update.currentMcap : p.currentMcap
             } : p));
         });
         socket.on('pool', (pool: Pool) => {

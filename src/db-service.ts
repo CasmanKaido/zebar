@@ -45,6 +45,8 @@ export class DatabaseService {
                 isBotCreated INTEGER NOT NULL DEFAULT 0,
                 entryUsdValue REAL,
                 fee_total_lppp TEXT,
+                totalSupply REAL,
+                initialMcap REAL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -85,6 +87,12 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE pools ADD COLUMN baseToken TEXT DEFAULT 'LPPP'");
             console.log("[DB] Migrated: Added baseToken column to pools table.");
         } catch (e) { }
+
+        try {
+            this.db.exec("ALTER TABLE pools ADD COLUMN totalSupply REAL");
+            this.db.exec("ALTER TABLE pools ADD COLUMN initialMcap REAL");
+            console.log("[DB] Migrated: Added totalSupply and initialMcap columns to pools table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -107,14 +115,16 @@ export class DatabaseService {
                 tp1Done, takeProfitDone, stopLossDone, positionId, 
                 fee_sol, fee_token, fee_total_lppp, withdrawalPending, priceReconstructed,
                 netRoi, initialSolValue, isBotCreated, entryUsdValue,
-                pos_base_lp, pos_token_lp, pos_total_lppp, baseToken
+                pos_base_lp, pos_token_lp, pos_total_lppp, baseToken,
+                totalSupply, initialMcap
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
                 @tp1Done, @takeProfitDone, @stopLossDone, @positionId,
                 @fee_sol, @fee_token, @fee_total_lppp, @withdrawalPending, @priceReconstructed,
                 @netRoi, @initialSolValue, @isBotCreated, @entryUsdValue,
-                @pos_base_lp, @pos_token_lp, @pos_total_lppp, @baseToken
+                @pos_base_lp, @pos_token_lp, @pos_total_lppp, @baseToken,
+                @totalSupply, @initialMcap
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
                 exited = excluded.exited,
@@ -135,6 +145,8 @@ export class DatabaseService {
                 pos_token_lp = excluded.pos_token_lp,
                 pos_total_lppp = excluded.pos_total_lppp,
                 baseToken = excluded.baseToken,
+                totalSupply = excluded.totalSupply,
+                initialMcap = excluded.initialMcap,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -164,7 +176,9 @@ export class DatabaseService {
             pos_base_lp: pool.positionValue?.baseLp || "0",
             pos_token_lp: pool.positionValue?.tokenLp || "0",
             pos_total_lppp: pool.positionValue?.totalLppp || "0",
-            baseToken: pool.baseToken || "LPPP"
+            baseToken: pool.baseToken || "LPPP",
+            totalSupply: pool.totalSupply || 0,
+            initialMcap: pool.initialMcap || 0
         });
     }
 
@@ -229,7 +243,9 @@ export class DatabaseService {
             initialSolValue: row.initialSolValue,
             isBotCreated: !!row.isBotCreated,
             entryUsdValue: row.entryUsdValue,
-            baseToken: row.baseToken || "LPPP"
+            baseToken: row.baseToken || "LPPP",
+            totalSupply: row.totalSupply,
+            initialMcap: row.initialMcap
         };
     }
 

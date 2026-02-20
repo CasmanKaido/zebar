@@ -21,6 +21,9 @@ export interface PoolData {
     isBotCreated?: boolean;      // Flag: Created by this bot (vs recovered from chain)
     entryUsdValue?: number;      // USD value at the time of entry (for TP/SL)
     baseToken?: string;          // The base token symbol (e.g., 'LPPP', 'USDC')
+    totalSupply?: number;        // Total supply of the token
+    initialMcap?: number;        // Market Cap at the time of entry
+    currentMcap?: number;        // Real-time market cap value for UI passing
 }
 
 export interface TradeHistory {
