@@ -80,6 +80,11 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE pools ADD COLUMN pos_total_lppp TEXT");
             console.log("[DB] Migrated: Added positionValue columns to pools table.");
         } catch (e) { }
+
+        try {
+            this.db.exec("ALTER TABLE pools ADD COLUMN baseToken TEXT DEFAULT 'LPPP'");
+            console.log("[DB] Migrated: Added baseToken column to pools table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -102,14 +107,14 @@ export class DatabaseService {
                 tp1Done, takeProfitDone, stopLossDone, positionId, 
                 fee_sol, fee_token, fee_total_lppp, withdrawalPending, priceReconstructed,
                 netRoi, initialSolValue, isBotCreated, entryUsdValue,
-                pos_base_lp, pos_token_lp, pos_total_lppp
+                pos_base_lp, pos_token_lp, pos_total_lppp, baseToken
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
                 @tp1Done, @takeProfitDone, @stopLossDone, @positionId,
                 @fee_sol, @fee_token, @fee_total_lppp, @withdrawalPending, @priceReconstructed,
                 @netRoi, @initialSolValue, @isBotCreated, @entryUsdValue,
-                @pos_base_lp, @pos_token_lp, @pos_total_lppp
+                @pos_base_lp, @pos_token_lp, @pos_total_lppp, @baseToken
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
                 exited = excluded.exited,
@@ -129,6 +134,7 @@ export class DatabaseService {
                 pos_base_lp = excluded.pos_base_lp,
                 pos_token_lp = excluded.pos_token_lp,
                 pos_total_lppp = excluded.pos_total_lppp,
+                baseToken = excluded.baseToken,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -157,7 +163,8 @@ export class DatabaseService {
             entryUsdValue: pool.entryUsdValue || 0,
             pos_base_lp: pool.positionValue?.baseLp || "0",
             pos_token_lp: pool.positionValue?.tokenLp || "0",
-            pos_total_lppp: pool.positionValue?.totalLppp || "0"
+            pos_total_lppp: pool.positionValue?.totalLppp || "0",
+            baseToken: pool.baseToken || "LPPP"
         });
     }
 
@@ -221,7 +228,8 @@ export class DatabaseService {
             netRoi: row.netRoi,
             initialSolValue: row.initialSolValue,
             isBotCreated: !!row.isBotCreated,
-            entryUsdValue: row.entryUsdValue
+            entryUsdValue: row.entryUsdValue,
+            baseToken: row.baseToken || "LPPP"
         };
     }
 

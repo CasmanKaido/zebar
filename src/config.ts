@@ -33,15 +33,32 @@ export const DRY_RUN = process.env.DRY_RUN === 'true';
 
 
 
-// Token Constants
-export const LPPP_MINT = new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+// Token Constants (Strict ENV only)
+export const BASE_TOKENS: Record<string, PublicKey> = {};
+
+if (!process.env.BASE_TOKENS || process.env.BASE_TOKENS.trim() === "") {
+    throw new Error("CRITICAL ERROR: BASE_TOKENS environment variable is missing or empty. Please define at least one base token in your .env file.");
+}
+
+try {
+    const parsed = JSON.parse(process.env.BASE_TOKENS);
+    if (Object.keys(parsed).length === 0) {
+        throw new Error("BASE_TOKENS JSON is empty.");
+    }
+
+    for (const [symbol, address] of Object.entries(parsed)) {
+        BASE_TOKENS[symbol] = new PublicKey(address as string);
+    }
+    console.log(`[CONFIG] Loaded ${Object.keys(BASE_TOKENS).length} Base Tokens from .env:`, Object.keys(BASE_TOKENS).join(", "));
+} catch (e: any) {
+    throw new Error(`CRITICAL ERROR: Failed to parse BASE_TOKENS from .env. Ensure it is a valid JSON string. Error: ${e.message}`);
+}
+
 export const SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 export const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
-
 export const IGNORED_MINTS = [
-    SOL_MINT.toBase58(),
-    USDC_MINT.toBase58(),
+    ...Object.values(BASE_TOKENS).map(m => m.toBase58()),
     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
     "USDH1SM1ojwRrt3WoCkmq7i9DE2yMK77CXY7MvJ8TCe",   // USDH
     "2b1fDQRsjtB2NYyQCneVr3TXuqcSFCvA13fnc7uxc8vi", // PYUSD

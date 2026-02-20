@@ -1,5 +1,5 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError, TransactionMessage } from "@solana/web3.js";
-import { wallet, connection, JUPITER_API_KEY, DRY_RUN, LPPP_MINT, SOL_MINT, USDC_MINT } from "./config";
+import { wallet, connection, JUPITER_API_KEY, DRY_RUN, SOL_MINT, USDC_MINT, BASE_TOKENS } from "./config";
 import bs58 from "bs58";
 
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
@@ -921,7 +921,7 @@ export class StrategyManager {
      * Checks BOTH standard pool (seed "pool") and customizable pool (seed "cpool") PDAs.
      * Returns the pool address if it exists, null otherwise.
      */
-    async checkMeteoraPoolExists(tokenMint: PublicKey, baseMint: PublicKey = LPPP_MINT): Promise<string | null> {
+    async checkMeteoraPoolExists(tokenMint: PublicKey, baseMint: PublicKey = BASE_TOKENS["LPPP"]): Promise<string | null> {
         try {
             const { deriveConfigAddress, derivePoolAddress, deriveCustomizablePoolAddress } = require("@meteora-ag/cp-amm-sdk");
             const BN = require("bn.js");
@@ -1508,7 +1508,7 @@ export class StrategyManager {
             const decimalsB = balB.value.decimals;
 
             // 3. Determine Side (Which one is SOL/LPPP/Base?)
-            const baseMints = [LPPP_MINT.toBase58(), SOL_MINT.toBase58(), USDC_MINT.toBase58()];
+            const baseMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
             const isBaseA = baseMints.includes(mintA.toBase58());
 
             // If neither is a known base, default to Mint A as base

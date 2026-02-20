@@ -8,7 +8,7 @@ import path from "path";
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { GeckoService } from "./gecko-service";
-import { SOL_MINT, LPPP_MINT } from "./config";
+import { SOL_MINT, BASE_TOKENS } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { HeliusWebhookService } from "./helius-webhook-service";
 
@@ -89,28 +89,29 @@ app.post("/api/stop", (req, res) => {
 
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
 // Price cache to prevent rate limiting (15s TTL)
-let priceCache: { sol: number; lppp: number } | null = null;
+let priceCache: { sol: number; baseTokens: Record<string, number> } | null = null;
 let priceCacheTime = 0;
 const PRICE_CACHE_TTL = 15000;
 
 app.get("/api/price", async (req, res) => {
     // console.log(`[DEBUG] Fetching Prices...`);
     if (priceCache && Date.now() - priceCacheTime < PRICE_CACHE_TTL) {
-        console.log(`[DEBUG] Serving Prices from Cache: SOL=${priceCache.sol}, LPPP=${priceCache.lppp}`);
         return res.json(priceCache);
     }
 
-    const prices = { sol: 0, lppp: 0 };
+    const prices: { sol: number; baseTokens: Record<string, number> } = { sol: 0, baseTokens: {} };
 
     try {
         // 1. Fetch Prices via Jupiter Service
         const jupPrices = await JupiterPriceService.getPrices([
             SOL_MINT.toBase58(),
-            LPPP_MINT.toBase58()
+            ...Object.values(BASE_TOKENS).map(m => m.toBase58())
         ]);
 
         prices.sol = jupPrices.get(SOL_MINT.toBase58()) || 0;
-        prices.lppp = jupPrices.get(LPPP_MINT.toBase58()) || 0;
+        for (const [symbol, mint] of Object.entries(BASE_TOKENS)) {
+            prices.baseTokens[symbol] = jupPrices.get(mint.toBase58()) || 0;
+        }
 
         // 2. Fallbacks (only if primary Jupiter fails)
         if (!prices.sol) {
@@ -122,17 +123,14 @@ app.get("/api/price", async (req, res) => {
 
                 if (cgPrice) {
                     prices.sol = cgPrice;
-                    console.log(`[DEBUG] CoinGecko SOL Live: $${prices.sol}`);
                 } else {
                     // Tertiary check: DexScreener for SOL/USDC
-                    console.log(`[DEBUG] CoinGecko failed. Trying DexScreener...`);
                     const solDexRes = await fetch("https://api.dexscreener.com/latest/dex/pairs/solana/8sc7wj9eay6zm4pjrfsff2vmsvwwxuz2j6be6sqmjd6w"); // SOL/USDC Pair
                     const solDexData = await solDexRes.json();
                     const dexPrice = parseFloat(solDexData?.pair?.priceUsd || "0");
 
                     if (dexPrice > 0) {
                         prices.sol = dexPrice;
-                        console.log(`[DEBUG] DexScreener SOL Live: $${prices.sol}`);
                     }
                 }
             } catch (fallbackErr) {
@@ -140,19 +138,18 @@ app.get("/api/price", async (req, res) => {
             }
         }
 
-        // 4. Fallback for LPPP
-        if (!prices.lppp) {
-            try {
-                const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + LPPP_MINT.toBase58());
-                const dexData = await dexRes.json();
-                if (dexData?.pairs?.[0]?.priceUsd) prices.lppp = parseFloat(dexData.pairs[0].priceUsd);
-                console.log(`[DEBUG] DexScreener LPPP Fallback: ${prices.lppp}`);
-            } catch (e) {
-                console.error("LPPP Price DexScreener Fallback failed", e);
+        // 4. Fallback for Base Tokens
+        for (const [symbol, mint] of Object.entries(BASE_TOKENS)) {
+            if (!prices.baseTokens[symbol]) {
+                try {
+                    const dexRes = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + mint.toBase58());
+                    const dexData = await dexRes.json();
+                    if (dexData?.pairs?.[0]?.priceUsd) prices.baseTokens[symbol] = parseFloat(dexData.pairs[0].priceUsd);
+                } catch (e) { }
             }
+            // USDC Hard fallback
+            if (symbol === "USDC" && !prices.baseTokens[symbol]) prices.baseTokens[symbol] = 1.0;
         }
-
-        console.log(`[DEBUG] Final Price Sync: SOL=$${prices.sol.toFixed(2)}, LPPP=$${prices.lppp.toFixed(6)}`);
 
         priceCache = prices;
         priceCacheTime = Date.now();

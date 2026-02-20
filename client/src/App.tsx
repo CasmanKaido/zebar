@@ -38,6 +38,7 @@ interface Pool {
     positionValue?: { baseLp: string; tokenLp: string; totalLppp: string };
     exited?: boolean;
     isBotCreated?: boolean;
+    baseToken?: string;
 }
 
 interface PoolUpdate {
@@ -115,13 +116,13 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
     );
 };
 
-const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, lpppPrice }: {
+const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, basePrice }: {
     pool: Pool;
     isBot: boolean;
     claimFees: (id: string) => void;
     increaseLiquidity: (id: string) => void;
-    withdrawLiquidity: (id: string, pct: number) => void;
-    lpppPrice: number | null;
+    withdrawLiquidity: (id: string, percent: number) => void;
+    basePrice: number | null;
 }) => (
     <div key={pool.poolId} className={`bg-secondary border p-4 rounded-md flex flex-col gap-4 group transition-all duration-300 ${isBot ? 'hover:border-pink-500/50 border-border shadow-[0_4px_12px_rgba(236,72,153,0.05)]' : 'hover:border-primary/50 border-border opacity-90'}`}>
         <div className="flex justify-between items-start">
@@ -154,10 +155,10 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
         <div className="py-3 px-3 bg-card/30 rounded-lg border border-border/50">
             <p className="text-[10px] text-muted-foreground/70 mb-1">Position value</p>
             <p className="text-lg font-bold text-white">
-                ${((Number(pool.positionValue?.totalLppp || 0)) * (lpppPrice || 0)).toFixed(6)}
+                ${((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(6)}
             </p>
             <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                {Number(pool.positionValue?.baseLp || 0).toFixed(9)} LPPP
+                {Number(pool.positionValue?.baseLp || 0).toFixed(9)} {pool.baseToken || "LPPP"}
                 <span className="mx-1 text-muted-foreground/30">+</span>
                 {Number(pool.positionValue?.tokenLp || 0).toFixed(6)} {pool.token}
             </p>
@@ -169,10 +170,10 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
             <div className="flex justify-between items-center">
                 <div>
                     <p className="text-lg font-bold text-white">
-                        ${((Number(pool.unclaimedFees?.totalLppp || 0)) * (lpppPrice || 0)).toFixed(6)}
+                        ${((Number(pool.unclaimedFees?.totalLppp || 0)) * (basePrice || 0)).toFixed(6)}
                     </p>
                     <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                        {Number(pool.unclaimedFees?.sol || 0).toFixed(6)} LPPP
+                        {Number(pool.unclaimedFees?.sol || 0).toFixed(6)} {pool.baseToken || "LPPP"}
                         <span className="mx-1 text-muted-foreground/30">+</span>
                         {Number(pool.unclaimedFees?.token || 0).toFixed(6)} {pool.token}
                     </p>
@@ -213,8 +214,9 @@ function App() {
 
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
-    const [lpppPrice, setLpppPrice] = useState<number | null>(null);
-    const [portfolio, setPortfolio] = useState<{ sol: number, lppp: number }>({ sol: 0, lppp: 0 });
+    const [baseTokenPrices, setBaseTokenPrices] = useState<Record<string, number>>({});
+    const [selectedBaseToken, setSelectedBaseToken] = useState<string>("LPPP");
+    const [portfolio, setPortfolio] = useState<{ sol: number, baseTokens: Record<string, number> }>({ sol: 0, baseTokens: {} });
 
     // Scan Criteria
     const [buyAmount, setBuyAmount] = useState(0.1);
@@ -282,7 +284,7 @@ function App() {
             if (res.data && !res.data.error) {
                 setPortfolio({
                     sol: res.data.sol || 0,
-                    lppp: res.data.lppp || 0
+                    baseTokens: res.data.baseTokens || {}
                 });
             }
         } catch (e) {
@@ -356,7 +358,7 @@ function App() {
                 if (data && !data.error) {
                     // Use !== undefined and !== null to allow 0.0 values to be set
                     if (data.sol !== undefined && data.sol !== null) setSolPrice(Number(data.sol));
-                    if (data.lppp !== undefined && data.lppp !== null) setLpppPrice(Number(data.lppp));
+                    if (data.baseTokens) setBaseTokenPrices(data.baseTokens);
                 }
             } catch (e) {
                 console.error("Price fetch error:", e);
@@ -397,7 +399,8 @@ function App() {
                     liquidity: { min: minLiquidity, max: maxLiquidity },
                     mcap: { min: minMcap, max: maxMcap },
                     mode: discoveryMode,
-                    maxAgeMinutes
+                    maxAgeMinutes,
+                    baseToken: selectedBaseToken
                 })
             });
 
@@ -651,9 +654,19 @@ function App() {
                                 <Settings2 size={18} className="text-muted-foreground" />
                                 <h2 className="text-sm font-semibold">Configuration</h2>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap justify-end gap-2">
+                                <select
+                                    value={selectedBaseToken}
+                                    onChange={(e) => setSelectedBaseToken(e.target.value)}
+                                    className="bg-transparent text-emerald-400 font-bold border border-emerald-500/20 rounded px-1.5 py-0.5 text-[10px] outline-none"
+                                    disabled={running}
+                                >
+                                    {Object.keys(baseTokenPrices).length > 0 ? Object.keys(baseTokenPrices).map(t => (
+                                        <option key={t} value={t} className="bg-zinc-900 font-sans">{t}</option>
+                                    )) : <option value="LPPP" className="bg-zinc-900">LPPP</option>}
+                                </select>
                                 {solPrice && <span className="text-[10px] text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded border border-border">SOL: ${solPrice.toFixed(2)}</span>}
-                                {lpppPrice && <span className="text-[10px] text-emerald-400/80 font-mono bg-emerald-900/10 px-2 py-0.5 rounded border border-emerald-500/20">LPPP: ${lpppPrice.toFixed(4)}</span>}
+                                {baseTokenPrices[selectedBaseToken] && <span className="text-[10px] text-emerald-400/80 font-mono bg-emerald-900/10 px-2 py-0.5 rounded border border-emerald-500/20">{selectedBaseToken}: ${baseTokenPrices[selectedBaseToken].toFixed(4)}</span>}
                             </div>
                         </div>
 
@@ -679,16 +692,16 @@ function App() {
 
                         <div className="mb-4">
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">LP Match (LPPP) — Auto</label>
+                                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">LP Match ({selectedBaseToken}) — Auto</label>
                                 <div className="relative">
                                     <input
                                         type="text"
                                         readOnly
-                                        value={solPrice && lpppPrice && lpppPrice > 0 ? `≈ ${((isBuyUsd ? buyAmount : buyAmount * solPrice) / lpppPrice).toLocaleString(undefined, { maximumFractionDigits: 1 })} LPPP` : 'Fetching prices...'}
+                                        value={solPrice && baseTokenPrices[selectedBaseToken] && baseTokenPrices[selectedBaseToken] > 0 ? `≈ ${((isBuyUsd ? buyAmount : buyAmount * solPrice) / baseTokenPrices[selectedBaseToken]).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${selectedBaseToken}` : 'Fetching prices...'}
                                         className="w-full bg-input/50 border border-border/50 text-muted-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] cursor-not-allowed"
                                     />
                                 </div>
-                                {solPrice && lpppPrice && lpppPrice > 0 && (
+                                {solPrice && baseTokenPrices[selectedBaseToken] && baseTokenPrices[selectedBaseToken] > 0 && (
                                     <span className="text-[9px] text-muted-foreground/70">≈ ${(isBuyUsd ? buyAmount : buyAmount * solPrice).toFixed(2)} USD equivalent</span>
                                 )}
                             </div>
@@ -900,16 +913,20 @@ function App() {
                                         </div>
                                     </div>
                                 </div>
-                                <div className="h-[1px] bg-border/40"></div>
-                                <div className="flex justify-between items-end">
-                                    <span className="text-xs font-mono text-emerald-400 font-bold">LPPP</span>
-                                    <div className="text-right leading-none">
-                                        <div className="font-bold text-base text-emerald-400">{portfolio.lppp.toLocaleString()}</div>
-                                        <div className="text-[10px] text-emerald-500/60 mt-0.5">
-                                            {lpppPrice ? `≈ $${(portfolio.lppp * lpppPrice).toFixed(2)}` : '$-.--'}
+                                {Object.keys(portfolio.baseTokens).length > 0 && Object.keys(portfolio.baseTokens).map(t => (
+                                    <div key={t} className="mt-2">
+                                        <div className="h-[1px] bg-border/40 mb-2"></div>
+                                        <div className="flex justify-between items-end">
+                                            <span className="text-xs font-mono text-emerald-400 font-bold">{t}</span>
+                                            <div className="text-right leading-none">
+                                                <div className="font-bold text-base text-emerald-400">{(portfolio.baseTokens[t] || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</div>
+                                                <div className="text-[10px] text-emerald-500/60 mt-0.5">
+                                                    {baseTokenPrices[t] ? `≈ $${((portfolio.baseTokens[t] || 0) * baseTokenPrices[t]).toFixed(2)}` : '$-.--'}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
+                                ))}
                             </div>
                         </div>
                     </div>
@@ -1013,26 +1030,54 @@ function App() {
                             {pools.filter(p => !p.exited && p.isBotCreated).length}
                         </span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {pools.filter(p => !p.exited && p.isBotCreated).map(pool => (
-                            <PoolCard
-                                key={pool.poolId}
-                                pool={pool}
-                                isBot={true}
-                                claimFees={claimFees}
-                                increaseLiquidity={increaseLiquidity}
-                                withdrawLiquidity={withdrawLiquidity}
-                                lpppPrice={lpppPrice}
-                            />
-                        ))}
-                        {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && (
-                            <div className="col-span-full py-16 text-center bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3">
-                                <Zap size={40} className="opacity-15 text-pink-500" />
-                                <p className="text-sm font-medium text-muted-foreground/50">Waiting for bot to snipe...</p>
-                                <p className="text-[10px] text-muted-foreground/30">Pools will appear here when the bot creates them</p>
-                            </div>
-                        )}
-                    </div>
+
+                    {Object.keys(baseTokenPrices).length > 0 ? (
+                        <div className="flex flex-col gap-8">
+                            {Object.keys(baseTokenPrices).map(token => {
+                                const tokenPools = pools.filter(p => !p.exited && p.isBotCreated && (p.baseToken || "LPPP") === token);
+                                if (tokenPools.length === 0) return null;
+
+                                return (
+                                    <div key={token} className="bg-card/50 border rounded-xl overflow-hidden shadow-lg p-5">
+                                        <div className="flex items-center gap-3 pb-4 mb-4 border-b border-white/5">
+                                            <h3 className="text-lg font-black tracking-widest uppercase glow-text text-white">
+                                                {token} PAIRS
+                                            </h3>
+                                            <span className="bg-primary/20 text-primary text-[10px] px-2 py-0.5 rounded font-bold border border-primary/20">
+                                                {tokenPools.length}
+                                            </span>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                                            {tokenPools.map(pool => (
+                                                <PoolCard
+                                                    key={pool.poolId}
+                                                    pool={pool}
+                                                    isBot={true}
+                                                    claimFees={claimFees}
+                                                    increaseLiquidity={increaseLiquidity}
+                                                    withdrawLiquidity={withdrawLiquidity}
+                                                    basePrice={baseTokenPrices[token]}
+                                                />
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="col-span-full py-16 text-center bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3">
+                            <Zap size={40} className="opacity-15 text-pink-500" />
+                            <p className="text-sm font-medium text-muted-foreground/50">Fetching Base Tokens...</p>
+                        </div>
+                    )}
+
+                    {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && Object.keys(baseTokenPrices).length > 0 && (
+                        <div className="col-span-full py-16 text-center bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3 mt-4">
+                            <Zap size={40} className="opacity-15 text-pink-500" />
+                            <p className="text-sm font-medium text-muted-foreground/50">Waiting for bot to snipe...</p>
+                            <p className="text-[10px] text-muted-foreground/30">Pools will appear here when the bot creates them</p>
+                        </div>
+                    )}
                 </div>
             </main>
 

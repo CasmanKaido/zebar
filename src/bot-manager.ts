@@ -1,4 +1,4 @@
-import { connection, wallet, POOL_DATA_FILE, LPPP_MINT, SOL_MINT } from "./config";
+import { connection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -16,7 +16,7 @@ import { JupiterPriceService } from "./jupiter-price-service";
 import { safeRpc } from "./rpc-utils";
 import { DexScreenerService } from "./dexscreener-service";
 
-const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
+
 
 export interface BotSettings {
     buyAmount: number; // in SOL
@@ -31,6 +31,7 @@ export interface BotSettings {
     mcap: { min: number; max: number };
     mode?: "SCOUT" | "ANALYST";
     maxAgeMinutes?: number;
+    baseToken: string;
 }
 
 export class BotManager {
@@ -64,7 +65,8 @@ export class BotManager {
         liquidity: { min: 10000, max: 0 },
         mcap: { min: 100000, max: 0 },
         mode: "SCOUT",
-        maxAgeMinutes: 0
+        maxAgeMinutes: 0,
+        baseToken: "LPPP"
     };
 
     constructor() {
@@ -160,7 +162,7 @@ export class BotManager {
 
                     const mintA = poolInfo.tokenA;
                     const mintB = poolInfo.tokenB;
-                    const targetMint = mintA === LPPP_MINT.toBase58() ? mintB : mintA;
+                    const targetMint = Object.values(BASE_TOKENS).some(m => m.toBase58() === mintA) ? mintB : mintA;
 
                     // Fetch token metadata (name) - Use the new robust service
                     const tokenSymbol = await TokenMetadataService.getSymbol(targetMint, connection);
@@ -185,7 +187,8 @@ export class BotManager {
                         initialSolValue: posValue.totalSol, // Set baseline to current position value
                         exited: false,
                         positionId: pos.positionId,
-                        isBotCreated: false // Recovered pools are not created by the bot
+                        isBotCreated: false, // Recovered pools are not created by the bot
+                        baseToken: Object.keys(BASE_TOKENS).find(k => BASE_TOKENS[k].toBase58() === (mintA === targetMint ? mintB : mintA)) || "LPPP"
                     };
 
                     await dbService.savePool(recoveredPool);
@@ -309,7 +312,7 @@ export class BotManager {
                 const balance = info.tokenAmount.uiAmount || 0;
 
                 // Skip LPPP and SOL
-                if (mint === LPPP_MINT.toBase58() || mint === SOL_MINT.toBase58()) continue;
+                if (Object.values(BASE_TOKENS).some(m => m.toBase58() === mint) || mint === SOL_MINT.toBase58()) continue;
 
                 if (balance > 0 && !pooledMints.has(mint)) {
                     SocketManager.emitLog(`[ORPHAN] Detected un-pooled tokens: ${balance.toFixed(2)} units of ${mint.slice(0, 8)}...`, "warning");
@@ -376,19 +379,20 @@ export class BotManager {
         }
     }
 
-    private async getLpppPrice(): Promise<number> {
+    private async getBaseTokenPrice(baseMintAddr: string): Promise<number> {
         // Primary: Jupiter Price API
-        const jupPrice = await JupiterPriceService.getPrice(LPPP_MINT_ADDR);
+        const jupPrice = await JupiterPriceService.getPrice(baseMintAddr);
         if (jupPrice > 0) return jupPrice;
 
         // Fallback: DexScreener
         try {
-            const res = await axios.get("https://api.dexscreener.com/latest/dex/tokens/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV");
+            const res = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${baseMintAddr}`);
             const data: any = res.data;
             const price = parseFloat(data?.pairs?.[0]?.priceUsd || "0");
             return price;
         } catch (e) {
-            console.warn("[BOT] Failed to fetch LPPP price from DexScreener:", e);
+            console.warn(`[BOT] Failed to fetch price for ${baseMintAddr} from DexScreener:`, e);
+            if (baseMintAddr === BASE_TOKENS["USDC"].toBase58()) return 1.0;
             return 0;
         }
     }
@@ -512,7 +516,8 @@ export class BotManager {
             }
 
             // 2. Pool Check (Avoid duplicate pools)
-            const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
+            const activeBaseMint = BASE_TOKENS[this.settings.baseToken] || BASE_TOKENS["LPPP"];
+            const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, activeBaseMint);
             if (existingPool) {
                 SocketManager.emitLog(`[SKIP] Pool exists on-chain: ${existingPool.slice(0, 8)}...`, "warning");
                 return;
@@ -548,17 +553,17 @@ export class BotManager {
                 const tokenAmount = (actualAmountRaw * 99n) / 100n;
                 const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
 
-                const lpppPrice = await this.getLpppPrice();
-                if (lpppPrice <= 0) {
-                    SocketManager.emitLog(`[LP] LPPP price error.`, "error");
+                const basePrice = await this.getBaseTokenPrice(activeBaseMint.toBase58());
+                if (basePrice <= 0) {
+                    SocketManager.emitLog(`[LP] Base token price error.`, "error");
                     return;
                 }
 
-                const tokenPriceLppp = result.priceUsd / lpppPrice;
-                const targetLpppAmount = (tokenUiAmountChecked * tokenPriceLppp);
-                const lpppAmountBase = BigInt(Math.floor(targetLpppAmount * 1e9 * 0.99));
+                const tokenPriceBase = result.priceUsd / basePrice;
+                const targetBaseAmount = (tokenUiAmountChecked * tokenPriceBase);
+                const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * 1e9 * 0.99));
 
-                const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, LPPP_MINT, this.settings.meteoraFeeBps);
+                const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, activeBaseMint, this.settings.meteoraFeeBps);
 
                 if (poolInfo.success) {
                     SocketManager.emitLog(`[SUCCESS] Pool Created: ${poolInfo.poolAddress}`, "success");
@@ -574,11 +579,13 @@ export class BotManager {
                         initialPrice,
                         initialTokenAmount: tokenUiAmountChecked,
                         initialLpppAmount: Number(lpppAmountBase) / 1e9,
-                        initialSolValue: (Number(lpppAmountBase) / 1e9) * 2, // Estimated baseline
+                        initialSolValue: (Number(lpppAmountBase) / 1e9),
                         exited: false,
                         positionId: poolInfo.positionAddress,
                         unclaimedFees: { sol: "0", token: "0" },
-                        isBotCreated: true
+                        isBotCreated: true,
+                        entryUsdValue: 0, // Will be populated in first monitor tick
+                        baseToken: this.settings.baseToken
                     };
 
                     await this.savePools(fullPoolData);
@@ -684,21 +691,16 @@ export class BotManager {
         try {
             const solBalance = await safeRpc(() => connection.getBalance(wallet.publicKey), "getSolBalance");
 
-            const tokenAccounts = await safeRpc(() =>
-                connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: LPPP_MINT }),
-                "getLpppBalance"
-            );
-
-            let lpppBalance = 0;
-            if (tokenAccounts.value.length > 0) {
-                lpppBalance = tokenAccounts.value.reduce((acc, account) => {
-                    return acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0);
-                }, 0);
+            const baseTokenBalances: Record<string, number> = {};
+            for (const [symbol, mint] of Object.entries(BASE_TOKENS)) {
+                const accounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint }), "getPortfolio");
+                const uiAmount = accounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+                baseTokenBalances[symbol] = uiAmount;
             }
 
             return {
                 sol: solBalance / 1e9,
-                lppp: lpppBalance
+                baseTokens: baseTokenBalances
             };
         } catch (error) {
             console.error("Portfolio Fetch Error:", error);
@@ -707,8 +709,6 @@ export class BotManager {
     }
 
     private async monitorPositions() {
-        const LPPP_MINT_ADDR = LPPP_MINT.toBase58();
-
         // Monitor loop
         let sweepCount = 0;
         const runMonitor = async () => {
@@ -726,17 +726,21 @@ export class BotManager {
                 }
 
                 // ═══ JUPITER BATCH PRICING Integration ═══
-                const mintsToFetch = [LPPP_MINT_ADDR, ...activePools.map(p => p.mint)];
+                const baseMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
+                const activeMints = activePools.map(p => p.mint);
+                const mintsToFetch = [...new Set([...baseMints, ...activeMints])];
+
                 const jupPrices = await JupiterPriceService.getPrices(mintsToFetch);
 
-                let lpppPrice = jupPrices.get(LPPP_MINT_ADDR) || 0;
-                if (lpppPrice === 0) {
-                    console.log("[MONITOR] Jupiter LPPP price missing, falling back to DexScreener...");
-                    lpppPrice = await this.getLpppPrice();
-                }
+                // Keep the price validation logic using dynamic values inside checking array
+                const anyBaseOk = Object.values(BASE_TOKENS).some(async mint => {
+                    let val = jupPrices.get(mint.toBase58()) || 0;
+                    if (val === 0) val = await this.getBaseTokenPrice(mint.toBase58());
+                    return val > 0;
+                });
 
-                if (lpppPrice === 0) {
-                    console.warn("[MONITOR] All price sources failed. Skipping this sweep.");
+                if (!anyBaseOk) {
+                    console.warn("[MONITOR] All price sources failed for base tokens. Skipping this sweep.");
                     this.monitorInterval = setTimeout(runMonitor, 30000);
                     return;
                 }
@@ -810,12 +814,18 @@ export class BotManager {
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
                             pool.roi = roiString;
 
+                            const activeBaseMintStr = BASE_TOKENS[this.settings.baseToken]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
+                            let basePrice = jupPrices.get(activeBaseMintStr) || 0;
+                            if (basePrice === 0) {
+                                basePrice = await this.getBaseTokenPrice(activeBaseMintStr);
+                            }
+
                             // 3. USD STRATEGY (4x/7x Take Profit, 0.7x Stop Loss)
-                            const tokenPrice = jupPrices.get(pool.mint) || (posValue.spotPrice * lpppPrice);
+                            const tokenPrice = jupPrices.get(pool.mint) || (posValue.spotPrice * basePrice);
 
                             // Initialize entryUsdValue if missing
                             if (!pool.entryUsdValue || pool.entryUsdValue <= 0) {
-                                pool.entryUsdValue = (pool.initialSolValue || 0) * lpppPrice;
+                                pool.entryUsdValue = (pool.initialSolValue || 0) * basePrice;
                                 console.log(`[STRATEGY] Backfilled entryUsdValue for ${pool.token}: $${pool.entryUsdValue.toFixed(4)}`);
                             }
 
@@ -824,7 +834,7 @@ export class BotManager {
                             const totalTokenAmount = posValue.userTokenInLp + posValue.feesToken;
                             const totalBaseAmount = posValue.userBaseInLp + posValue.feesSol;
 
-                            const currentUsdValue = (totalTokenAmount * tokenPrice) + (totalBaseAmount * lpppPrice);
+                            const currentUsdValue = (totalTokenAmount * tokenPrice) + (totalBaseAmount * basePrice);
                             const usdMultiplier = pool.entryUsdValue > 0 ? (currentUsdValue / pool.entryUsdValue) : 1;
 
                             // Keep Net ROI for UI display only
@@ -885,8 +895,8 @@ export class BotManager {
                                 // If the token-to-lppp ratio (spotPrice) hasn't dropped but USD has, it's an LPPP price glitch.
                                 const priceRatioMultiplier = pool.initialPrice > 0 ? (posValue.spotPrice / pool.initialPrice) : 1;
 
-                                if (priceRatioMultiplier > 0.8 && lpppPrice < 0.00001) {
-                                    console.warn(`[GLITCH PREVENT] ${pool.token} USD dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible LPPP Price Glitch. Skipping SL strike.`);
+                                if (priceRatioMultiplier > 0.8 && basePrice < 0.00001) {
+                                    console.warn(`[GLITCH PREVENT] ${pool.token} USD dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible Base Token Price Glitch. Skipping SL strike.`);
                                 } else {
                                     // 2. Wait and See (Glitch Protection Layer B - 3 consecutive strikes)
                                     const strikes = (this.slStrikeCount.get(pool.poolId) || 0) + 1;

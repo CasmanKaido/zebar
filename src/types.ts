@@ -20,6 +20,7 @@ export interface PoolData {
     priceReconstructed?: boolean; // Flag: Entry price audit complete
     isBotCreated?: boolean;      // Flag: Created by this bot (vs recovered from chain)
     entryUsdValue?: number;      // USD value at the time of entry (for TP/SL)
+    baseToken?: string;          // The base token symbol (e.g., 'LPPP', 'USDC')
 }
 
 export interface TradeHistory {
