@@ -460,6 +460,14 @@ export class BotManager {
             return;
         }
 
+        // STOP GUARD: If bot was stopped, drain the queue immediately
+        if (!this.isRunning) {
+            this.evaluationQueue = [];
+            this.isProcessingQueue = false;
+            console.log("[QUEUE] Bot stopped. Flushed evaluation queue.");
+            return;
+        }
+
         this.isProcessingQueue = true;
         const result = this.evaluationQueue.shift()!;
         const mintAddress = result.mint.toBase58();
@@ -505,6 +513,16 @@ export class BotManager {
             const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, LPPP_MINT);
             if (existingPool) {
                 SocketManager.emitLog(`[SKIP] Pool exists on-chain: ${existingPool.slice(0, 8)}...`, "warning");
+                return;
+            }
+
+            // PRE-BUY GUARDS: Re-check after safety checks (which can take seconds)
+            if (!this.isRunning) {
+                SocketManager.emitLog(`[QUEUE] Bot stopped during safety check. Aborting ${result.symbol}.`, "warning");
+                return;
+            }
+            if (this.sessionPoolCount >= this.settings.maxPools) {
+                SocketManager.emitLog(`[QUEUE] Max pools (${this.settings.maxPools}) reached. Skipping ${result.symbol}.`, "warning");
                 return;
             }
 
@@ -643,6 +661,15 @@ export class BotManager {
         if (this.scanner) {
             this.scanner.stop();
         }
+
+        // Flush the evaluation queue to prevent post-stop buys
+        const flushed = this.evaluationQueue.length;
+        this.evaluationQueue = [];
+        this.pendingMints.clear();
+        if (flushed > 0) {
+            console.log(`[BOT] Flushed ${flushed} pending tokens from evaluation queue.`);
+        }
+
         // ONLY stop the monitor if we have no positions left to watch.
         // Otherwise, keep monitoring ROI/Fees/SL/TP for existing money.
         // Note: runMonitor already has logic to self-terminate if !isRunning && pools.length === 0
