@@ -33,34 +33,11 @@ export const DRY_RUN = process.env.DRY_RUN === 'true';
 
 
 
-// Token Constants (Strict ENV only)
-export const BASE_TOKENS: Record<string, PublicKey> = {};
-
-if (!process.env.BASE_TOKENS || process.env.BASE_TOKENS.trim() === "") {
-    throw new Error("CRITICAL ERROR: BASE_TOKENS environment variable is missing or empty. Please define at least one base token in your .env file.");
-}
-
-try {
-    const raw = process.env.BASE_TOKENS;
-    let parsed: any;
-    try {
-        parsed = JSON.parse(raw);
-    } catch (_err) {
-        // Fallback robust parser for varying dotenv quotes/stripping behaviors
-        parsed = (new Function("return " + raw))();
-    }
-
-    if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
-        throw new Error("BASE_TOKENS JSON is empty.");
-    }
-
-    for (const [symbol, address] of Object.entries(parsed)) {
-        BASE_TOKENS[symbol] = new PublicKey(address as string);
-    }
-    console.log(`[CONFIG] Loaded ${Object.keys(BASE_TOKENS).length} Base Tokens from .env:`, Object.keys(BASE_TOKENS).join(", "));
-} catch (e: any) {
-    throw new Error(`CRITICAL ERROR: Failed to parse BASE_TOKENS from .env. Ensure it is a valid JSON string. Error: ${e.message}`);
-}
+// Token Constants
+export const BASE_TOKENS: Record<string, PublicKey> = {
+    "LPPP": new PublicKey("44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV"),
+    "HTP": new PublicKey("2JnYVAeY4gYjRSmGRPQi9EudJm88AT6LgVKeKvxeb9Qp")
+};
 
 export const SOL_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 export const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
