@@ -1,58 +1,79 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0f1111;
-  --foreground: #e6f7f2;
-  --border: #ffffff14;
-  --input: #1a1a1a;
-  --primary: #10b981;
+  --background: #0d1412;
+  --foreground: #f4fdf8;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: #12201b;
+  --primary: #c4f000;
   --primary-foreground: #000000;
-  --secondary: #1a1a1a;
+  --secondary: #1a2d26;
   --secondary-foreground: #ffffff;
-  --muted: #262626;
-  --muted-foreground: #a3a3a3;
-  --accent: #10b981;
-  --accent-foreground: #ffffff;
-  --card: #0a0a0a;
+  --muted: #1e332c;
+  --muted-foreground: #9caab2;
+  --accent: #c4f000;
+  --accent-foreground: #000000;
+  --card: #11201b;
   --card-foreground: #ffffff;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
 }
 
 @theme {
-  --color-background: #0f1111;
-  --color-foreground: #e6f7f2;
-  --color-border: #ffffff14;
-  --color-input: #1a1a1a;
-  --color-primary: #10b981;
-  --color-primary-foreground: #000000;
-  --color-secondary: #1a1a1a;
-  --color-secondary-foreground: #ffffff;
-  --color-muted: #262626;
-  --color-muted-foreground: #a3a3a3;
-  --color-accent: #10b981;
-  --color-accent-foreground: #ffffff;
-  --color-card: #0a0a0a;
-  --color-card-foreground: #ffffff;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
 
   --radius-lg: var(--radius-lg);
   --radius-md: var(--radius-md);
   --radius-sm: var(--radius-sm);
 
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  --font-mono: var(--font-mono);
 }
 
 body {
   background-color: var(--background);
+  background-image: 
+    radial-gradient(circle at 15% 0%, #1a3026 0%, transparent 40%),
+    radial-gradient(circle at 85% 10%, #0d1b16 0%, transparent 50%),
+    radial-gradient(circle at 50% 100%, #12241d 0%, transparent 60%);
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
+.bg-grid {
+  background-size: 60px 60px;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+}
+
+.glass-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.4);
+  border-radius: var(--radius-xl);
+}
+
 .glow-text {
-  text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+  text-shadow: 0 0 15px rgba(196, 240, 0, 0.4);
 }
 
 .terminal-font {

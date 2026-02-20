@@ -103,7 +103,7 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
                         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault();
                     }}
                     disabled={disabled}
-                    className={`w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-6' : ''} ${unit ? 'pr-9' : ''}`}
+                    className={`w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-xl font-mono text-[12px] focus:outline-none focus:border-primary/50 transition-colors ${prefix ? 'pl-6' : ''} ${unit ? 'pr-9' : ''}`}
                 />
                 {unit && (
                     <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-primary/60">{unit}</span>
@@ -124,7 +124,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
     withdrawLiquidity: (id: string, percent: number) => void;
     basePrice: number | null;
 }) => (
-    <div key={pool.poolId} className={`bg-secondary border p-4 rounded-md flex flex-col gap-4 group transition-all duration-300 ${isBot ? 'hover:border-pink-500/50 border-border shadow-[0_4px_12px_rgba(236,72,153,0.05)]' : 'hover:border-primary/50 border-border opacity-90'}`}>
+    <div key={pool.poolId} className={`glass-card p-5 flex flex-col gap-4 group transition-all duration-300 ${isBot ? 'hover:border-primary/50 border-border shadow-[0_4px_12px_rgba(236,72,153,0.05)]' : 'hover:border-primary/50 border-border opacity-90'}`}>
         <div className="flex justify-between items-start">
             <div>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
@@ -133,16 +133,16 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                         href={`https://solscan.io/account/${pool.poolId}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className={`font-mono text-[13px] hover:underline flex items-center gap-1.5 transition-colors ${isBot ? 'text-pink-400' : 'text-primary'}`}
+                        className={`font-mono text-[13px] hover:underline flex items-center gap-1.5 transition-colors ${isBot ? 'text-primary/80' : 'text-primary'}`}
                     >
                         {pool.poolId.slice(0, 12)}...
                         <ExternalLink size={10} className="opacity-50" />
                     </a>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
-                    <span className={`px-1.5 py-0.5 text-[10px] rounded font-bold ${isBot ? 'bg-pink-500/10 text-pink-500 border border-pink-500/20' : 'bg-primary/10 text-primary'}`}>{pool.token}</span>
+                    <span className={`px-1.5 py-0.5 text-[10px] rounded font-bold ${isBot ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary/10 text-primary'}`}>{pool.token}</span>
                     {isBot && (
-                        <span className="px-1.5 py-0.5 bg-pink-500/20 text-pink-500 text-[8px] rounded font-black border border-pink-500/30 flex items-center gap-1 animate-pulse">
+                        <span className="px-1.5 py-0.5 bg-primary/20 text-primary text-[8px] rounded font-black border border-primary/30 flex items-center gap-1 animate-pulse">
                             <Zap size={8} /> LIVE SNIPE
                         </span>
                     )}
@@ -152,7 +152,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
         </div>
 
         {/* ═══ Position value ═══ */}
-        <div className="py-3 px-3 bg-card/30 rounded-lg border border-border/50">
+        <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
             <p className="text-[10px] text-muted-foreground/70 mb-1">Position value</p>
             <p className="text-lg font-bold text-white">
                 ${((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(6)}
@@ -165,7 +165,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
         </div>
 
         {/* ═══ Fees from position ═══ */}
-        <div className="py-3 px-3 bg-card/30 rounded-lg border border-border/50">
+        <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
             <p className="text-[10px] text-muted-foreground/70 mb-1">Fees from position</p>
             <div className="flex justify-between items-center">
                 <div>
@@ -180,7 +180,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                 </div>
                 <button
                     onClick={() => claimFees(pool.poolId)}
-                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-bold rounded-lg transition-all shadow-lg shadow-emerald-500/20"
+                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-bold rounded-2xl transition-all shadow-lg shadow-emerald-500/20"
                 >
                     Claim fees
                 </button>
@@ -616,22 +616,23 @@ function App() {
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
             {/* Header */}
-            <header className="p-6 border-b border-border bg-card">
-                <div className="max-w-[1440px] mx-auto flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 flex items-center justify-center bg-pink-500/20 rounded-full border-2 border-white overflow-hidden shadow-[0_0_15px_rgba(236,72,153,0.3)] relative group">
+            <header className="p-6 border-b border-white/5 bg-grid relative overflow-hidden bg-black/20 backdrop-blur-md">
+                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40 pointer-events-none"></div>
+                <div className="max-w-[1440px] mx-auto flex items-center justify-between relative z-10">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 flex items-center justify-center bg-primary/20 rounded-2xl border border-white/10 overflow-hidden shadow-[0_0_20px_rgba(196,240,0,0.15)] relative group">
                             <img
                                 src="/logo.jpg"
-                                alt="LPPP Logo"
-                                className="w-full h-full object-cover transform transition-transform group-hover:scale-110"
+                                alt="Logo"
+                                className="w-full h-full object-cover transform transition-transform duration-500 group-hover:scale-110 opacity-90"
                                 onError={(e) => {
-                                    (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=LPPP&background=ec4899&color=fff';
+                                    (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=BOT&background=c4f000&color=000';
                                 }}
                             />
                         </div>
                         <div>
-                            <h1 className="text-2xl font-bold glow-text leading-none tracking-wider text-pink-500">LPPP BOT</h1>
-                            <span className="text-[12px] text-muted-foreground block mt-1">Pool Party Liquidity Master</span>
+                            <h1 className="text-2xl font-black tracking-widest text-primary drop-shadow-[0_0_10px_rgba(196,240,0,0.3)]">BANKLIO BOT</h1>
+                            <span className="text-[11px] font-medium text-muted-foreground block mt-0.5 tracking-wider uppercase">Finance Revolution Execution</span>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -648,7 +649,7 @@ function App() {
                 {/* Left Column: Controls */}
                 <div className="flex flex-col gap-6">
                     {/* Configuration Card */}
-                    <div className="bg-card border border-border rounded-lg p-5 flex flex-col">
+                    <div className="glass-card p-5 flex flex-col">
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-2">
                                 <Settings2 size={18} className="text-muted-foreground" />
@@ -698,7 +699,7 @@ function App() {
                                         type="text"
                                         readOnly
                                         value={solPrice && baseTokenPrices[selectedBaseToken] && baseTokenPrices[selectedBaseToken] > 0 ? `≈ ${((isBuyUsd ? buyAmount : buyAmount * solPrice) / baseTokenPrices[selectedBaseToken]).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${selectedBaseToken}` : 'Fetching prices...'}
-                                        className="w-full bg-input/50 border border-border/50 text-muted-foreground px-2.5 py-1.5 rounded-md font-mono text-[12px] cursor-not-allowed"
+                                        className="w-full bg-input/50 border border-border/50 text-muted-foreground px-2.5 py-1.5 rounded-xl font-mono text-[12px] cursor-not-allowed"
                                     />
                                 </div>
                                 {solPrice && baseTokenPrices[selectedBaseToken] && baseTokenPrices[selectedBaseToken] > 0 && (
@@ -710,13 +711,13 @@ function App() {
                         {/* Discovery Engine Selection */}
                         <div className="mb-6 pt-4 border-t border-border">
                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 block">Discovery Engine</label>
-                            <div className="grid grid-cols-2 gap-1.5 p-1 bg-secondary rounded-lg border border-border">
+                            <div className="grid grid-cols-2 gap-1.5 p-1 bg-secondary rounded-2xl border border-border">
                                 {['SCOUT', 'ANALYST'].map((m) => (
                                     <button
                                         key={m}
                                         onClick={() => setDiscoveryMode(m as any)}
                                         disabled={running}
-                                        className={`py-2 rounded-md text-[10px] font-black transition-all border flex flex-col items-center gap-0.5 ${discoveryMode === m
+                                        className={`py-2 rounded-xl text-[10px] font-black transition-all border flex flex-col items-center gap-0.5 ${discoveryMode === m
                                             ? 'bg-primary/20 border-primary text-primary shadow-[0_0_10px_rgba(16,185,129,0.1)] scale-[1.02]'
                                             : 'bg-transparent border-transparent text-muted-foreground/60 hover:text-muted-foreground'
                                             }`}
@@ -825,7 +826,7 @@ function App() {
                                             localStorage.setItem('API_SECRET', val);
                                         }}
                                         placeholder="Enter your API_SECRET"
-                                        className="w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-md font-mono text-[11px] focus:outline-none focus:border-primary/50 transition-colors pr-8"
+                                        className="w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-xl font-mono text-[11px] focus:outline-none focus:border-primary/50 transition-colors pr-8"
                                     />
                                     <button
                                         onClick={() => setIsSecretVisible(!isSecretVisible)}
@@ -849,7 +850,7 @@ function App() {
                             </p>
                         </div>
 
-                        <div className="mt-6 p-3 bg-white/5 rounded-md border border-dashed border-border flex items-center gap-3">
+                        <div className="mt-6 p-3 bg-white/5 rounded-xl border border-dashed border-border flex items-center gap-3">
                             <Activity size={20} className={running ? "text-primary animate-pulse" : "text-muted-foreground"} />
                             <span className="text-[12px] text-muted-foreground">
                                 {running ? "Monitoring market conditions..." : "Waiting for parameters..."}
@@ -858,7 +859,7 @@ function App() {
                     </div>
 
                     {/* Action Card */}
-                    <div className="bg-card border border-border rounded-lg p-5 flex flex-col items-center text-center gap-4">
+                    <div className="glass-card p-5 flex flex-col items-center text-center gap-4">
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center border transition-all ${running ? 'bg-primary/10 border-primary text-primary shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-secondary border-border text-muted-foreground'}`}>
                             <Power size={24} />
                         </div>
@@ -870,7 +871,7 @@ function App() {
                         </div>
                         <button
                             onClick={toggleBot}
-                            className={`w-full py-3 rounded-md font-bold flex items-center justify-center gap-2 transition-all text-sm
+                            className={`w-full py-4 rounded-full font-bold flex items-center justify-center gap-2 transition-all text-sm shadow-[0_4px_20px_-5px_rgba(196,240,0,0.5)]
                                 ${running
                                     ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/30'
                                     : 'bg-primary text-primary-foreground hover:opacity-90'
@@ -887,7 +888,7 @@ function App() {
                 <div className="flex flex-col gap-6">
                     <div className="grid grid-cols-2 gap-6">
                         {/* Active Pools Stat */}
-                        <div className="bg-card border border-border rounded-lg p-6 flex flex-col justify-between">
+                        <div className="glass-card p-6 flex flex-col justify-between">
                             <div className="flex justify-between items-start">
                                 <span className="text-[13px] text-muted-foreground font-medium">Active Pools</span>
                                 <Droplets size={16} className="text-muted-foreground" />
@@ -898,7 +899,7 @@ function App() {
                         </div>
 
                         {/* Wallet Portfolio */}
-                        <div className="bg-card border border-border rounded-lg p-5 flex flex-col justify-between">
+                        <div className="glass-card p-5 flex flex-col justify-between">
                             <div className="flex justify-between items-start mb-2">
                                 <span className="text-[13px] text-muted-foreground font-medium">My Portfolio</span>
                                 <Wallet size={16} className="text-muted-foreground" />
@@ -932,7 +933,7 @@ function App() {
                     </div>
 
                     {/* Chart / Performance Area */}
-                    <div className="bg-card border border-border rounded-lg p-5 flex-1 min-h-[300px] flex flex-col">
+                    <div className="glass-card p-5 flex-1 min-h-[300px] flex flex-col">
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-2">
                                 <LineChart size={18} className="text-muted-foreground" />
@@ -944,7 +945,7 @@ function App() {
                             </div>
                         </div>
 
-                        <div className="flex-1 border border-dashed border-border rounded-md bg-white/[0.01] flex items-center justify-center">
+                        <div className="flex-1 border border-dashed border-border rounded-xl bg-white/[0.01] flex items-center justify-center">
                             <div className="text-center">
                                 <Activity size={32} className="text-muted mb-2 mx-auto" />
                                 <p className="text-[13px] text-muted-foreground">Real-time stats coming soon</p>
@@ -954,7 +955,7 @@ function App() {
                 </div>
 
                 {/* Right Column: Terminal */}
-                <div className="bg-[#050505] border border-border rounded-lg flex flex-col h-[600px] overflow-hidden shadow-2xl relative">
+                <div className="bg-[#050505] border border-border rounded-2xl flex flex-col h-[600px] overflow-hidden shadow-2xl relative">
                     <div className="bg-secondary p-2 px-4 border-b border-border flex items-center justify-between shrink-0">
                         <div className="flex gap-2">
                             <button
@@ -1024,9 +1025,9 @@ function App() {
                 {/* Bottom Section: Active Snipes (Bot-Created Only) */}
                 <div className="lg:col-span-3">
                     <div className="flex items-center gap-3 mb-6 px-2">
-                        <Zap size={18} className="text-pink-500" />
-                        <h2 className="text-sm font-black tracking-widest uppercase text-pink-500">Active Snipes</h2>
-                        <span className="bg-pink-500/10 text-pink-400 text-[10px] px-2 py-0.5 rounded-full border border-pink-500/20 font-bold">
+                        <Zap size={18} className="text-primary" />
+                        <h2 className="text-sm font-black tracking-widest uppercase text-primary">Active Snipes</h2>
+                        <span className="bg-primary/10 text-primary/80 text-[10px] px-2 py-0.5 rounded-full border border-primary/20 font-bold">
                             {pools.filter(p => !p.exited && p.isBotCreated).length}
                         </span>
                     </div>
@@ -1038,7 +1039,7 @@ function App() {
                                 if (tokenPools.length === 0) return null;
 
                                 return (
-                                    <div key={token} className="bg-card/50 border rounded-xl overflow-hidden shadow-lg p-5">
+                                    <div key={token} className="glass-card p-6 relative overflow-hidden">
                                         <div className="flex items-center gap-3 pb-4 mb-4 border-b border-white/5">
                                             <h3 className="text-lg font-black tracking-widest uppercase glow-text text-white">
                                                 {token} PAIRS
@@ -1065,15 +1066,15 @@ function App() {
                             })}
                         </div>
                     ) : (
-                        <div className="col-span-full py-16 text-center bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3">
-                            <Zap size={40} className="opacity-15 text-pink-500" />
+                        <div className="col-span-full py-16 text-center bg-primary/[0.02] border border-dashed border-primary/10 rounded-2xl flex flex-col items-center gap-3">
+                            <Zap size={40} className="opacity-15 text-primary" />
                             <p className="text-sm font-medium text-muted-foreground/50">Fetching Base Tokens...</p>
                         </div>
                     )}
 
                     {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && Object.keys(baseTokenPrices).length > 0 && (
-                        <div className="col-span-full py-16 text-center bg-pink-500/[0.02] border border-dashed border-pink-500/10 rounded-lg flex flex-col items-center gap-3 mt-4">
-                            <Zap size={40} className="opacity-15 text-pink-500" />
+                        <div className="col-span-full py-16 text-center bg-primary/[0.02] border border-dashed border-primary/10 rounded-2xl flex flex-col items-center gap-3 mt-4">
+                            <Zap size={40} className="opacity-15 text-primary" />
                             <p className="text-sm font-medium text-muted-foreground/50">Waiting for bot to snipe...</p>
                             <p className="text-[10px] text-muted-foreground/30">Pools will appear here when the bot creates them</p>
                         </div>
