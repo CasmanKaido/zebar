@@ -631,7 +631,7 @@ function App() {
                             />
                         </div>
                         <div>
-                            <h1 className="text-2xl font-black tracking-widest text-primary drop-shadow-[0_0_10px_rgba(196,240,0,0.3)]">BANKLIO BOT</h1>
+                            <h1 className="text-2xl font-black tracking-widest text-primary drop-shadow-[0_0_10px_rgba(196,240,0,0.3)]">LPPP BOT</h1>
                             <span className="text-[11px] font-medium text-muted-foreground block mt-0.5 tracking-wider uppercase">Finance Revolution Execution</span>
                         </div>
                     </div>
