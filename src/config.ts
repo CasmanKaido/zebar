@@ -41,8 +41,16 @@ if (!process.env.BASE_TOKENS || process.env.BASE_TOKENS.trim() === "") {
 }
 
 try {
-    const parsed = JSON.parse(process.env.BASE_TOKENS);
-    if (Object.keys(parsed).length === 0) {
+    const raw = process.env.BASE_TOKENS;
+    let parsed: any;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (_err) {
+        // Fallback robust parser for varying dotenv quotes/stripping behaviors
+        parsed = (new Function("return " + raw))();
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
         throw new Error("BASE_TOKENS JSON is empty.");
     }
 
