@@ -622,7 +622,7 @@ function App() {
                     <div className="flex items-center gap-4">
                         <div className="w-12 h-12 flex items-center justify-center bg-primary/20 rounded-2xl border border-white/10 overflow-hidden shadow-[0_0_20px_rgba(196,240,0,0.15)] relative group">
                             <img
-                                src="/logo.jpg"
+                                src="/logo.png"
                                 alt="Logo"
                                 className="w-full h-full object-cover transform transition-transform duration-500 group-hover:scale-110 opacity-90"
                                 onError={(e) => {
