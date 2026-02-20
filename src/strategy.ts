@@ -107,7 +107,8 @@ export class StrategyManager {
             // Fallback 1: Cache from API server
             if (!solPrice) {
                 try {
-                    const priceRes = await fetch("http://localhost:3000/api/price");
+                    const port = process.env.PORT || 3000;
+                    const priceRes = await fetch(`http://127.0.0.1:${port}/api/price`);
                     const priceData = await priceRes.json();
                     if (priceData && priceData.sol) {
                         solPrice = priceData.sol;
