@@ -207,7 +207,7 @@ export class BirdeyeService {
             const tokens = response.data.data?.tokens || [];
             return tokens.map((t: any) => ({
                 mint: new PublicKey(t.address),
-                pairAddress: t.address,
+                pairAddress: t.pair_address || "",
                 dexId: "birdeye-trending",
                 volume24h: t.v24hUSD || 0,
                 liquidity: t.liquidity || 0,

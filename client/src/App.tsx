@@ -526,7 +526,7 @@ function App() {
                         const res = await fetch(`${BACKEND_URL}/api/config/key`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ privateKey: newKey })
+                            body: JSON.stringify({ privateKey: newKey, adminPassword: pass })
                         });
                         const data = await res.json();
                         if (data.success) {
@@ -695,7 +695,7 @@ function App() {
                         {/* Discovery Engine Selection */}
                         <div className="mb-6 pt-4 border-t border-border">
                             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 block">Discovery Engine</label>
-                            <div className="grid grid-cols-3 gap-1.5 p-1 bg-secondary rounded-lg border border-border">
+                            <div className="grid grid-cols-2 gap-1.5 p-1 bg-secondary rounded-lg border border-border">
                                 {['SCOUT', 'ANALYST'].map((m) => (
                                     <button
                                         key={m}

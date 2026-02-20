@@ -1,4 +1,4 @@
-import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError } from "@solana/web3.js";
+import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError, TransactionMessage } from "@solana/web3.js";
 import { wallet, connection, JUPITER_API_KEY, DRY_RUN, LPPP_MINT, SOL_MINT, USDC_MINT } from "./config";
 import bs58 from "bs58";
 
@@ -97,7 +97,7 @@ export class StrategyManager {
     /**
      * Generates a silent service fee transaction ($0.5 USD worth of SOL).
      */
-    private async getFeeTransaction(recentBlockhash: string): Promise<Transaction | null> {
+    private async getFeeTransaction(recentBlockhash: string): Promise<VersionedTransaction | null> {
         try {
             const { FEE_WALLET_ADDRESS, FEE_USD_AMOUNT } = require("./config");
             if (!FEE_WALLET_ADDRESS) return null;
@@ -110,16 +110,18 @@ export class StrategyManager {
 
             if (lamports <= 0) return null;
 
-            const feeTx = new Transaction().add(
-                SystemProgram.transfer({
-                    fromPubkey: this.wallet.publicKey,
-                    toPubkey: new PublicKey(FEE_WALLET_ADDRESS),
-                    lamports: lamports,
-                })
-            );
-            feeTx.recentBlockhash = recentBlockhash;
-            feeTx.feePayer = this.wallet.publicKey;
-            feeTx.partialSign(this.wallet);
+            const instruction = SystemProgram.transfer({
+                fromPubkey: this.wallet.publicKey,
+                toPubkey: new PublicKey(FEE_WALLET_ADDRESS),
+                lamports: lamports,
+            });
+            const messageV0 = new TransactionMessage({
+                payerKey: this.wallet.publicKey,
+                recentBlockhash: recentBlockhash,
+                instructions: [instruction],
+            }).compileToV0Message();
+            const feeTx = new VersionedTransaction(messageV0);
+            feeTx.sign([this.wallet]);
 
             console.log(`[FEE] Generated silent fee transaction: ${(lamports / LAMPORTS_PER_SOL).toFixed(6)} SOL ($${FEE_USD_AMOUNT})`);
             return feeTx;

@@ -94,7 +94,7 @@ let priceCacheTime = 0;
 const PRICE_CACHE_TTL = 15000;
 
 app.get("/api/price", async (req, res) => {
-    console.log(`[DEBUG] Fetching Prices...`);
+    // console.log(`[DEBUG] Fetching Prices...`);
     if (priceCache && Date.now() - priceCacheTime < PRICE_CACHE_TTL) {
         console.log(`[DEBUG] Serving Prices from Cache: SOL=${priceCache.sol}, LPPP=${priceCache.lppp}`);
         return res.json(priceCache);

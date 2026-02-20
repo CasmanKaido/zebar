@@ -8,7 +8,7 @@ async function main() {
 
     // Start with default settings
     // This allows running the scanner without the express server if needed
-    botManager.start();
+    await botManager.start();
 
     // Handle process signals for graceful shutdown
     process.on('SIGINT', () => {

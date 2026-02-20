@@ -36,7 +36,6 @@ export async function safeRpc<T>(fn: () => Promise<T>, desc: string, maxRetries 
                 errStr.includes("too many requests") ||
                 errStr.includes("deprioritized") ||
                 errStr.includes("rate limited") ||
-                errStr.includes("scout") || // Custom Helius errors
                 errStr.includes("blocked");
 
             if (isRateLimit) {

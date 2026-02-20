@@ -617,8 +617,7 @@ export class BotManager {
             const mintPubkey = new PublicKey(mint);
 
             // 1. Fetch Basic Metadata
-            const pairRes = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-            const pairs = pairRes.data.pairs;
+            const pairs = await DexScreenerService.batchLookupTokens([mint], source);
 
             if (!pairs || pairs.length === 0) {
                 SocketManager.emitLog(`[${source}] No pool data found for ${mint}. indexing delay?`, "warning");
