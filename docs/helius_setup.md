@@ -20,7 +20,9 @@ Your bot's endpoint is:
 2. Go to **Webhooks** -> **New Webhook**.
 3. **Webhook URL:** Paste your URL from Step 1.
 4. **Webhook Type:** Select `Enhanced`.
-5. **Transaction Type:** Select **`Any`** (This ensures we catch both initialization and first liquidity adds).
+5. **Transaction Type:** Select **`CREATE_POOL`** and **`ADD_LIQUIDITY`**. 
+   > [!IMPORTANT]
+   > Do **NOT** select "Any". Selecting "Any" will ping your server for every single swap on Solana, which will drain your Helius credits in minutes.
 6. **Transaction Status:** Select `Success`.
 7. **Auth Token:** In the "Auth Token" or "Authentication" box, simply paste your secret (e.g., `my_helius_pass_123`).
    > [!NOTE]
@@ -33,7 +35,12 @@ Add these Program IDs to the "Account Addresses" list (one per line):
 - **Pump.fun:** `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`
 
 ## 5. Save & Test
-1. Click **Test Webhook**. You should see a `200 OK` in Helius and `[HELIUS] Authorized webhook attempt` (or an array warning) in your Coolify logs.
-2. Click **Create Webhook**.
+1. Click **Test Webhook** in Helius.
+2. Check your bot's **Coolify/Terminal Logs**.
+
+### How to Verify it's Working:
+- **Success:** You should see `[HELIUS] Webhook received at [timestamp]` in your logs.
+- **Unauthorized:** If you see `[HELIUS] Unauthorized webhook attempt`, your `HELIUS_AUTH_SECRET` in Coolify does not match the token in Helius.
+- **Active Detection:** When a live pool is found, you will see `[HELIUS] 🚀 New Pool Detected via Webhook! Mint: ...`
 
 Your bot is now a real-time Sniper! 🚀
