@@ -360,20 +360,22 @@ export class MarketScanner {
                 const isVeryNew = volume1h < (this.criteria.volume1h.min * 0.5) || volume24h < (this.criteria.volume24h.min * 0.5);
                 const isScoutMode = this.criteria.mode === "SCOUT" || this.criteria.mode === "DUAL";
 
-                let meetsVol5m = volume5m === 0 ? true : this.inRange(volume5m, this.criteria.volume5m);
-                let meetsVol1h = volume1h === 0 ? true : this.inRange(volume1h, this.criteria.volume1h);
-                let meetsVol24h = volume24h === 0 ? true : this.inRange(volume24h, this.criteria.volume24h);
+                let meetsVol5m = volume5m === 0 ? (this.criteria.volume5m.min === 0) : this.inRange(volume5m, this.criteria.volume5m);
+                let meetsVol1h = volume1h === 0 ? (this.criteria.volume1h.min === 0) : this.inRange(volume1h, this.criteria.volume1h);
+                let meetsVol24h = volume24h === 0 ? (this.criteria.volume24h.min === 0) : this.inRange(volume24h, this.criteria.volume24h);
 
-                // Scout Momentum Override: If 5m volume is 3x the minimum, allow lower 1h/24h volume.
+                // Scout Momentum Override: If 5m volume is 3x the minimum, bypass min but still enforce max.
                 if (isScoutMode && isVeryNew && volume5m >= (this.criteria.volume5m.min * 3)) {
-                    meetsVol1h = true;
-                    meetsVol24h = true;
+                    const vol1hMaxOk = this.criteria.volume1h.max === 0 || volume1h <= this.criteria.volume1h.max;
+                    const vol24hMaxOk = this.criteria.volume24h.max === 0 || volume24h <= this.criteria.volume24h.max;
+                    meetsVol1h = vol1hMaxOk;
+                    meetsVol24h = vol24hMaxOk;
                     // Tag it as a momentum play
                     (pair as any).isMomentumPlay = true;
                 }
 
                 const meetsLiquidity = this.inRange(liquidity, this.criteria.liquidity);
-                const meetsMcap = mcap === 0 ? true : this.inRange(mcap, this.criteria.mcap);
+                const meetsMcap = mcap === 0 ? (this.criteria.mcap.min === 0) : this.inRange(mcap, this.criteria.mcap);
 
                 const tag = `${sym} | ${dex} | Vol5m:${this.fmtK(volume5m)} Vol1h:${this.fmtK(volume1h)} Vol24h:${this.fmtK(volume24h)} Liq:${this.fmtK(liquidity)} MCap:${this.fmtK(mcap)}`;
 
