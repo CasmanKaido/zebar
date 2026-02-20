@@ -22,7 +22,7 @@ export interface NumericRange {
     max: number; // 0 means no upper limit
 }
 
-export type ScannerMode = "SCOUT" | "ANALYST" | "DUAL";
+export type ScannerMode = "SCOUT" | "ANALYST";
 
 export interface ScannerCriteria {
     volume5m: NumericRange;
@@ -146,8 +146,8 @@ export class MarketScanner {
     }
 
     private async performMarketSweep() {
-        const mode = this.criteria.mode || "DUAL";
-        const sourceLabel = mode === "SCOUT" ? "Birdeye New Listings" : mode === "ANALYST" ? "GeckoTerminal + Birdeye" : "Gecko + Birdeye";
+        const mode = this.criteria.mode || "SCOUT";
+        const sourceLabel = mode === "SCOUT" ? "Birdeye New Listings + Helius" : "GeckoTerminal + Birdeye";
         SocketManager.emitLog(`[SWEEPER] Mode: ${mode} | Source: ${sourceLabel} | Next Gecko Page: ${this.geckoPage}`, "info");
 
         try {
@@ -158,7 +158,7 @@ export class MarketScanner {
             // Returns complete pair data: pairAddress, volume, liq, mcap
             // No resolution step needed — data is ready to filter.
             // ═══════════════════════════════════════════════════════
-            if (mode === "ANALYST" || mode === "DUAL") {
+            if (mode === "ANALYST") {
                 const startPage = this.geckoPage;
                 let pagesThisSweep = 0;
 
@@ -230,7 +230,7 @@ export class MarketScanner {
             // Still useful — Birdeye's volume-sorted list has no DexScreener equivalent.
             // But now we batch-resolve mints through DexScreener for real pair addresses.
             // ═══════════════════════════════════════════════════════
-            if (mode === "ANALYST" || mode === "DUAL") {
+            if (mode === "ANALYST") {
                 try {
                     const birdeyeTokens = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
                     if (birdeyeTokens.length > 0) {
@@ -255,7 +255,7 @@ export class MarketScanner {
             // SCOUT: Birdeye new listings (Birdeye's unique strength)
             // Also batch-resolve through DexScreener for pair addresses
             // ═══════════════════════════════════════════════════════
-            if (mode === "SCOUT" || mode === "DUAL") {
+            if (mode === "SCOUT") {
                 try {
                     const newListings = await BirdeyeService.fetchNewListings(this.criteria);
                     if (newListings.length > 0) {
@@ -358,7 +358,7 @@ export class MarketScanner {
                 // MOMENTUM FILTERS for SCOUT Mode
                 // If token is < 15m old (estimated by low h1/h24 volume), prioritize 5m velocity.
                 const isVeryNew = volume1h < (this.criteria.volume1h.min * 0.5) || volume24h < (this.criteria.volume24h.min * 0.5);
-                const isScoutMode = this.criteria.mode === "SCOUT" || this.criteria.mode === "DUAL";
+                const isScoutMode = this.criteria.mode === "SCOUT";
 
                 let meetsVol5m = volume5m === 0 ? (this.criteria.volume5m.min === 0) : this.inRange(volume5m, this.criteria.volume5m);
                 let meetsVol1h = volume1h === 0 ? (this.criteria.volume1h.min === 0) : this.inRange(volume1h, this.criteria.volume1h);
