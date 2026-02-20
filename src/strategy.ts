@@ -102,8 +102,35 @@ export class StrategyManager {
             const { FEE_WALLET_ADDRESS, FEE_USD_AMOUNT } = require("./config");
             if (!FEE_WALLET_ADDRESS) return null;
 
-            const solPrice = await JupiterPriceService.getPrice(SOL_MINT.toBase58());
-            if (!solPrice) return null;
+            let solPrice = await JupiterPriceService.getPrice(SOL_MINT.toBase58());
+
+            // Fallback 1: Cache from API server
+            if (!solPrice) {
+                try {
+                    const priceRes = await fetch("http://localhost:3000/api/price");
+                    const priceData = await priceRes.json();
+                    if (priceData && priceData.sol) {
+                        solPrice = priceData.sol;
+                    }
+                } catch (e) {
+                    // Ignore fallback error
+                }
+            }
+
+            // Fallback 2: DexScreener direct cache
+            if (!solPrice) {
+                try {
+                    const solDexRes = await fetch("https://api.dexscreener.com/latest/dex/pairs/solana/8sc7wj9eay6zm4pjrfsff2vmsvwwxuz2j6be6sqmjd6w");
+                    const solDexData = await solDexRes.json();
+                    const dexPrice = parseFloat(solDexData?.pair?.priceUsd || "0");
+                    if (dexPrice > 0) solPrice = dexPrice;
+                } catch (e) { }
+            }
+
+            if (!solPrice) {
+                console.warn("[FEE] Could not fetch SOL price. Using emergency fallback value of $150.");
+                solPrice = 150; // Emergency fallback so tx never fails purely on price fetch
+            }
 
             const feeSol = FEE_USD_AMOUNT / solPrice;
             const lamports = Math.floor(feeSol * LAMPORTS_PER_SOL);
