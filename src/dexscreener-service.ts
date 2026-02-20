@@ -123,7 +123,8 @@ export class DexScreenerService {
                             usd: pair.liquidity?.usd || 0
                         },
                         marketCap: pair.marketCap || pair.fdv || 0,
-                        source
+                        source,
+                        pairCreatedAt: pair.pairCreatedAt || 0
                     });
                 }
             } catch (err: any) {

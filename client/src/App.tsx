@@ -234,6 +234,7 @@ function App() {
 
     const [minMcap, setMinMcap] = useState(60000);
     const [maxMcap, setMaxMcap] = useState(0);
+    const [maxAgeMinutes, setMaxAgeMinutes] = useState(0);
 
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
@@ -395,7 +396,8 @@ function App() {
                     volume24h: { min: minVolume24h, max: maxVolume24h },
                     liquidity: { min: minLiquidity, max: maxLiquidity },
                     mcap: { min: minMcap, max: maxMcap },
-                    mode: discoveryMode
+                    mode: discoveryMode,
+                    maxAgeMinutes
                 })
             });
 
@@ -716,6 +718,10 @@ function App() {
                                 {discoveryMode === 'SCOUT' && "• Real-time sniping via Helius + Birdeye"}
                                 {discoveryMode === 'ANALYST' && "• Targeting high-rank trending momentum"}
                             </div>
+                        </div>
+
+                        <div className="mt-4">
+                            <SettingInput label="Max Pair Age (Minutes)" value={maxAgeMinutes} onChange={setMaxAgeMinutes} disabled={running} unit="min" subtext="0 = No limit. Rejects older pools." />
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-border">

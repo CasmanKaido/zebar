@@ -15,6 +15,7 @@ export interface ScanResult {
     symbol: string;
     priceUsd: number;
     source?: string;
+    pairCreatedAt?: number;
 }
 
 export interface NumericRange {
@@ -31,6 +32,7 @@ export interface ScannerCriteria {
     liquidity: NumericRange;
     mcap: NumericRange;
     mode?: ScannerMode;
+    maxAgeMinutes?: number;
 }
 
 export class MarketScanner {
@@ -379,6 +381,15 @@ export class MarketScanner {
 
                 const tag = `${sym} | ${dex} | Vol5m:${this.fmtK(volume5m)} Vol1h:${this.fmtK(volume1h)} Vol24h:${this.fmtK(volume24h)} Liq:${this.fmtK(liquidity)} MCap:${this.fmtK(mcap)}`;
 
+                if (this.criteria.maxAgeMinutes && this.criteria.maxAgeMinutes > 0 && pair.pairCreatedAt) {
+                    const ageMs = Date.now() - pair.pairCreatedAt;
+                    const ageMinutes = ageMs / (1000 * 60);
+                    if (ageMinutes > this.criteria.maxAgeMinutes) {
+                        console.log(`[EVAL] ${sym} | ❌ REJECTED: Token is ${ageMinutes.toFixed(1)}m old (Max allowed: ${this.criteria.maxAgeMinutes}m)`);
+                        continue;
+                    }
+                }
+
                 if (!meetsVol5m) { rejectReasons.vol5m++; console.log(`[EVAL] ${tag} | ❌ VOL5M`); continue; }
                 if (!meetsVol1h) { rejectReasons.vol1h++; console.log(`[EVAL] ${tag} | ❌ VOL1H`); continue; }
                 if (!meetsVol24h) { rejectReasons.vol24h++; console.log(`[EVAL] ${tag} | ❌ VOL24H`); continue; }
@@ -445,7 +456,8 @@ export class MarketScanner {
                     mcap: Number(q.mcap),
                     symbol: q.pair.baseToken?.symbol || "TOKEN",
                     priceUsd: q.priceUSD,
-                    source: q.pair.isMomentumPlay ? "SCOUT_MOMENTUM" : q.pair.source
+                    source: q.pair.isMomentumPlay ? "SCOUT_MOMENTUM" : q.pair.source,
+                    pairCreatedAt: q.pair.pairCreatedAt
                 });
             }
 

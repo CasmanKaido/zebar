@@ -30,6 +30,7 @@ export interface BotSettings {
     liquidity: { min: number; max: number };
     mcap: { min: number; max: number };
     mode?: "SCOUT" | "ANALYST";
+    maxAgeMinutes?: number;
 }
 
 export class BotManager {
@@ -62,7 +63,8 @@ export class BotManager {
         volume24h: { min: 100000, max: 0 },
         liquidity: { min: 10000, max: 0 },
         mcap: { min: 100000, max: 0 },
-        mode: "SCOUT"
+        mode: "SCOUT",
+        maxAgeMinutes: 0
     };
 
     constructor() {
