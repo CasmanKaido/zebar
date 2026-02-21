@@ -568,8 +568,11 @@ export class BotManager {
                 // amount of Base Tokens we just spent, minus the 1% we hold back.
                 const targetBaseAmount = this.settings.buyAmount * 0.99;
 
-                // Note: The strategy always uses 9 decimals for LPPP math internally during setup
-                const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * 1e9));
+                // Dynamically fetch base token decimals to support Base Tokens that don't use 9 decimals (e.g. USDC has 6)
+                const baseMintAccountInfo = await safeRpc(() => connection.getParsedAccountInfo(activeBaseMint), "getBaseMintInfo");
+                const baseDecimals = (baseMintAccountInfo?.value?.data as any)?.parsed?.info?.decimals || 9;
+                const baseScale = Math.pow(10, baseDecimals);
+                const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * baseScale));
 
                 const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, activeBaseMint, this.settings.meteoraFeeBps);
 
@@ -577,7 +580,7 @@ export class BotManager {
                     SocketManager.emitLog(`[SUCCESS] Pool Created: ${poolInfo.poolAddress}`, "success");
 
                     // Now, initialPrice is perfectly synced to our true Jupiter execution price.
-                    const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / 1e9) / tokenUiAmountChecked : 0;
+                    const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / baseScale) / tokenUiAmountChecked : 0;
 
                     const supplyRes = await safeRpc(() => connection.getTokenSupply(result.mint), "getTokenSupply");
                     const totalSupply = supplyRes.value.uiAmount || 0;
@@ -593,8 +596,8 @@ export class BotManager {
                         created: new Date().toISOString(),
                         initialPrice,
                         initialTokenAmount: tokenUiAmountChecked,
-                        initialLpppAmount: Number(lpppAmountBase) / 1e9,
-                        initialSolValue: (Number(lpppAmountBase) / 1e9),
+                        initialLpppAmount: Number(lpppAmountBase) / baseScale,
+                        initialSolValue: (Number(lpppAmountBase) / baseScale),
                         exited: false,
                         positionId: poolInfo.positionAddress,
                         unclaimedFees: { sol: "0", token: "0" },
