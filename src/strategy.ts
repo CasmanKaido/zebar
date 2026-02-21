@@ -1499,9 +1499,9 @@ export class StrategyManager {
             const effectiveReserveA_BN = vaultAmountA_BN.sub(protocolAFee).sub(partnerAFee);
             const effectiveReserveB_BN = vaultAmountB_BN.sub(protocolBFee).sub(partnerBFee);
 
-            // Convert to UI Amount
-            const amountA = effectiveReserveA_BN.toNumber() / (10 ** balA.value.decimals);
-            const amountB = effectiveReserveB_BN.toNumber() / (10 ** balB.value.decimals);
+            // Convert to UI Amount (Safe string parsing to bypass BN.js 53-bit integer limit for massive memecoin supplies)
+            const amountA = Number(effectiveReserveA_BN.toString()) / (10 ** balA.value.decimals);
+            const amountB = Number(effectiveReserveB_BN.toString()) / (10 ** balB.value.decimals);
 
             // Define decimals for fee calculation later
             const decimalsA = balA.value.decimals;
