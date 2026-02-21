@@ -776,6 +776,7 @@ export class BotManager {
                 for (const pool of activePools) {
                     try {
                         if (pool.withdrawalPending) continue;
+                        if (pool.exited) continue;
                         if (this.activeTpSlActions.has(pool.poolId)) continue;
 
                         const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
