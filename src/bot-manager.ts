@@ -560,14 +560,23 @@ export class BotManager {
                     return;
                 }
 
-                const tokenPriceBase = result.priceUsd / basePrice;
-                const targetBaseAmount = (tokenUiAmountChecked * tokenPriceBase);
-                const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * 1e9 * 0.99));
+                // ── THE TRUE FIX: BASE TOKENS & EXECUTION PRICE ──
+                // Previously, this used DexScreener's `result.priceUsd` to calculate how many base tokens to pair for the DLMM pool.
+                // However, DexScreener is intrinsically delayed and has zero knowledge of our Jupiter execution slippage.
+                // Since this is a pair of BaseToken/TargetToken, and we literally JUST EXCHANGED them via Jupiter,
+                // the perfectly balanced, true-to-execution base token amount to seed the pool with is simply the exact 
+                // amount of Base Tokens we just spent, minus the 1% we hold back.
+                const targetBaseAmount = this.settings.buyAmount * 0.99;
+
+                // Note: The strategy always uses 9 decimals for LPPP math internally during setup
+                const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * 1e9));
 
                 const poolInfo = await this.strategy.createMeteoraPool(result.mint, tokenAmount, lpppAmountBase, activeBaseMint, this.settings.meteoraFeeBps);
 
                 if (poolInfo.success) {
                     SocketManager.emitLog(`[SUCCESS] Pool Created: ${poolInfo.poolAddress}`, "success");
+
+                    // Now, initialPrice is perfectly synced to our true Jupiter execution price.
                     const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / 1e9) / tokenUiAmountChecked : 0;
 
                     const supplyRes = await safeRpc(() => connection.getTokenSupply(result.mint), "getTokenSupply");
