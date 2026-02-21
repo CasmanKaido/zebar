@@ -864,8 +864,20 @@ export class BotManager {
                             // If the initialMcap in the DB was saved using delayed DexScreener pricing (bug prior to patch), 
                             // we force it to recalibrate using the exact `initialPrice` constraint to sync with Net ROI.
                             if (pool.totalSupply && pool.totalSupply > 0 && pool.initialPrice && basePrice > 0) {
-                                const expectedInitialUsdPrice = pool.initialPrice * basePrice;
-                                const expectedInitialMcap = pool.totalSupply * expectedInitialUsdPrice;
+                                // If the token used LPPP injection, initialPrice is in LPPP base units, so * basePrice
+                                // If it was a pure native swap, initialPrice is in native SOL units, and IS the basePrice equivalent.
+                                let trueInitialUsdPrice = pool.initialPrice;
+
+                                // Detect if LPPP was used vs SOL based on the bot configuration at the time of purchase
+                                if (pool.baseToken && pool.baseToken !== "SOL") {
+                                    trueInitialUsdPrice = pool.initialPrice * basePrice;
+                                } else {
+                                    // For Native SOL snipes, initialPrice is exactly SolAmount / TokenAmount
+                                    // So true USD price is the SOL per token * current Price of SOL
+                                    trueInitialUsdPrice = pool.initialPrice * basePrice;
+                                }
+
+                                const expectedInitialMcap = pool.totalSupply * trueInitialUsdPrice;
 
                                 // If missing or off by more than 10%, rewrite the database constraint
                                 if (!pool.initialMcap || pool.initialMcap <= 0 || Math.abs(pool.initialMcap - expectedInitialMcap) / expectedInitialMcap > 0.10) {
