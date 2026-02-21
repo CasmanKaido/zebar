@@ -885,8 +885,10 @@ export class BotManager {
                             // not the currently selected UI base token. This ensures LPPP pools use
                             // LPPP price, SOL pools use SOL price, HTP pools use HTP price, etc.
                             if (pool.totalSupply && pool.totalSupply > 0 && pool.initialPrice) {
-                                // Look up THIS pool's own base token price (not the active UI selection)
-                                const poolBaseTokenKey = pool.baseToken || this.settings.baseToken || "LPPP";
+                                // Legacy pools missing the baseToken field were almost 100% LPPP pools.
+                                // Do NOT fall back to this.settings.baseToken, because that causes old pools 
+                                // to incorrectly adopt whatever UI token the user currently has selected.
+                                const poolBaseTokenKey = pool.baseToken || "LPPP";
                                 const poolBaseMint = BASE_TOKENS[poolBaseTokenKey]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
                                 let poolBasePrice = jupPrices.get(poolBaseMint) || 0;
                                 if (poolBasePrice === 0) {
