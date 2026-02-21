@@ -572,7 +572,8 @@ export class BotManager {
 
                     const supplyRes = await safeRpc(() => connection.getTokenSupply(result.mint), "getTokenSupply");
                     const totalSupply = supplyRes.value.uiAmount || 0;
-                    const initialMcap = totalSupply * result.priceUsd;
+                    const trueInitialUsdPrice = initialPrice * basePrice;
+                    const initialMcap = totalSupply * (trueInitialUsdPrice > 0 ? trueInitialUsdPrice : result.priceUsd);
 
                     const fullPoolData: PoolData = {
                         poolId: poolInfo.poolAddress || "",
@@ -813,6 +814,15 @@ export class BotManager {
                                         pool.initialPrice = normalizedPrice;
                                         roiVal = 0;
                                         pool.priceReconstructed = true;
+                                    }
+
+                                    // Recalibrate initial MCAP if tracking
+                                    if (pool.totalSupply && pool.totalSupply > 0) {
+                                        let bPrice = jupPrices.get(BASE_TOKENS[this.settings.baseToken]?.toBase58() || BASE_TOKENS["LPPP"].toBase58()) || 0;
+                                        if (bPrice > 0) {
+                                            pool.initialMcap = pool.totalSupply * (pool.initialPrice * bPrice);
+                                            console.log(`[MONITOR] Recalibrated initialMcap to $${pool.initialMcap.toFixed(2)}`);
+                                        }
                                     }
                                 }
                             }
