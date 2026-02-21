@@ -245,6 +245,7 @@ function App() {
     const [logs, setLogs] = useState<Log[]>([]);
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
+    const [activePoolTab, setActivePoolTab] = useState<'NEW' | 'LEGACY' | 'LPPP' | 'HTP'>('NEW');
 
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
@@ -1059,18 +1060,58 @@ function App() {
 
                 {/* Bottom Section: Active Snipes (Bot-Created Only) */}
                 <div className="lg:col-span-3">
-                    <div className="flex items-center gap-3 mb-6 px-2">
-                        <Zap size={18} className="text-primary" />
-                        <h2 className="text-sm font-black tracking-widest uppercase text-primary">Active Snipes</h2>
-                        <span className="bg-primary/10 text-primary/80 text-[10px] px-2 py-0.5 rounded-full border border-primary/20 font-bold">
-                            {pools.filter(p => !p.exited && p.isBotCreated).length}
-                        </span>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 px-2">
+                        <div className="flex items-center gap-3">
+                            <Zap size={18} className="text-primary" />
+                            <h2 className="text-sm font-black tracking-widest uppercase text-primary">Active Snipes</h2>
+                            <span className="bg-primary/10 text-primary/80 text-[10px] px-2 py-0.5 rounded-full border border-primary/20 font-bold">
+                                {(() => {
+                                    const PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
+                                    return pools.filter(p => {
+                                        if (p.exited || !p.isBotCreated) return false;
+                                        const token = p.baseToken || "LPPP";
+                                        const isNew = p.created ? new Date(p.created).getTime() >= PATCH_DATE : false;
+                                        if (activePoolTab === 'NEW') return isNew;
+                                        if (activePoolTab === 'LEGACY') return !isNew;
+                                        if (activePoolTab === 'LPPP') return token === 'LPPP';
+                                        if (activePoolTab === 'HTP') return token === 'HTP';
+                                        return true;
+                                    }).length;
+                                })()}
+                            </span>
+                        </div>
+
+                        {/* Tab Navigation */}
+                        <div className="flex items-center gap-1 bg-black/40 p-1.5 rounded-full border border-white/5 overflow-x-auto w-full sm:w-auto">
+                            {['NEW', 'LEGACY', 'LPPP', 'HTP'].map(tab => (
+                                <button
+                                    key={tab}
+                                    onClick={() => setActivePoolTab(tab as any)}
+                                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${activePoolTab === tab ? 'bg-primary text-black shadow-[0_0_15px_rgba(205,255,0,0.3)]' : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                                >
+                                    {tab}
+                                </button>
+                            ))}
+                        </div>
                     </div>
 
                     {Object.keys(baseTokenPrices).length > 0 ? (
                         <div className="flex flex-col gap-8">
                             {Object.keys(baseTokenPrices).map(token => {
-                                const tokenPools = pools.filter(p => !p.exited && p.isBotCreated && (p.baseToken || "LPPP") === token);
+                                const PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
+                                const tokenPools = pools.filter(p => {
+                                    if (p.exited || !p.isBotCreated) return false;
+                                    const pToken = p.baseToken || "LPPP";
+                                    if (pToken !== token) return false;
+
+                                    const isNew = p.created ? new Date(p.created).getTime() >= PATCH_DATE : false;
+                                    if (activePoolTab === 'NEW') return isNew;
+                                    if (activePoolTab === 'LEGACY') return !isNew;
+                                    if (activePoolTab === 'LPPP') return token === 'LPPP';
+                                    if (activePoolTab === 'HTP') return token === 'HTP';
+                                    return true;
+                                });
+
                                 if (tokenPools.length === 0) return null;
 
                                 return (
