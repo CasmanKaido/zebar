@@ -860,6 +860,20 @@ export class BotManager {
                                 currentMcap = tokenPrice * pool.totalSupply;
                             }
 
+                            // ═══ LEGACY DB AUTO-CORRECTION ═══
+                            // If the initialMcap in the DB was saved using delayed DexScreener pricing (bug prior to patch), 
+                            // we force it to recalibrate using the exact `initialPrice` constraint to sync with Net ROI.
+                            if (pool.totalSupply && pool.totalSupply > 0 && pool.initialPrice && basePrice > 0) {
+                                const expectedInitialUsdPrice = pool.initialPrice * basePrice;
+                                const expectedInitialMcap = pool.totalSupply * expectedInitialUsdPrice;
+
+                                // If missing or off by more than 10%, rewrite the database constraint
+                                if (!pool.initialMcap || pool.initialMcap <= 0 || Math.abs(pool.initialMcap - expectedInitialMcap) / expectedInitialMcap > 0.10) {
+                                    pool.initialMcap = expectedInitialMcap;
+                                    console.log(`[MONITOR] Auto-calibrated corrupted initialMcap for ${pool.token}: $${pool.initialMcap.toFixed(2)}`);
+                                }
+                            }
+
                             // Use MCAP multiplier if available, otherwise fallback to position USD multiplier
                             const mcapMultiplier = (currentMcap > 0 && pool.initialMcap && pool.initialMcap > 0)
                                 ? (currentMcap / pool.initialMcap)
