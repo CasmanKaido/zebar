@@ -554,6 +554,12 @@ export class BotManager {
                 const tokenAmount = (actualAmountRaw * 99n) / 100n;
                 const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
 
+                const solPrice = await this.getBaseTokenPrice(SOL_MINT.toBase58());
+                if (solPrice <= 0) {
+                    SocketManager.emitLog(`[LP] SOL price error.`, "error");
+                    return;
+                }
+
                 const basePrice = await this.getBaseTokenPrice(activeBaseMint.toBase58());
                 if (basePrice <= 0) {
                     SocketManager.emitLog(`[LP] Base token price error.`, "error");
@@ -561,12 +567,14 @@ export class BotManager {
                 }
 
                 // ── THE TRUE FIX: BASE TOKENS & EXECUTION PRICE ──
-                // Previously, this used DexScreener's `result.priceUsd` to calculate how many base tokens to pair for the DLMM pool.
-                // However, DexScreener is intrinsically delayed and has zero knowledge of our Jupiter execution slippage.
-                // Since this is a pair of BaseToken/TargetToken, and we literally JUST EXCHANGED them via Jupiter,
-                // the perfectly balanced, true-to-execution base token amount to seed the pool with is simply the exact 
-                // amount of Base Tokens we just spent, minus the 1% we hold back.
-                const targetBaseAmount = this.settings.buyAmount * 0.99;
+                // Previously, this used `buyAmount` directly, assuming buyAmount was in `activeBaseMint` units.
+                // However, `buyAmount` is the amount spent in Native SOL. 
+                // We must convert the SOL spent into the exactly equivalent amount of the explicitly selected Base Token!
+                const usdValueSpent = this.settings.buyAmount * solPrice;
+                const equivalentBaseTokenAmount = usdValueSpent / basePrice;
+
+                // Pair the equivalent base amount, minus the 1% we hold back.
+                const targetBaseAmount = equivalentBaseTokenAmount * 0.99;
 
                 // Dynamically fetch base token decimals to support Base Tokens that don't use 9 decimals (e.g. USDC has 6)
                 const baseMintAccountInfo = await safeRpc(() => connection.getParsedAccountInfo(activeBaseMint), "getBaseMintInfo");
