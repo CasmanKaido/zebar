@@ -1220,8 +1220,10 @@ export class BotManager {
                 (result as any).volume5m = data.volume.m5;
                 (result as any).volume1h = data.volume.h1;
 
-                SocketManager.emitLog(`[HELIUS] Flash Scout enqueued: ${result.symbol}`, "info");
-                this.enqueueToken(result);
+                SocketManager.emitLog(`[HELIUS] Flash Scout filtering: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
+                if (this.scanner) {
+                    await this.scanner.evaluateToken(result);
+                }
             } else {
                 // If DexScreener doesn't have it yet, it might be EXTREMELY new.
                 // We could fallback to RPC metadata but we wouldn't have volume/liq.
