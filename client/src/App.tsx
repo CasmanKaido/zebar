@@ -153,6 +153,15 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                     <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
                 </div>
             </div>
+
+            {pool.initialMcap && pool.initialMcap > 0 && pool.currentMcap ? (
+                <div className="text-right flex flex-col items-end justify-start">
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Multiplier</p>
+                    <div className={`px-2.5 py-1 rounded-xl text-lg font-black shadow-lg ${(pool.currentMcap / pool.initialMcap) >= 1 ? 'bg-primary/20 text-primary border border-primary/30 shadow-[0_0_15px_rgba(205,255,0,0.1)]' : 'bg-red-500/20 text-red-500 border border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]'}`}>
+                        {((pool.currentMcap / pool.initialMcap)).toFixed(2)}x
+                    </div>
+                </div>
+            ) : null}
         </div>
 
         {/* ═══ Position value ═══ */}
