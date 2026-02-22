@@ -1,6 +1,6 @@
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
-import { HELIUS_AUTH_SECRET, BASE_TOKENS } from "./config";
+import { HELIUS_AUTH_SECRET } from "./config";
 import { PublicKey } from "@solana/web3.js";
 
 /**
@@ -43,9 +43,9 @@ export class HeliusWebhookService {
                 // Helius 'type' field often identifies these
                 if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") {
                     this.processPoolEvent(tx, botManager);
-                } else if (tx.type !== "SWAP") {
+                } else if (tx.type === "TRANSFER" || !tx.type) {
                     // Fallback: Check instructions for Raydium or Meteora Program IDs
-                    // Exclude "SWAP" type explicitly to prevent swap-bombing rate limit death.
+                    // Many pool creations are labeled TRANSFER or have no type, check program IDs instead
                     // Raydium V4: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
                     // Meteora CP-AMM: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
                     const isRaydium = tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
@@ -69,38 +69,40 @@ export class HeliusWebhookService {
      */
     private static processPoolEvent(tx: any, botManager: BotManager) {
         // Token Transfers usually contain the new token
-        // We look for a transfer that isn't SOL, USDC, USDT, or our custom Base Tokens
+        // Filter: Exclude only obvious stablecoins and quotes (SOL, USDC, USDT)
+        // Include our base tokens since pools PAIRED WITH them are valuable
         const SOL_MINT = "So11111111111111111111111111111111111111112";
         const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
         const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
-        const baseMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
 
-        const ignoredMints = new Set([SOL_MINT, USDC_MINT, USDT_MINT, ...baseMints]);
+        const ignoredMints = new Set([SOL_MINT, USDC_MINT, USDT_MINT]);
 
         const unconventionalTokens = tx.tokenTransfers
             ?.map((t: any) => t.mint)
             .filter((m: string) => m && !ignoredMints.has(m));
 
-        if (!unconventionalTokens || unconventionalTokens.length === 0) return;
+        if (!unconventionalTokens || unconventionalTokens.length === 0) {
+            console.log(`[HELIUS] Skipped tx ${tx.signature?.slice(0, 8)}: No tradeable tokens found`);
+            return;
+        }
 
-        // Use the first one as the candidate
-        const mint = unconventionalTokens[0];
+        // Process ALL unconventional tokens, not just first
+        // (Multiple new tokens can be created in a single tx)
+        for (const mint of unconventionalTokens) {
+            if (!mint || mint.length < 40) continue;
 
-        // Pass a safely empty pair rather than guessing fragile account indices,
-        // letting DexScreener natively resolve the verified pair inside `bot-manager.ts`
-        const possiblePair = "";
+            console.log(`[HELIUS] 🚀 New Pool Detected via Webhook! Mint: ${mint}`);
+            SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... detected in live block.`, "info");
 
-        console.log(`[HELIUS] 🚀 New Pool Detected via Webhook! Mint: ${mint}`);
-        SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... detected in live block.`, "info");
+            // Trigger Flash Evaluation in BotManager
+            // We set dexId based on program ID if possible
+            let dexId = "unknown";
+            if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
+            if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
 
-        // Trigger Flash Evaluation in BotManager
-        // We set dexId based on program ID if possible
-        let dexId = "unknown";
-        if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
-        if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
-
-        botManager.triggerFlashScout(mint, possiblePair, dexId).catch(err => {
-            console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
-        });
+            botManager.triggerFlashScout(mint, "", dexId).catch(err => {
+                console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
+            });
+        }
     }
 }
