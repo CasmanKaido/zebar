@@ -1,4 +1,4 @@
-import { connection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT } from "./config";
+import { connection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -830,7 +830,16 @@ export class BotManager {
                             pool.roi = roiString;
 
                             const poolBaseTokenKey = pool.baseToken || "LPPP";
-                            const activeBaseMintStr = BASE_TOKENS[poolBaseTokenKey]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
+                            let activeBaseMintStr = BASE_TOKENS["LPPP"].toBase58();
+
+                            if (poolBaseTokenKey === "SOL") {
+                                activeBaseMintStr = SOL_MINT.toBase58();
+                            } else if (poolBaseTokenKey === "USDC") {
+                                activeBaseMintStr = USDC_MINT.toBase58();
+                            } else if (BASE_TOKENS[poolBaseTokenKey]) {
+                                activeBaseMintStr = BASE_TOKENS[poolBaseTokenKey].toBase58();
+                            }
+
                             let basePrice = jupPrices.get(activeBaseMintStr) || 0;
                             if (basePrice === 0) {
                                 basePrice = await this.getBaseTokenPrice(activeBaseMintStr);
@@ -861,7 +870,16 @@ export class BotManager {
                                 // Do NOT fall back to this.settings.baseToken, because that causes old pools 
                                 // to incorrectly adopt whatever UI token the user currently has selected.
                                 const poolBaseTokenKey = pool.baseToken || "LPPP";
-                                const poolBaseMint = BASE_TOKENS[poolBaseTokenKey]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
+                                let poolBaseMint = BASE_TOKENS["LPPP"].toBase58();
+
+                                if (poolBaseTokenKey === "SOL") {
+                                    poolBaseMint = SOL_MINT.toBase58();
+                                } else if (poolBaseTokenKey === "USDC") {
+                                    poolBaseMint = USDC_MINT.toBase58();
+                                } else if (BASE_TOKENS[poolBaseTokenKey]) {
+                                    poolBaseMint = BASE_TOKENS[poolBaseTokenKey].toBase58();
+                                }
+
                                 let poolBasePrice = jupPrices.get(poolBaseMint) || 0;
                                 if (poolBasePrice === 0) {
                                     poolBasePrice = await this.getBaseTokenPrice(poolBaseMint);
