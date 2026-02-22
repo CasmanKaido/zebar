@@ -208,6 +208,12 @@ export class DatabaseService {
         this.runWithRetry(stmt, { poolId, newSolValue });
     }
 
+    // Auto-calibration update for corrupted legacy databases storing SOL quantities instead of LPPP quantities
+    async updatePoolLegacyCalibration(poolId: string, newSolValue: number, newInitialPrice: number): Promise<void> {
+        const stmt = this.db.prepare(`UPDATE pools SET initialSolValue = @newSolValue, initialPrice = @newInitialPrice, updated_at = CURRENT_TIMESTAMP WHERE poolId = @poolId`);
+        this.runWithRetry(stmt, { poolId, newSolValue, newInitialPrice });
+    }
+
     // --- Trades Methods ---
 
     async recordTrade(trade: TradeHistory): Promise<void> {

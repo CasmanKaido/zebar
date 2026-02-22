@@ -817,6 +817,26 @@ export class BotManager {
                                 console.log(`[FEES-DBG]  ${pool.token} | feesSol: ${posValue.feesSol.toFixed(6)} | feesToken: ${posValue.feesToken.toFixed(6)} | feesLppp: ${totalFeesLppp.toFixed(6)}`);
                             } */
 
+                            // ═══ LEGACY 1-SOL SIZING BUG FIX ═══
+                            // If initialSolValue looks like Native SOL (e.g., 0.5, 1.0) but the pool actually holds Base Tokens 
+                            // (totalSol > 100), it's a corrupted legacy entry that used `buyAmount` directly.
+                            if (pool.initialSolValue && pool.initialSolValue < 10 && posValue.totalSol > 100) {
+                                const activeBaseMintForPool = BASE_TOKENS[pool.baseToken || "LPPP"]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
+                                const solp = jupPrices.get(SOL_MINT.toBase58()) || await this.getBaseTokenPrice(SOL_MINT.toBase58());
+                                const baseP = jupPrices.get(activeBaseMintForPool) || await this.getBaseTokenPrice(activeBaseMintForPool);
+
+                                if (solp > 0 && baseP > 0) {
+                                    const conversionRate = solp / baseP;
+                                    pool.initialSolValue = pool.initialSolValue * conversionRate;
+                                    pool.initialPrice = pool.initialPrice * conversionRate;
+
+                                    console.log(`[REPAIR] Converted legacy SOL-sized entry for ${pool.token} to Base metric (Rate: ${conversionRate.toFixed(2)}x)`);
+                                    await dbService.updatePoolLegacyCalibration(pool.poolId, pool.initialSolValue, pool.initialPrice);
+
+                                    // Corrupted entryUsdValue will be automatically fixed by the block below!
+                                }
+                            }
+
                             // 2. Spot ROI (Price-based)
                             const normalizedPrice = posValue.spotPrice;
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
