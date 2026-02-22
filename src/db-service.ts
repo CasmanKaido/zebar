@@ -150,7 +150,8 @@ export class DatabaseService {
                 updated_at = CURRENT_TIMESTAMP
         `);
 
-        stmt.run({
+        // Use retry wrapper for the main insert
+        this.runWithRetry(stmt, {
             poolId: pool.poolId,
             token: pool.token,
             mint: pool.mint,
@@ -180,6 +181,31 @@ export class DatabaseService {
             totalSupply: pool.totalSupply || 0,
             initialMcap: pool.initialMcap || 0
         });
+    }
+
+    // Helper to handle SQLITE_BUSY errors during high concurrency
+    private runWithRetry(stmt: Database.Statement, params: any, maxRetries = 5, delayMs = 100) {
+        let retries = 0;
+        while (true) {
+            try {
+                return stmt.run(params);
+            } catch (err: any) {
+                if (err.code === 'SQLITE_BUSY' && retries < maxRetries) {
+                    retries++;
+                    // Basic sleep function for busy loops
+                    const start = Date.now();
+                    while (Date.now() - start < delayMs * retries) { /* wait */ }
+                    continue;
+                }
+                throw err;
+            }
+        }
+    }
+
+    // Secure numerical update for partial withdrawals
+    async updatePoolEntryValue(poolId: string, newSolValue: number): Promise<void> {
+        const stmt = this.db.prepare(`UPDATE pools SET initialSolValue = @newSolValue, updated_at = CURRENT_TIMESTAMP WHERE poolId = @poolId`);
+        this.runWithRetry(stmt, { poolId, newSolValue });
     }
 
     // --- Trades Methods ---

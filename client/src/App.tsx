@@ -52,6 +52,7 @@ interface PoolUpdate {
     positionValue?: { baseLp: string; tokenLp: string; totalLppp: string };
     exited?: boolean;
     currentMcap?: number;
+    initialMcap?: number;
 }
 
 interface SettingInputProps {
@@ -361,7 +362,8 @@ function App() {
                 unclaimedFees: update.unclaimedFees || p.unclaimedFees,
                 positionValue: update.positionValue || p.positionValue,
                 exited: update.exited !== undefined ? update.exited : p.exited,
-                currentMcap: update.currentMcap !== undefined ? update.currentMcap : p.currentMcap
+                currentMcap: update.currentMcap !== undefined ? update.currentMcap : p.currentMcap,
+                initialMcap: update.initialMcap !== undefined ? update.initialMcap : p.initialMcap
             } : p));
         });
         socket.on('pool', (pool: Pool) => {

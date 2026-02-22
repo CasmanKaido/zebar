@@ -41,6 +41,7 @@ export class MarketScanner {
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
     private seenPairs: Map<string, number> = new Map(); // mintAddress -> timestamp
+    private _processingMutex: Set<string> = new Set(); // Prevent concurrent webhook duplicate buys
     private SEEN_COOLDOWN = 5 * 60 * 1000; // 5 minute cooldown
     private scanInterval: NodeJS.Timeout | null = null;
     private jupiterTokens: Map<string, any> = new Map(); // mint -> metadata
@@ -479,26 +480,44 @@ export class MarketScanner {
     async evaluateToken(result: ScanResult) {
         if (!this.isRunning) return;
         const mintAddress = result.mint.toBase58();
-        const lastSeen = this.seenPairs.get(mintAddress);
-        if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return;
 
-        SocketManager.emitLog(`[FLASH-EVAL] Real-time check for ${result.symbol}...`, "info");
+        // ── CONCURRENCY MUTEX ──
+        // Webhooks often fire 3-4 times in the exact same millisecond from different nodes for the same pool.
+        // We must lock the mint synchronously in memory before doing any async `this.seenPairs.get()` or DB calls.
+        if (!this._processingMutex) this._processingMutex = new Set<string>();
+        if (this._processingMutex.has(mintAddress)) {
+            // Drop duplicate identical webhook instantly
+            return;
+        }
 
-        // Use more lenient criteria for High-Priority Flash Evaluation
-        const liquidity = result.liquidity || 0;
-        const mcap = result.mcap || 0;
-        const vol5m = (result as any).volume5m || 0;
+        // Lock it
+        this._processingMutex.add(mintAddress);
 
-        const meetsLiq = this.inRange(liquidity, this.criteria.liquidity);
-        const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min, max: this.criteria.mcap.max }); // Strictly enforce UI MCAP limits
-        const meetsMomentum = vol5m >= (this.criteria.volume5m.min * 2); // Must show immediate velocity
+        try {
+            const lastSeen = this.seenPairs.get(mintAddress);
+            if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return;
 
-        if (meetsLiq && meetsMcap && (meetsMomentum || (result as any).volume1h > this.criteria.volume1h.min)) {
-            SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
-            this.seenPairs.set(mintAddress, Date.now());
-            await this.callback(result);
-        } else {
-            console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Liq:${meetsLiq}, Mcap:${meetsMcap}, Momentum:${meetsMomentum})`);
+            SocketManager.emitLog(`[FLASH-EVAL] Real-time check for ${result.symbol}...`, "info");
+
+            // Use more lenient criteria for High-Priority Flash Evaluation
+            const liquidity = result.liquidity || 0;
+            const mcap = result.mcap || 0;
+            const vol5m = (result as any).volume5m || 0;
+
+            const meetsLiq = this.inRange(liquidity, this.criteria.liquidity);
+            const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min, max: this.criteria.mcap.max }); // Strictly enforce UI MCAP limits
+            const meetsMomentum = vol5m >= (this.criteria.volume5m.min * 2); // Must show immediate velocity
+
+            if (meetsLiq && meetsMcap && (meetsMomentum || (result as any).volume1h > this.criteria.volume1h.min)) {
+                SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
+                this.seenPairs.set(mintAddress, Date.now());
+                await this.callback(result);
+            } else {
+                console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Liq:${meetsLiq}, Mcap:${meetsMcap}, Momentum:${meetsMomentum})`);
+            }
+        } finally {
+            // Always release the lock so the token can be re-evaluated later if needed
+            this._processingMutex.delete(mintAddress);
         }
     }
 

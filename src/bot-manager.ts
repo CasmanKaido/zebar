@@ -373,7 +373,8 @@ export class BotManager {
                 exited,
                 unclaimedFees: updatedPool.unclaimedFees,
                 positionValue: updatedPool.positionValue,
-                currentMcap: partial?.currentMcap
+                currentMcap: partial?.currentMcap,
+                initialMcap: updatedPool.initialMcap
             });
         } catch (e) {
             console.error("[DB] Update ROI Failed:", e);
@@ -781,7 +782,7 @@ export class BotManager {
 
                         const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
 
-                        if (posValue.success) {
+                        if (posValue.success && posValue.spotPrice > 0) {
                             /* ═══ DEBUG: Show raw values for diagnosis ═══
                             if (sweepCount < 10 || sweepCount % 5 === 0) {
                                 console.log(`[MONITOR RAW] ${pool.token} | totalSol: ${posValue.totalSol.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | fees: ${posValue.feesSol.toFixed(6)} | initialSolValue: ${pool.initialSolValue?.toFixed(6) || 'N/A'}`);
@@ -820,39 +821,16 @@ export class BotManager {
                             const normalizedPrice = posValue.spotPrice;
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
-                            // ═══ AUTO-RECALIBRATION (Simplified) ═══
-                            if (roiVal < -90 && !pool.priceReconstructed) {
-                                if (roiVal < -95 && (pool.roi === "0%" || pool.roi === "0.00%")) {
-                                    const invertedInitial = 1 / pool.initialPrice;
-                                    const newRoi = (normalizedPrice - invertedInitial) / invertedInitial * 100;
-                                    if (Math.abs(newRoi) < 50) {
-                                        console.log(`[MONITOR] Recalibrating inverted initial price for ${pool.token}: ${pool.initialPrice} -> ${invertedInitial}`);
-                                        pool.initialPrice = invertedInitial;
-                                        roiVal = newRoi;
-                                        pool.priceReconstructed = true;
-                                    } else {
-                                        console.log(`[MONITOR] Resetting broken initial price for ${pool.token} to current: ${normalizedPrice}`);
-                                        pool.initialPrice = normalizedPrice;
-                                        roiVal = 0;
-                                        pool.priceReconstructed = true;
-                                    }
-
-                                    // Recalibrate initial MCAP if tracking
-                                    if (pool.totalSupply && pool.totalSupply > 0) {
-                                        let bPrice = jupPrices.get(BASE_TOKENS[this.settings.baseToken]?.toBase58() || BASE_TOKENS["LPPP"].toBase58()) || 0;
-                                        if (bPrice > 0) {
-                                            pool.initialMcap = pool.totalSupply * (pool.initialPrice * bPrice);
-                                            console.log(`[MONITOR] Recalibrated initialMcap to $${pool.initialMcap.toFixed(2)}`);
-                                        }
-                                    }
-                                }
-                            }
+                            // ═══ AUTO-RECALIBRATION ═══
+                            // Legacy upside-down price calibration removed. The createMeteoraPool logic is now mathematically 
+                            // accurate and synced to Jupiter execution prices. If a pool drops 99%, it is a real crash, not a math error.
 
                             const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
                             const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
                             pool.roi = roiString;
 
-                            const activeBaseMintStr = BASE_TOKENS[this.settings.baseToken]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
+                            const poolBaseTokenKey = pool.baseToken || "LPPP";
+                            const activeBaseMintStr = BASE_TOKENS[poolBaseTokenKey]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
                             let basePrice = jupPrices.get(activeBaseMintStr) || 0;
                             if (basePrice === 0) {
                                 basePrice = await this.getBaseTokenPrice(activeBaseMintStr);
@@ -861,19 +839,12 @@ export class BotManager {
                             // 3. USD STRATEGY (4x/7x Take Profit, 0.7x Stop Loss)
                             const tokenPrice = jupPrices.get(pool.mint) || (posValue.spotPrice * basePrice);
 
-                            // Initialize entryUsdValue if missing
-                            if (!pool.entryUsdValue || pool.entryUsdValue <= 0) {
-                                pool.entryUsdValue = (pool.initialSolValue || 0) * basePrice;
-                                console.log(`[STRATEGY] Backfilled entryUsdValue for ${pool.token}: $${pool.entryUsdValue.toFixed(4)}`);
+                            // Initialize entryUsdValue if missing (or fix corrupted HTP fallbacks)
+                            const expectedEntryUsd = (pool.initialSolValue || 0) * basePrice;
+                            if (!pool.entryUsdValue || pool.entryUsdValue <= 0 || (expectedEntryUsd > 0 && Math.abs(pool.entryUsdValue - expectedEntryUsd) / expectedEntryUsd > 0.80)) {
+                                pool.entryUsdValue = expectedEntryUsd;
+                                console.log(`[STRATEGY] Backfilled/Repaired entryUsdValue for ${pool.token}: $${pool.entryUsdValue.toFixed(4)}`);
                             }
-
-                            // Calculate Total Position USD matching Meteora UI strategy
-                            // Total = (Token Principal + Token Fees) * Price + (Base Principal + Base Fees) * LPPP_Price
-                            const totalTokenAmount = posValue.userTokenInLp + posValue.feesToken;
-                            const totalBaseAmount = posValue.userBaseInLp + posValue.feesSol;
-
-                            const currentUsdValue = (totalTokenAmount * tokenPrice) + (totalBaseAmount * basePrice);
-                            const usdMultiplier = pool.entryUsdValue > 0 ? (currentUsdValue / pool.entryUsdValue) : 1;
 
                             // ── MCAP STRATEGY ──
                             let currentMcap = 0;
@@ -909,10 +880,10 @@ export class BotManager {
                                 }
                             }
 
-                            // Use MCAP multiplier if available, otherwise fallback to position USD multiplier
+                            // Strictly enforce MCAP multiplier, NO USD fallback
                             const mcapMultiplier = (currentMcap > 0 && pool.initialMcap && pool.initialMcap > 0)
                                 ? (currentMcap / pool.initialMcap)
-                                : usdMultiplier;
+                                : 1; // Default to 1 (neutral) if MCAP can't be calculated to avoid false Stop Losses
 
                             // Keep Net ROI for UI display only
                             const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
@@ -933,7 +904,8 @@ export class BotManager {
                                 priceReconstructed: pool.priceReconstructed,
                                 positionValue: pool.positionValue,
                                 entryUsdValue: pool.entryUsdValue,
-                                currentMcap: currentMcap
+                                currentMcap: currentMcap,
+                                initialMcap: pool.initialMcap
                             });
 
                             // Small delay to prevent 429s in big loops - Be aggressive for DRPC
@@ -964,9 +936,9 @@ export class BotManager {
                             }
 
                             // ── Stop Loss: 0.7x Value (-30%) → Close 80% ──
-                            // 3-minute cooldown: don't trigger SL on pools younger than 3 minutes
+                            // 1-minute cooldown: don't trigger SL in the exact launch minute due to violent volatility
                             const poolAgeMs = Date.now() - new Date(pool.created).getTime();
-                            const SL_COOLDOWN_MS = 3 * 60 * 1000;
+                            const SL_COOLDOWN_MS = 60 * 1000;
 
                             if (mcapMultiplier <= 0.7 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 // 1. Internal Math Check (Glitch Protection Layer A)
@@ -992,8 +964,8 @@ export class BotManager {
                                         this.activeTpSlActions.delete(pool.poolId);
                                         await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
-                                        if (usdMultiplier <= 0.05) {
-                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x). Marking as EXITED.`, "warning");
+                                        if (mcapMultiplier <= 0.05) {
+                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
                                             await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                         }
                                     }
@@ -1006,8 +978,8 @@ export class BotManager {
 
                                 // Visibility: Why didn't it strike? 
                                 // Helps user understand that a -76% ROI pool is skipped because SL already happened.
-                                if (usdMultiplier <= 0.7 && pool.stopLossDone) {
-                                    if (sweepCount % 10 === 0) console.log(`[SL-SKIP] ${pool.token} is at ${usdMultiplier.toFixed(2)}x but SL was already completed.`);
+                                if (mcapMultiplier <= 0.7 && pool.stopLossDone) {
+                                    if (sweepCount % 10 === 0) console.log(`[SL-SKIP] ${pool.token} is at ${mcapMultiplier.toFixed(2)}x but SL was already completed.`);
                                 }
                             }
                         }
@@ -1064,26 +1036,11 @@ export class BotManager {
                             const newInitialVal = pool.initialSolValue * remainingRatio;
 
                             // Update DB with new "Entry Price" for the remaining bag
-                            // We use a dedicated update for this property to ensure it sticks
-                            // Note: We don't have a direct "updateInitialValue" method, so we use updatePool
-                            // But updatePool usually takes an ROI string. We need to persist this change effectively.
-                            // The easiest way is to update the IN-MEMORY pool object that next monitor loop will use?
-                            // No, memory is refreshed from DB every loop (dbService.getAllPools).
-                            // So we MUST update DB.
-
-                            // Since dbService doesn't expose a clean "update property" method, we rely on the loop to re-calc?
-                            // No, the loop only SETS initialSolValue if it's missing (lines 833).
-                            // It does NOT update it down.
-
-                            // We need to implement a DB update here.
-                            // Assuming dbService has `updatePool(poolId, { initialSolValue: ... })` support?
-                            // Checking db-service.ts would be ideal, but standard pattern suggests `updatePool` might just confirm activity.
-                            // Let's manually trigger the `updatePoolROI` with the new value.
+                            await dbService.updatePoolEntryValue(poolId, newInitialVal);
 
                             await this.updatePoolROI(poolId, isFull ? "CLOSED" : "PARTIAL", false, undefined, {
-                                withdrawalPending: false,
-                                initialSolValue: newInitialVal
-                            }, true);
+                                withdrawalPending: false
+                            });
 
                             SocketManager.emitLog(`[ROI FIX] Adjusted Entry Value: ${pool.initialSolValue.toFixed(4)} -> ${newInitialVal.toFixed(4)} LPPP`, "info");
                         } else {
