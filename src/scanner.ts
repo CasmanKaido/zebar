@@ -23,7 +23,7 @@ export interface NumericRange {
     max: number; // 0 means no upper limit
 }
 
-export type ScannerMode = "SCOUT" | "ANALYST";
+export type ScannerMode = "SCOUT" | "ANALYST" | "DUAL";
 
 export interface ScannerCriteria {
     volume5m: NumericRange;
@@ -233,7 +233,7 @@ export class MarketScanner {
             // Still useful — Birdeye's volume-sorted list has no DexScreener equivalent.
             // But now we batch-resolve mints through DexScreener for real pair addresses.
             // ═══════════════════════════════════════════════════════
-            if (mode === "ANALYST") {
+            if (mode === "ANALYST" || mode === "DUAL") {
                 try {
                     const birdeyeTokens = await BirdeyeService.fetchHighVolumeTokens(this.criteria);
                     if (birdeyeTokens.length > 0) {
@@ -258,7 +258,7 @@ export class MarketScanner {
             // SCOUT: Birdeye new listings (Birdeye's unique strength)
             // Also batch-resolve through DexScreener for pair addresses
             // ═══════════════════════════════════════════════════════
-            if (mode === "SCOUT") {
+            if (mode === "SCOUT" || mode === "DUAL") {
                 try {
                     const newListings = await BirdeyeService.fetchNewListings(this.criteria);
                     if (newListings.length > 0) {
@@ -361,7 +361,7 @@ export class MarketScanner {
                 // MOMENTUM FILTERS for SCOUT Mode
                 // If token is < 15m old (estimated by low h1/h24 volume), prioritize 5m velocity.
                 const isVeryNew = volume1h < (this.criteria.volume1h.min * 0.5) || volume24h < (this.criteria.volume24h.min * 0.5);
-                const isScoutMode = this.criteria.mode === "SCOUT";
+                const isScoutMode = this.criteria.mode === "SCOUT" || this.criteria.mode === "DUAL";
 
                 let meetsVol5m = volume5m === 0 ? (this.criteria.volume5m.min === 0) : this.inRange(volume5m, this.criteria.volume5m);
                 let meetsVol1h = volume1h === 0 ? (this.criteria.volume1h.min === 0) : this.inRange(volume1h, this.criteria.volume1h);
