@@ -1,7 +1,6 @@
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { HELIUS_AUTH_SECRET } from "./config";
-import { PublicKey } from "@solana/web3.js";
 
 /**
  * Helius Webhook Service
@@ -44,14 +43,16 @@ export class HeliusWebhookService {
                 if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") {
                     this.processPoolEvent(tx, botManager);
                 } else if (tx.type === "TRANSFER" || !tx.type) {
-                    // Fallback: Check instructions for Raydium or Meteora Program IDs
+                    // Fallback: Check instructions for DEX Program IDs
                     // Many pool creations are labeled TRANSFER or have no type, check program IDs instead
                     // Raydium V4: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
                     // Meteora CP-AMM: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
+                    // Pump.fun: 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P
                     const isRaydium = tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
                     const isMeteora = tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+                    const isPumpFun = tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 
-                    if (isRaydium || isMeteora) {
+                    if (isRaydium || isMeteora || isPumpFun) {
                         // We still process it broadly — the processPoolEvent will verify if it's new
                         this.processPoolEvent(tx, botManager);
                     }
@@ -99,6 +100,7 @@ export class HeliusWebhookService {
             let dexId = "unknown";
             if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
             if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
+            if (tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")) dexId = "pumpfun";
 
             botManager.triggerFlashScout(mint, "", dexId).catch(err => {
                 console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);

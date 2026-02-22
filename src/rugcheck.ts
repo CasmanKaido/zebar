@@ -29,15 +29,6 @@ export interface SafetyResult {
 }
 
 // ─── RugCheck API Types ──────────────────────────────────────────────
-interface RugCheckSummary {
-    score: number;                  // 0 (safe) to N (risky) — raw score
-    score_normalised: number;       // 0-1 normalised (1 = safest)
-    risks: { name: string; description: string; level: string; score: number }[];
-    lpLockedPct: number;
-    tokenProgram: string;
-    tokenType: string;
-}
-
 interface RugCheckReport {
     mintAuthority: string | null;
     freezeAuthority: string | null;
@@ -47,7 +38,7 @@ interface RugCheckReport {
     score_normalised: number;
     totalMarketLiquidity: number;
     totalHolders: number;
-    topHolders: any[];
+    topHolders: { address: string; percent: number; amount: number }[];
     lockers: any[];
     markets: any[];
 }
@@ -73,6 +64,7 @@ interface GoPlusResult {
 const RUGCHECK_TIMEOUT = 6000;
 const GOPLUS_TIMEOUT = 6000;
 const RUGCHECK_MIN_SCORE = 0.3;  // Below this = unsafe
+const MAX_BUNDLE_PCT = 20;  // Helius webhook: max 20% in top holder (80% must be distributed)
 const CRITICAL_RISKS = new Set([
     "Rug Pull",
     "Freeze Authority still enabled",
@@ -124,23 +116,43 @@ export class SafetyService {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // TIER 1: RugCheck API
+    // TIER 1: RugCheck API (includes bundle % check for Helius)
     // ═══════════════════════════════════════════════════════════════════
     private static async checkViaRugCheck(mintAddress: string): Promise<SafetyResult | null> {
-        // Try summary endpoint first (lighter)
-        const summaryRes = await axios.get<RugCheckSummary>(
-            `https://api.rugcheck.xyz/v1/tokens/${mintAddress}/report/summary`,
+        // Need full report to get topHolders for bundle % check
+        const reportRes = await axios.get<RugCheckReport>(
+            `https://api.rugcheck.xyz/v1/tokens/${mintAddress}/report`,
             { timeout: RUGCHECK_TIMEOUT }
         );
 
-        const summary = summaryRes.data;
-        if (!summary || summary.score_normalised === undefined) return null;
+        const report = reportRes.data;
+        if (!report || report.score_normalised === undefined) return null;
 
-        const score = summary.score_normalised;
-        const lpPct = summary.lpLockedPct || 0;
-        const riskNames = (summary.risks || []).map(r => r.name);
-        const riskDescriptions = (summary.risks || []).map(r => `${r.name}: ${r.description}`);
+        const score = report.score_normalised;
+        const lpPct = report.score;  // Different from summary, but fallback
+        const riskNames = (report.risks || []).map(r => r.name);
+        const riskDescriptions = (report.risks || []).map(r => `${r.name}: ${r.description}`);
         const hasCriticalRisk = riskNames.some(r => CRITICAL_RISKS.has(r));
+
+        // NEW: Check bundle % (top holder concentration)
+        const topHolder = report.topHolders?.[0];
+        const bundlePct = topHolder?.percent || 0;
+        if (bundlePct > MAX_BUNDLE_PCT) {
+            const tag = mintAddress.slice(0, 8);
+            SocketManager.emitLog(
+                `[SAFETY] ❌ ${tag}... Bundle too concentrated: ${bundlePct.toFixed(1)}% in top holder (max ${MAX_BUNDLE_PCT}%)`,
+                "error"
+            );
+            return {
+                safe: false,
+                reason: `Bundle concentration too high: ${bundlePct.toFixed(1)}% (max ${MAX_BUNDLE_PCT}%)`,
+                source: "rugcheck",
+                score,
+                lpLockedPct: lpPct,
+                risks: [...riskDescriptions, `Top holder owns ${bundlePct.toFixed(1)}%`],
+                checks: { mintAuthority: "unknown", freezeAuthority: "unknown", liquidityLocked: "unknown" }
+            };
+        }
 
         // Determine mint/freeze auth from risk names
         const mintAuth = riskNames.some(r => r.toLowerCase().includes("mint authority"))
