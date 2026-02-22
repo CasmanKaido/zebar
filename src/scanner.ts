@@ -391,19 +391,21 @@ export class MarketScanner {
                     }
                 }
 
-                if (!meetsVol5m) { rejectReasons.vol5m++; console.log(`[EVAL] ${tag} | ❌ VOL5M`); continue; }
-                if (!meetsVol1h) { rejectReasons.vol1h++; console.log(`[EVAL] ${tag} | ❌ VOL1H`); continue; }
-                if (!meetsVol24h) { rejectReasons.vol24h++; console.log(`[EVAL] ${tag} | ❌ VOL24H`); continue; }
-                if (!meetsLiquidity) { rejectReasons.liquidity++; console.log(`[EVAL] ${tag} | ❌ LIQUIDITY`); continue; }
-                if (!meetsMcap) { rejectReasons.mcap++; console.log(`[EVAL] ${tag} | ❌ MCAP`); continue; }
+                if (!meetsVol5m) { rejectReasons.vol5m++; console.log(`[EVAL] ${tag} | ❌ VOL5M`); SocketManager.emitLog(`[EVAL] ${tag} | ❌ VOL5M`, "info"); continue; }
+                if (!meetsVol1h) { rejectReasons.vol1h++; console.log(`[EVAL] ${tag} | ❌ VOL1H`); SocketManager.emitLog(`[EVAL] ${tag} | ❌ VOL1H`, "info"); continue; }
+                if (!meetsVol24h) { rejectReasons.vol24h++; console.log(`[EVAL] ${tag} | ❌ VOL24H`); SocketManager.emitLog(`[EVAL] ${tag} | ❌ VOL24H`, "info"); continue; }
+                if (!meetsLiquidity) { rejectReasons.liquidity++; console.log(`[EVAL] ${tag} | ❌ LIQUIDITY`); SocketManager.emitLog(`[EVAL] ${tag} | ❌ LIQUIDITY`, "info"); continue; }
+                if (!meetsMcap) { rejectReasons.mcap++; console.log(`[EVAL] ${tag} | ❌ MCAP`); SocketManager.emitLog(`[EVAL] ${tag} | ❌ MCAP`, "info"); continue; }
 
                 if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) {
                     // High-liquidity tokens bypass Jupiter check — they're clearly established
                     if (liquidity >= 500_000) {
                         console.log(`[EVAL] ${tag} | ⚠️ NOT ON JUPITER (bypassed: high liq)`);
+                        SocketManager.emitLog(`[EVAL] ${tag} | ⚠️ NOT ON JUPITER (bypassed: high liq)`, "warning");
                     } else {
                         rejectReasons.jupiter++;
                         console.log(`[EVAL] ${tag} | ❌ NOT ON JUPITER`);
+                        SocketManager.emitLog(`[EVAL] ${tag} | ❌ NOT ON JUPITER`, "info");
                         continue;
                     }
                 }
