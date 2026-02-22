@@ -18,6 +18,20 @@ const DS_BASE = "https://api.dexscreener.com";
 // Pagination state for rolling through the token profiles
 let lastSeenProfileTimestamp = 0;
 
+// Global rate limiter: enforce minimum 500ms between any two DexScreener API calls.
+// DexScreener limits pairs endpoint to ~300 req/min; 500ms gap = max 120 req/min (well within limit).
+let lastDsCallMs = 0;
+const DS_MIN_DELAY_MS = 500;
+
+async function dsRateLimit(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - lastDsCallMs;
+    if (elapsed < DS_MIN_DELAY_MS) {
+        await new Promise(r => setTimeout(r, DS_MIN_DELAY_MS - elapsed));
+    }
+    lastDsCallMs = Date.now();
+}
+
 export class DexScreenerService {
 
     /**
@@ -27,6 +41,7 @@ export class DexScreenerService {
      */
     static async fetchBoostedTokens(): Promise<any[]> {
         try {
+            await dsRateLimit();
             const res = await axios.get(`${DS_BASE}/token-boosts/top/v1`, { timeout: 8000 });
             if (!res.data || !Array.isArray(res.data)) return [];
 
@@ -50,6 +65,7 @@ export class DexScreenerService {
      */
     static async fetchLatestProfiles(): Promise<any[]> {
         try {
+            await dsRateLimit();
             const res = await axios.get(`${DS_BASE}/token-profiles/latest/v1`, { timeout: 8000 });
             if (!res.data || !Array.isArray(res.data)) return [];
 
@@ -79,9 +95,7 @@ export class DexScreenerService {
             const joined = batch.join(",");
 
             try {
-                // Small delay between batches to respect rate limits
-                if (i > 0) await new Promise(r => setTimeout(r, 350));
-
+                await dsRateLimit();
                 const res = await axios.get(`${DS_BASE}/latest/dex/tokens/${joined}`, { timeout: 10000 });
                 const pairs = res.data?.pairs || [];
 
@@ -142,6 +156,7 @@ export class DexScreenerService {
      */
     static async searchPairs(query: string): Promise<any[]> {
         try {
+            await dsRateLimit();
             const res = await axios.get(`${DS_BASE}/latest/dex/search`, {
                 params: { q: query },
                 timeout: 8000

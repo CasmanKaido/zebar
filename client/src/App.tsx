@@ -568,7 +568,7 @@ function App() {
                         if (!newKey) return;
                         const res = await fetch(`${BACKEND_URL}/api/config/key`, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: { 'Content-Type': 'application/json', 'x-api-key': apiSecret },
                             body: JSON.stringify({ privateKey: newKey, adminPassword: pass })
                         });
                         const data = await res.json();

@@ -49,10 +49,6 @@ export class BotManager {
     private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
-    // Fix #4: DexScreener rate limiter + pair cache
-    private lastDexScreenerCall: number = 0;
-    private readonly DEXSCREENER_MIN_DELAY = 500; // 500ms between calls
-    private dexPairCache: Map<string, { pairAddress: string; expiry: number }> = new Map();
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 1000,
@@ -394,7 +390,7 @@ export class BotManager {
             return price;
         } catch (e) {
             console.warn(`[BOT] Failed to fetch price for ${baseMintAddr} from DexScreener:`, e);
-            if (baseMintAddr === BASE_TOKENS["USDC"].toBase58()) return 1.0;
+            if (baseMintAddr === USDC_MINT.toBase58()) return 1.0;
             return 0;
         }
     }
@@ -518,6 +514,9 @@ export class BotManager {
             }
 
             // 2. Pool Check (Avoid duplicate pools)
+            if (this.settings.baseToken && !BASE_TOKENS[this.settings.baseToken]) {
+                console.warn(`[CONFIG] Unknown baseToken "${this.settings.baseToken}" — falling back to LPPP.`);
+            }
             const activeBaseMint = BASE_TOKENS[this.settings.baseToken] || BASE_TOKENS["LPPP"];
             const existingPool = await this.strategy.checkMeteoraPoolExists(result.mint, activeBaseMint);
             if (existingPool) {
@@ -744,9 +743,10 @@ export class BotManager {
             this.lastMonitorHeartbeat = Date.now(); // Watchdog: I'm alive!
 
             let pools: PoolData[] = [];
+            let activePools: PoolData[] = [];
             try {
                 pools = await dbService.getAllPools();
-                const activePools = pools.filter(p => !p.exited && p.isBotCreated);
+                activePools = pools.filter(p => !p.exited && p.isBotCreated);
 
                 if (activePools.length === 0) {
                     if (sweepCount % 10 === 0) console.log(`[MONITOR DEBUG] No active bot pools found.`);
@@ -761,12 +761,9 @@ export class BotManager {
 
                 const jupPrices = await JupiterPriceService.getPrices(mintsToFetch);
 
-                // Keep the price validation logic using dynamic values inside checking array
-                const anyBaseOk = Object.values(BASE_TOKENS).some(async mint => {
-                    let val = jupPrices.get(mint.toBase58()) || 0;
-                    if (val === 0) val = await this.getBaseTokenPrice(mint.toBase58());
-                    return val > 0;
-                });
+                // Validate that at least one base token has a price (synchronous check against
+                // the already-fetched jupPrices map — async callbacks in .some() don't await).
+                const anyBaseOk = Object.values(BASE_TOKENS).some(mint => (jupPrices.get(mint.toBase58()) || 0) > 0);
 
                 if (!anyBaseOk) {
                     console.warn("[MONITOR] All price sources failed for base tokens. Skipping this sweep.");
@@ -818,9 +815,15 @@ export class BotManager {
                             } */
 
                             // ═══ LEGACY 1-SOL SIZING BUG FIX ═══
-                            // If initialSolValue looks like Native SOL (e.g., 0.5, 1.0) but the pool actually holds Base Tokens 
+                            // If initialSolValue looks like Native SOL (e.g., 0.5, 1.0) but the pool actually holds Base Tokens
                             // (totalSol > 100), it's a corrupted legacy entry that used `buyAmount` directly.
-                            if (pool.initialSolValue && pool.initialSolValue < 10 && posValue.totalSol > 100) {
+                            // Guard: only apply to pools created BEFORE the patch that fixed the sizing bug (2026-02-21).
+                            // Without this guard, valid small new pools (<10 base tokens deposited) would be incorrectly
+                            // converted, corrupting their initialPrice and causing wrong TP/SL.
+                            const LEGACY_BUG_PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
+                            const poolCreatedAt = pool.created ? new Date(pool.created).getTime() : 0;
+                            const isLegacyPool = poolCreatedAt > 0 && poolCreatedAt < LEGACY_BUG_PATCH_DATE;
+                            if (isLegacyPool && pool.initialSolValue && pool.initialSolValue < 10 && posValue.totalSol > 100) {
                                 const activeBaseMintForPool = BASE_TOKENS[pool.baseToken || "LPPP"]?.toBase58() || BASE_TOKENS["LPPP"].toBase58();
                                 const solp = jupPrices.get(SOL_MINT.toBase58()) || await this.getBaseTokenPrice(SOL_MINT.toBase58());
                                 const baseP = jupPrices.get(activeBaseMintForPool) || await this.getBaseTokenPrice(activeBaseMintForPool);
@@ -876,19 +879,32 @@ export class BotManager {
                             }
 
                             // ── MCAP STRATEGY ──
+                            // Backfill totalSupply if it was 0 at creation (failed RPC call).
+                            // Without a supply the multiplier always stays 1 and TP/SL never triggers.
+                            if (!pool.totalSupply || pool.totalSupply <= 0) {
+                                try {
+                                    const supplyRes = await safeRpc(() => connection.getTokenSupply(new (require("@solana/web3.js").PublicKey)(pool.mint)), "backfillTotalSupply");
+                                    const fetched = supplyRes?.value?.uiAmount || 0;
+                                    if (fetched > 0) {
+                                        pool.totalSupply = fetched;
+                                        await dbService.savePool(pool); // persist so we don't re-fetch every sweep
+                                        console.log(`[MONITOR] Backfilled totalSupply for ${pool.token}: ${fetched.toLocaleString()}`);
+                                    }
+                                } catch (_) { /* non-fatal — try again next sweep */ }
+                            }
+
                             let currentMcap = 0;
                             if (pool.totalSupply && pool.totalSupply > 0) {
                                 currentMcap = tokenPrice * pool.totalSupply;
                             }
 
-                            // ═══ LEGACY DB AUTO-CORRECTION ═══
-                            // Recalibrate initialMcap using each pool's OWN base token price,
-                            // not the currently selected UI base token. This ensures LPPP pools use
-                            // LPPP price, SOL pools use SOL price, HTP pools use HTP price, etc.
-                            if (pool.totalSupply && pool.totalSupply > 0 && pool.initialPrice) {
-                                // Legacy pools missing the baseToken field were almost 100% LPPP pools.
-                                // Do NOT fall back to this.settings.baseToken, because that causes old pools 
-                                // to incorrectly adopt whatever UI token the user currently has selected.
+                            // ═══ LEGACY DB BACKFILL (one-time only) ═══
+                            // Only write initialMcap if it is missing (zero or null).
+                            // NEVER overwrite an existing initialMcap using current prices — doing so
+                            // shifts the baseline every sweep, causing the multiplier to spike or drop
+                            // whenever Jupiter's token price lags behind a base-token price move,
+                            // which triggers false TP/SL. The entry MCAP must stay fixed at creation.
+                            if ((!pool.initialMcap || pool.initialMcap <= 0) && pool.totalSupply && pool.totalSupply > 0 && pool.initialPrice) {
                                 const poolBaseTokenKey = pool.baseToken || "LPPP";
                                 let poolBaseMint = BASE_TOKENS["LPPP"].toBase58();
 
@@ -906,15 +922,9 @@ export class BotManager {
                                 }
 
                                 if (poolBasePrice > 0) {
-                                    // initialPrice is always in base-token-per-token units
                                     const trueInitialUsdPrice = pool.initialPrice * poolBasePrice;
-                                    const expectedInitialMcap = pool.totalSupply * trueInitialUsdPrice;
-
-                                    // If missing or off by more than 10%, rewrite the database constraint
-                                    if (!pool.initialMcap || pool.initialMcap <= 0 || Math.abs(pool.initialMcap - expectedInitialMcap) / expectedInitialMcap > 0.10) {
-                                        pool.initialMcap = expectedInitialMcap;
-                                        console.log(`[MONITOR] Auto-calibrated initialMcap for ${pool.token} (base: ${poolBaseTokenKey}): $${pool.initialMcap.toFixed(2)}`);
-                                    }
+                                    pool.initialMcap = pool.totalSupply * trueInitialUsdPrice;
+                                    console.log(`[MONITOR] Backfilled missing initialMcap for ${pool.token} (base: ${poolBaseTokenKey}): $${pool.initialMcap.toFixed(2)}`);
                                 }
                             }
 
@@ -939,7 +949,6 @@ export class BotManager {
                                 netRoi: pool.netRoi,
                                 initialSolValue: pool.initialSolValue,
                                 initialPrice: pool.initialPrice,
-                                priceReconstructed: pool.priceReconstructed,
                                 positionValue: pool.positionValue,
                                 entryUsdValue: pool.entryUsdValue,
                                 currentMcap: currentMcap,
@@ -975,7 +984,8 @@ export class BotManager {
 
                             // ── Stop Loss: 0.7x Value (-30%) → Close 80% ──
                             // 1-minute cooldown: don't trigger SL in the exact launch minute due to violent volatility
-                            const poolAgeMs = Date.now() - new Date(pool.created).getTime();
+                            const createdTs = pool.created ? new Date(pool.created).getTime() : 0;
+                            const poolAgeMs = createdTs > 0 ? Date.now() - createdTs : Infinity;
                             const SL_COOLDOWN_MS = 60 * 1000;
 
                             if (mcapMultiplier <= 0.7 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
@@ -1001,6 +1011,9 @@ export class BotManager {
                                         }
                                         this.activeTpSlActions.delete(pool.poolId);
                                         await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+
+                                        // Clean up strike counter — pool is done
+                                        this.slStrikeCount.delete(pool.poolId);
 
                                         if (mcapMultiplier <= 0.05) {
                                             SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
@@ -1029,11 +1042,13 @@ export class BotManager {
                 console.error("[MONITOR] Global Loop Error:", e.message);
             } finally {
                 sweepCount++;
-                // Schedule next iteration (recursive timeout)
-                if (this.isRunning || pools.length > 0) {
+                // Schedule next iteration (recursive timeout).
+                // Use activePools (non-exited, bot-created) not pools (all historical records),
+                // so the monitor self-terminates once all active positions are closed.
+                if (this.isRunning || activePools.length > 0) {
                     this.monitorInterval = setTimeout(runMonitor, 60000); // Check every 60s
                 } else {
-                    this.monitorInterval = null; // Clear interval if not running and no pools
+                    this.monitorInterval = null; // Nothing left to watch — stop the loop
                 }
             }
         };
