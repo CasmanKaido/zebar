@@ -504,7 +504,7 @@ export class MarketScanner {
             const vol5m = (result as any).volume5m || 0;
 
             const meetsLiq = this.inRange(liquidity, this.criteria.liquidity);
-            const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min, max: this.criteria.mcap.max }); // Strictly enforce UI MCAP limits
+            const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min * 0.5, max: this.criteria.mcap.max }); // 50% discount on min mcap for fresh tokens
             const meetsMomentum = vol5m >= (this.criteria.volume5m.min * 2); // Must show immediate velocity
 
             if (meetsLiq && meetsMcap && (meetsMomentum || (result as any).volume1h > this.criteria.volume1h.min)) {
