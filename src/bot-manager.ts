@@ -1261,42 +1261,6 @@ export class BotManager {
                 }
             }
 
-            // Attempt 3: On-chain resolution (Jupiter price + RPC supply = mcap)
-            if (!result) {
-                const price = await JupiterPriceService.getPrice(mint);
-                if (price > 0) {
-                    let mcap = 0;
-                    let symbol = "NEW";
-                    try {
-                        const supplyRes = await safeRpc(() => connection.getTokenSupply(new PublicKey(mint)), "flashSupply");
-                        const totalSupply = supplyRes?.value?.uiAmount || 0;
-                        mcap = price * totalSupply;
-                    } catch { /* supply fetch failed, mcap stays 0 */ }
-
-                    try {
-                        symbol = await TokenMetadataService.getSymbol(mint, connection) || "NEW";
-                    } catch { /* symbol fetch failed */ }
-
-                    if (mcap > 0) {
-                        this._flashRetryCount.delete(mint);
-                        result = {
-                            mint: new PublicKey(mint),
-                            pairAddress: "",
-                            dexId: dexId || "unknown",
-                            volume24h: 0,
-                            liquidity: 0, // Unknown — evaluateToken will check this
-                            mcap,
-                            symbol,
-                            priceUsd: price,
-                            source: "HELIUS_LIVE_RPC"
-                        };
-                        (result as any).volume5m = 0;
-                        (result as any).volume1h = 0;
-                        SocketManager.emitLog(`[HELIUS] Flash Scout via on-chain fallback: ${symbol} (MCAP: $${Math.floor(mcap)})`, "info");
-                    }
-                }
-            }
-
             // If we resolved data from any source, evaluate it
             if (result && this.scanner) {
                 await this.scanner.evaluateToken(result);
