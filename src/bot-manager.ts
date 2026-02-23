@@ -1302,26 +1302,30 @@ export class BotManager {
                     this._pumpfunWatchlist.set(mint, Date.now());
                 }
             } else if (!result) {
-                // No source had data yet — schedule retry with increasing delays
-                const RETRY_DELAYS = [5000, 15000, 30000, 60000, 120000];
-                const attempt = this._flashRetryCount.get(mint) ?? 0;
-
-                if (attempt < RETRY_DELAYS.length) {
-                    this._flashRetryCount.set(mint, attempt + 1);
-                    const delay = RETRY_DELAYS[attempt];
-                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not resolved by any source. Retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s`, "info");
-                    setTimeout(() => {
-                        this.triggerFlashScout(mint, pairAddress, dexId).catch(err => {
-                            console.warn(`[HELIUS] Flash retry ${attempt + 1} failed for ${mint}:`, err);
-                        });
-                    }, delay);
-                } else {
+                // Pump.fun bonding curve tokens: DexScreener/Birdeye won't have data until graduation.
+                // Skip retries — just add to watchlist and wait for CREATE_POOL event.
+                if (dexId === "pumpfun") {
+                    this._pumpfunWatchlist.set(mint, Date.now());
+                    SocketManager.emitLog(`[HELIUS] Pump.fun ${mint.slice(0, 8)}... on bonding curve. Watching for graduation.`, "info");
                     this._flashRetryCount.delete(mint);
-                    // Add unresolved Pump.fun tokens to watchlist for graduation re-evaluation
-                    if (dexId === "pumpfun") {
-                        this._pumpfunWatchlist.set(mint, Date.now());
+                } else {
+                    // Non-Pump.fun tokens: retry with increasing delays (pool may be indexing)
+                    const RETRY_DELAYS = [5000, 15000, 30000, 60000, 120000];
+                    const attempt = this._flashRetryCount.get(mint) ?? 0;
+
+                    if (attempt < RETRY_DELAYS.length) {
+                        this._flashRetryCount.set(mint, attempt + 1);
+                        const delay = RETRY_DELAYS[attempt];
+                        SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not resolved. Retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s`, "info");
+                        setTimeout(() => {
+                            this.triggerFlashScout(mint, pairAddress, dexId).catch(err => {
+                                console.warn(`[HELIUS] Flash retry ${attempt + 1} failed for ${mint}:`, err);
+                            });
+                        }, delay);
+                    } else {
+                        this._flashRetryCount.delete(mint);
+                        SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. Dropping.`, "warning");
                     }
-                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. ${dexId === "pumpfun" ? "Watching for graduation." : "Dropping."}`, "warning");
                 }
             }
         } catch (e) {

@@ -298,25 +298,22 @@ export class MarketScanner {
             }
 
             // ═══════════════════════════════════════════════════════
-            // SCOUT: Pump.fun direct API (catches tokens missed by Helius/Birdeye)
+            // SCOUT: DexScreener latest profiles + boosted tokens
+            // Catches newly launched tokens that have DexScreener profiles
             // ═══════════════════════════════════════════════════════
             if (mode === "SCOUT") {
                 try {
-                    const pumpMints = await BirdeyeService.fetchPumpFunNewTokens();
-                    if (pumpMints.length > 0) {
-                        // Filter out mints we already have from other sources or recently seen
-                        const existingMints = new Set(allPairs.map((p: any) => p.baseToken?.address).filter(Boolean));
-                        const newPumpMints = pumpMints.filter(m => !existingMints.has(m) && !this.seenPairs.has(m));
-
-                        if (newPumpMints.length > 0) {
-                            // Batch resolve through DexScreener (single fast API call for up to 30 tokens)
-                            const resolved = await DexScreenerService.batchLookupTokens(newPumpMints.slice(0, 30), "PUMPFUN_SCOUT");
-                            allPairs = [...allPairs, ...resolved];
-                            SocketManager.emitLog(`[PUMPFUN] ${resolved.length}/${newPumpMints.length} new Pump.fun tokens resolved.`, "info");
-                        }
+                    const [latestProfiles, boostedTokens] = await Promise.all([
+                        DexScreenerService.fetchLatestProfiles().catch(() => []),
+                        DexScreenerService.fetchBoostedTokens().catch(() => [])
+                    ]);
+                    const dsNewTokens = [...latestProfiles, ...boostedTokens];
+                    if (dsNewTokens.length > 0) {
+                        allPairs = [...allPairs, ...dsNewTokens];
+                        SocketManager.emitLog(`[DS-SCOUT] ${latestProfiles.length} latest profiles + ${boostedTokens.length} boosted tokens added.`, "info");
                     }
                 } catch (e: any) {
-                    console.warn(`[PUMPFUN] Scout scan error: ${e.message}`);
+                    console.warn(`[DS-SCOUT] Error: ${e.message}`);
                 }
             }
 
