@@ -1,16 +1,13 @@
-import { Connection, PublicKey } from "@solana/web3.js";
-import { getMint, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { Connection } from "@solana/web3.js";
 import { SocketManager } from "./socket";
-import { safeRpc } from "./rpc-utils";
 import { IGNORED_MINTS } from "./config";
 import axios from "axios";
 
 /**
  * Token Safety Service
- * 2-tier safety check: RugCheck API (primary) → On-Chain (fallback)
- *
- * - RugCheck: Primary. Returns risk score, risk list, LP lock %, bundle %.
- * - On-Chain: Fallback. Uses RPC to check mint/freeze auth.
+ * RugCheck API with retry → hard reject on failure.
+ * LP lock verification cannot be done on-chain, so if RugCheck is unavailable
+ * we reject the token rather than bypassing the LP lock check.
  */
 
 export interface SafetyResult {
@@ -45,6 +42,7 @@ interface RugCheckReport {
 
 // ─── Constants ───────────────────────────────────────────────────────
 const RUGCHECK_TIMEOUT = 6000;
+const RUGCHECK_RETRY_DELAY = 3000; // 3s delay before retry
 const MAX_BUNDLE_PCT = 20;  // Helius webhook: max 20% in top holder (80% must be distributed)
 
 export class SafetyService {
@@ -53,7 +51,7 @@ export class SafetyService {
     // PUBLIC: Main entry point — same signature as old OnChainSafetyChecker
     // ═══════════════════════════════════════════════════════════════════
     static async checkToken(
-        connection: Connection,
+        _connection: Connection,
         mintAddress: string,
         _pairAddress?: string
     ): Promise<SafetyResult> {
@@ -67,18 +65,31 @@ export class SafetyService {
             };
         }
 
-        // Tier 1: RugCheck API (includes bundle % check + locked LP)
+        // Attempt 1: RugCheck API
         try {
             const result = await this.checkViaRugCheck(mintAddress);
             if (result) return result;
         } catch (err: any) {
-            console.warn(`[SAFETY] RugCheck failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
+            console.warn(`[SAFETY] RugCheck attempt 1 failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
         }
 
-        // Tier 2: On-Chain (fallback — uses RPC)
-        console.warn(`[SAFETY] RugCheck failed. Falling back to on-chain checks for ${mintAddress.slice(0, 8)}...`);
-        SocketManager.emitLog(`[SAFETY] ⚠️ RugCheck down — using on-chain fallback (costs RPC)`, "warning");
-        return this.checkOnChain(connection, mintAddress);
+        // Attempt 2: Retry after short delay (transient failures / rate limits)
+        await new Promise(r => setTimeout(r, RUGCHECK_RETRY_DELAY));
+        try {
+            const result = await this.checkViaRugCheck(mintAddress);
+            if (result) return result;
+        } catch (err: any) {
+            console.warn(`[SAFETY] RugCheck attempt 2 failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
+        }
+
+        // Hard reject — cannot verify LP lock status without RugCheck
+        SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... RugCheck unavailable. Rejecting (LP lock unverifiable).`, "error");
+        return {
+            safe: false,
+            reason: "RugCheck unavailable — cannot verify LP lock status",
+            source: "error",
+            checks: { mintAuthority: "unknown", freezeAuthority: "unknown", liquidityLocked: "unknown" }
+        };
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -159,65 +170,6 @@ export class SafetyService {
         };
     }
 
-    // ═══════════════════════════════════════════════════════════════════
-    // TIER 2: On-Chain Fallback (uses RPC — fallback)
-    // ═══════════════════════════════════════════════════════════════════
-    private static async checkOnChain(
-        connection: Connection,
-        mintAddress: string
-    ): Promise<SafetyResult> {
-        const mint = new PublicKey(mintAddress);
-        const result: SafetyResult = {
-            safe: true,
-            reason: "On-chain checks passed",
-            source: "onchain",
-            checks: {
-                mintAuthority: "unknown",
-                freezeAuthority: "unknown",
-                liquidityLocked: "unknown",
-            },
-        };
-
-        try {
-            let mintInfo;
-            try {
-                mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_PROGRAM_ID), "getMint-v1");
-            } catch {
-                try {
-                    mintInfo = await safeRpc(() => getMint(connection, mint, "confirmed", TOKEN_2022_PROGRAM_ID), "getMint-v2");
-                } catch (e2: any) {
-                    result.safe = false;
-                    result.reason = "Unsupported token program";
-                    return result;
-                }
-            }
-
-            // Mint authority
-            if (mintInfo.mintAuthority !== null) {
-                result.checks.mintAuthority = "enabled";
-                SocketManager.emitLog(`[SAFETY] ⚠️ ${mintAddress.slice(0, 8)}... Mint Authority ENABLED (on-chain)`, "warning");
-            } else {
-                result.checks.mintAuthority = "disabled";
-            }
-
-            // Freeze authority — hard reject
-            if (mintInfo.freezeAuthority !== null) {
-                result.safe = false;
-                result.reason = "Freeze Authority is ENABLED (on-chain check)";
-                result.checks.freezeAuthority = "enabled";
-                SocketManager.emitLog(`[SAFETY] ❌ ${mintAddress.slice(0, 8)}... Freeze Authority ENABLED (on-chain)`, "error");
-                return result;
-            }
-            result.checks.freezeAuthority = "disabled";
-        } catch (err: any) {
-            console.warn(`[SAFETY] On-chain fallback failed: ${err.message}`);
-            result.safe = false;
-            result.reason = `On-chain check failed: ${err.message}`;
-            result.source = "error";
-        }
-
-        return result;
-    }
 }
 
 // ── Backwards compatibility alias ──
