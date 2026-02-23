@@ -1261,9 +1261,10 @@ export class BotManager {
                 }
             }
 
-            // If we resolved data from any source, evaluate it
+            // If we resolved data from any source, enqueue it directly (bypassing scanner filters)
             if (result && this.scanner) {
-                await this.scanner.evaluateToken(result);
+                SocketManager.emitLog(`[HELIUS] Flash Scout enqueued directly: ${result.symbol}`, "info");
+                (this as any).enqueueToken(result);
             } else if (!result) {
                 // No source had data yet — schedule retry with increasing delays
                 const RETRY_DELAYS = [5000, 15000, 30000];
