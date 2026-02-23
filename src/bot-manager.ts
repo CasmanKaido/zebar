@@ -444,7 +444,8 @@ export class BotManager {
             volume24h: this.settings.volume24h,
             liquidity: this.settings.liquidity,
             mcap: this.settings.mcap,
-            mode: this.settings.mode
+            mode: this.settings.mode,
+            maxAgeMinutes: this.settings.maxAgeMinutes
         };
 
         this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
@@ -1387,7 +1388,8 @@ export class BotManager {
                     mcap: data.marketCap,
                     symbol: data.baseToken.symbol,
                     priceUsd: parseFloat(data.priceUsd),
-                    source: "HELIUS_LIVE"
+                    source: "HELIUS_LIVE",
+                    pairCreatedAt: data.pairCreatedAt || 0
                 };
                 (result as any).volume5m = data.volume.m5;
                 (result as any).volume1h = data.volume.h1;

@@ -536,6 +536,15 @@ export class MarketScanner {
 
             SocketManager.emitLog(`[FLASH-EVAL] Real-time check for ${result.symbol}...`, "info");
 
+            // Max Age filter — reject tokens older than maxAgeMinutes
+            if (this.criteria.maxAgeMinutes && this.criteria.maxAgeMinutes > 0 && result.pairCreatedAt) {
+                const ageMinutes = (Date.now() - result.pairCreatedAt) / (1000 * 60);
+                if (ageMinutes > this.criteria.maxAgeMinutes) {
+                    console.log(`[FLASH-REJECT] ${result.symbol} too old: ${ageMinutes.toFixed(1)}m (max: ${this.criteria.maxAgeMinutes}m)`);
+                    return false;
+                }
+            }
+
             // Use more lenient criteria for High-Priority Flash Evaluation
             const liquidity = result.liquidity || 0;
             const mcap = result.mcap || 0;
