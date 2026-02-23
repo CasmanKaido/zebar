@@ -47,6 +47,7 @@ export class BotManager {
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isUsingBackup: boolean = false;
     private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
+    private _flashRetryCount: Map<string, number> = new Map(); // Track retry attempts for DexScreener resolution
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
     private settings: BotSettings = {
@@ -702,6 +703,7 @@ export class BotManager {
         const flushed = this.evaluationQueue.length;
         this.evaluationQueue = [];
         this.pendingMints.clear();
+        this._flashRetryCount.clear();
         if (flushed > 0) {
             console.log(`[BOT] Flushed ${flushed} pending tokens from evaluation queue.`);
         }
@@ -1216,6 +1218,7 @@ export class BotManager {
             const resolved = await DexScreenerService.batchLookupTokens([mint], "HELIUS_FLASH");
 
             if (resolved.length > 0) {
+                this._flashRetryCount.delete(mint); // Clean up retry tracking on success
                 const data = resolved[0];
                 const result: ScanResult = {
                     mint: new PublicKey(data.baseToken.address),
@@ -1238,10 +1241,25 @@ export class BotManager {
                     await this.scanner.evaluateToken(result);
                 }
             } else {
-                // If DexScreener doesn't have it yet, it might be EXTREMELY new.
-                // We could fallback to RPC metadata but we wouldn't have volume/liq.
-                // For now, we wait for the next sweep or a slight delay.
-                // SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)} too new for DexScreener resolution. Skipping flash.`, "info");
+                // DexScreener doesn't have it yet — token is extremely new.
+                // Retry with increasing delays: 5s, 15s, 30s
+                const RETRY_DELAYS = [5000, 15000, 30000];
+                const attempt = this._flashRetryCount.get(mint) ?? 0;
+
+                if (attempt < RETRY_DELAYS.length) {
+                    this._flashRetryCount.set(mint, attempt + 1);
+                    const delay = RETRY_DELAYS[attempt];
+                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not on DexScreener yet. Retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s`, "info");
+                    setTimeout(() => {
+                        this.triggerFlashScout(mint, pairAddress, dexId).catch(err => {
+                            console.warn(`[HELIUS] Flash retry ${attempt + 1} failed for ${mint}:`, err);
+                        });
+                    }, delay);
+                } else {
+                    // Exhausted retries — clean up
+                    this._flashRetryCount.delete(mint);
+                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not found on DexScreener after ${RETRY_DELAYS.length} retries. Dropping.`, "warning");
+                }
             }
         } catch (e) {
             console.warn(`[HELIUS] Flash Scout resolution failed for ${mint}:`, e);
