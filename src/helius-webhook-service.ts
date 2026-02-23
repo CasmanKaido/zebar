@@ -38,13 +38,13 @@ export class HeliusWebhookService {
                 // Ignore failed transactions
                 if (tx.transactionError) continue;
 
-                // Detect "Liquidity Add" or "Pool Creation" events
-                // Helius 'type' field often identifies these
-                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") {
+                // Detect "Liquidity Add", "Pool Creation", or "Token Mint" events
+                // Helius 'type' field often identifies these. Pump.fun creations are mostly "TOKEN_MINT"
+                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY" || tx.type === "TOKEN_MINT") {
                     this.processPoolEvent(tx, botManager);
-                } else if (tx.type === "TRANSFER" || !tx.type) {
+                } else {
                     // Fallback: Check instructions for DEX Program IDs
-                    // Many pool creations are labeled TRANSFER or have no type, check program IDs instead
+                    // Many pool creations don't get typed properly, check program IDs instead
                     // Raydium V4: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
                     // Meteora CP-AMM: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
                     // Pump.fun: 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P

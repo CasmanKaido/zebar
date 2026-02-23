@@ -20,9 +20,9 @@ Your bot's endpoint is:
 2. Go to **Webhooks** -> **New Webhook**.
 3. **Webhook URL:** Paste your URL from Step 1.
 4. **Webhook Type:** Select `Enhanced`.
-5. **Transaction Type:** Select **`CREATE_POOL`** and **`ADD_LIQUIDITY`**. 
+5. **Transaction Type:** Select **`CREATE_POOL`**, **`ADD_LIQUIDITY`**, and **`TOKEN_MINT`**. 
    > [!IMPORTANT]
-   > Do **NOT** select "Any". Selecting "Any" will ping your server for every single swap on Solana, which will drain your Helius credits in minutes.
+   > **`TOKEN_MINT`** is absolutely necessary to catch fresh **Pump.fun** token launches! Do **NOT** select "Any". Selecting "Any" will ping your server for every single swap on Solana, which will drain your Helius credits in minutes.
 6. **Transaction Status:** Select `Success`.
 7. **Auth Token:** In the "Auth Token" or "Authentication" box, simply paste your secret (e.g., `my_helius_pass_123`).
    > [!NOTE]
