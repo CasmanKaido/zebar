@@ -203,4 +203,82 @@ export class DexScreenerService {
             return null;
         }
     }
+
+    /**
+     * GeckoTerminal: Fetch brand new pools on Solana.
+     * /api/v2/networks/solana/new_pools — returns pools sorted by creation time (newest first).
+     * Great for catching Pump.fun graduations and fresh launches.
+     */
+    static async fetchGeckoNewPools(): Promise<any[]> {
+        try {
+            const res = await axios.get(
+                "https://api.geckoterminal.com/api/v2/networks/solana/new_pools?page=1",
+                { timeout: 8000 }
+            );
+
+            if (!res.data?.data || !Array.isArray(res.data.data)) return [];
+
+            return res.data.data.map((p: any) => ({
+                pairAddress: p.attributes?.address || "",
+                chainId: "solana",
+                dexId: p.relationships?.dex?.data?.id || "unknown",
+                baseToken: {
+                    symbol: (p.attributes?.name || "?").split(" / ")[0],
+                    address: (p.relationships?.base_token?.data?.id || "").split("_")[1] || ""
+                },
+                quoteToken: {
+                    symbol: (p.attributes?.name || "?").split(" / ")[1] || "?",
+                    address: (p.relationships?.quote_token?.data?.id || "").split("_")[1] || ""
+                },
+                priceUsd: p.attributes?.base_token_price_usd || "0",
+                volume: {
+                    m5: Number(p.attributes?.volume_usd?.m5 || 0),
+                    h1: Number(p.attributes?.volume_usd?.h1 || 0),
+                    h24: Number(p.attributes?.volume_usd?.h24 || 0)
+                },
+                liquidity: { usd: Number(p.attributes?.reserve_in_usd || 0) },
+                marketCap: Number(p.attributes?.fdv_usd || 0),
+                pairCreatedAt: p.attributes?.pool_created_at ? new Date(p.attributes.pool_created_at).getTime() : 0,
+                source: "GECKO_NEW"
+            }));
+        } catch (err: any) {
+            console.warn(`[GECKO] New pools fetch failed: ${err.message}`);
+            return [];
+        }
+    }
+
+    /**
+     * Raydium API: Fetch standard AMM pools sorted by liquidity.
+     * Useful for catching recently graduated Pump.fun tokens on Raydium.
+     * Returns mint addresses for batch resolution via DexScreener.
+     */
+    static async fetchRaydiumNewMints(): Promise<string[]> {
+        try {
+            const res = await axios.get(
+                "https://api-v3.raydium.io/pools/info/list?poolType=standard&poolSortField=liquidity&sortType=desc&pageSize=50&page=1",
+                { timeout: 8000 }
+            );
+
+            if (!res.data?.success) return [];
+
+            const pools = res.data.data?.data || [];
+            const SOL = "So11111111111111111111111111111111111111112";
+            const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+            const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+            const stables = new Set([SOL, USDC, USDT]);
+
+            const mints: string[] = [];
+            for (const p of pools) {
+                const mintA = p.mintA?.address;
+                const mintB = p.mintB?.address;
+                // Extract the non-SOL/stablecoin side
+                if (mintA && !stables.has(mintA)) mints.push(mintA);
+                else if (mintB && !stables.has(mintB)) mints.push(mintB);
+            }
+            return [...new Set(mints)];
+        } catch (err: any) {
+            console.warn(`[RAYDIUM] Pool list fetch failed: ${err.message}`);
+            return [];
+        }
+    }
 }

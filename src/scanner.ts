@@ -298,22 +298,38 @@ export class MarketScanner {
             }
 
             // ═══════════════════════════════════════════════════════
-            // SCOUT: DexScreener latest profiles + boosted tokens
-            // Catches newly launched tokens that have DexScreener profiles
+            // SCOUT: Multi-source new token discovery
+            // Fires all sources in parallel for maximum coverage
             // ═══════════════════════════════════════════════════════
             if (mode === "SCOUT") {
                 try {
-                    const [latestProfiles, boostedTokens] = await Promise.all([
+                    const [latestProfiles, boostedTokens, geckoNewPools, raydiumMints] = await Promise.all([
                         DexScreenerService.fetchLatestProfiles().catch(() => []),
-                        DexScreenerService.fetchBoostedTokens().catch(() => [])
+                        DexScreenerService.fetchBoostedTokens().catch(() => []),
+                        DexScreenerService.fetchGeckoNewPools().catch(() => []),
+                        DexScreenerService.fetchRaydiumNewMints().catch(() => [])
                     ]);
-                    const dsNewTokens = [...latestProfiles, ...boostedTokens];
-                    if (dsNewTokens.length > 0) {
-                        allPairs = [...allPairs, ...dsNewTokens];
-                        SocketManager.emitLog(`[DS-SCOUT] ${latestProfiles.length} latest profiles + ${boostedTokens.length} boosted tokens added.`, "info");
+
+                    // Direct pair data sources (already have volume/liq/mcap)
+                    const directPairs = [...latestProfiles, ...boostedTokens, ...geckoNewPools];
+                    allPairs = [...allPairs, ...directPairs];
+
+                    // Raydium returns mint addresses only — batch resolve via DexScreener
+                    if (raydiumMints.length > 0) {
+                        const existingMints = new Set(allPairs.map((p: any) => p.baseToken?.address).filter(Boolean));
+                        const newRayMints = raydiumMints.filter(m => !existingMints.has(m) && !this.seenPairs.has(m));
+                        if (newRayMints.length > 0) {
+                            const resolved = await DexScreenerService.batchLookupTokens(newRayMints.slice(0, 30), "RAYDIUM_SCOUT");
+                            allPairs = [...allPairs, ...resolved];
+                        }
                     }
+
+                    SocketManager.emitLog(
+                        `[SCOUT] Sources: DS-Profiles:${latestProfiles.length} Boosted:${boostedTokens.length} Gecko-New:${geckoNewPools.length} Raydium:${raydiumMints.length}`,
+                        "info"
+                    );
                 } catch (e: any) {
-                    console.warn(`[DS-SCOUT] Error: ${e.message}`);
+                    console.warn(`[SCOUT] Multi-source error: ${e.message}`);
                 }
             }
 
