@@ -42,7 +42,7 @@ export class MarketScanner {
     private callback: (result: ScanResult) => Promise<void>;
     private seenPairs: Map<string, number> = new Map(); // mintAddress -> timestamp
     private _processingMutex: Set<string> = new Set(); // Prevent concurrent webhook duplicate buys
-    private SEEN_COOLDOWN = 5 * 60 * 1000; // 5 minute cooldown
+    private SEEN_COOLDOWN = 3 * 60 * 1000; // 3 minute cooldown
     private scanInterval: NodeJS.Timeout | null = null;
     private jupiterTokens: Map<string, any> = new Map(); // mint -> metadata
     private lastJupiterSync = 0;
@@ -144,7 +144,8 @@ export class MarketScanner {
             } catch (error: any) {
                 console.error(`[SWEEPER ERROR] ${error.message}`);
             }
-            await new Promise(resolve => setTimeout(resolve, 20000));
+            const sweepInterval = (this.criteria.mode === "SCOUT") ? 10000 : 20000;
+            await new Promise(resolve => setTimeout(resolve, sweepInterval));
         }
     }
 
@@ -293,6 +294,52 @@ export class MarketScanner {
                     }
                 } catch (e: any) {
                     console.warn(`[SCOUT] New listings error: ${e.message}`);
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════
+            // SCOUT: Pump.fun direct API (catches tokens missed by Helius/Birdeye)
+            // ═══════════════════════════════════════════════════════
+            if (mode === "SCOUT") {
+                try {
+                    const pumpMints = await BirdeyeService.fetchPumpFunNewTokens();
+                    if (pumpMints.length > 0) {
+                        // Filter out mints we already have from other sources
+                        const existingMints = new Set(allPairs.map((p: any) => p.baseToken?.address).filter(Boolean));
+                        const newPumpMints = pumpMints.filter(m => !existingMints.has(m));
+
+                        if (newPumpMints.length > 0) {
+                            // Batch resolve through DexScreener
+                            const resolved = await DexScreenerService.batchLookupTokens(newPumpMints.slice(0, 30), "PUMPFUN_SCOUT");
+                            allPairs = [...allPairs, ...resolved];
+                            SocketManager.emitLog(`[PUMPFUN] ${resolved.length}/${newPumpMints.length} new Pump.fun tokens resolved.`, "info");
+
+                            // Fallback: tokens not on DexScreener yet, try Birdeye individual lookup
+                            const resolvedMints = new Set(resolved.map((p: any) => p.baseToken?.address));
+                            const unresolvedMints = newPumpMints.filter(m => !resolvedMints.has(m)).slice(0, 10);
+                            for (const mint of unresolvedMints) {
+                                try {
+                                    const overview = await BirdeyeService.fetchTokenOverview(mint);
+                                    if (overview && overview.price > 0 && overview.liquidity > 0) {
+                                        allPairs.push({
+                                            pairAddress: "",
+                                            baseToken: { address: mint, symbol: overview.symbol || "PUMP" },
+                                            quoteToken: { address: SOL_MINT.toBase58(), symbol: "SOL" },
+                                            dexId: "pumpfun",
+                                            chainId: "solana",
+                                            priceUsd: overview.price.toString(),
+                                            volume: { m5: overview.volume5m, h1: overview.volume1h, h24: overview.volume24h },
+                                            liquidity: { usd: overview.liquidity },
+                                            marketCap: overview.mcap,
+                                            source: "PUMPFUN_RAW"
+                                        });
+                                    }
+                                } catch {}
+                            }
+                        }
+                    }
+                } catch (e: any) {
+                    console.warn(`[PUMPFUN] Scout scan error: ${e.message}`);
                 }
             }
 
@@ -463,9 +510,10 @@ export class MarketScanner {
 
             // Remaining tokens are NOT marked as seen — they re-qualify next sweep for their turn
 
+            const nextIn = this.criteria.mode === "SCOUT" ? "10s" : "20s";
             const summaryMsg = qualified.length > 0
-                ? `[SWEEP] ${qualified.length} matches found, ${toExecute.length} sent to safety check. Next sweep in 20s.`
-                : `[ECOSYSTEM SWEEP COMPLETE] Next harvest in 20s.`;
+                ? `[SWEEP] ${qualified.length} matches found, ${toExecute.length} sent to safety check. Next sweep in ${nextIn}.`
+                : `[ECOSYSTEM SWEEP COMPLETE] Next harvest in ${nextIn}.`;
             console.log(summaryMsg);
             SocketManager.emitLog(summaryMsg, "info");
 
@@ -476,8 +524,8 @@ export class MarketScanner {
         }
     }
 
-    async evaluateToken(result: ScanResult) {
-        if (!this.isRunning) return;
+    async evaluateToken(result: ScanResult): Promise<boolean> {
+        if (!this.isRunning) return false;
         const mintAddress = result.mint.toBase58();
 
         // ── CONCURRENCY MUTEX ──
@@ -486,7 +534,7 @@ export class MarketScanner {
         if (!this._processingMutex) this._processingMutex = new Set<string>();
         if (this._processingMutex.has(mintAddress)) {
             // Drop duplicate identical webhook instantly
-            return;
+            return false;
         }
 
         // Lock it
@@ -494,7 +542,7 @@ export class MarketScanner {
 
         try {
             const lastSeen = this.seenPairs.get(mintAddress);
-            if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return;
+            if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return false;
 
             SocketManager.emitLog(`[FLASH-EVAL] Real-time check for ${result.symbol}...`, "info");
 
@@ -511,8 +559,10 @@ export class MarketScanner {
                 SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
                 this.seenPairs.set(mintAddress, Date.now());
                 await this.callback(result);
+                return true;
             } else {
                 console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Liq:${meetsLiq}, Mcap:${meetsMcap}, Momentum:${meetsMomentum})`);
+                return false;
             }
         } finally {
             // Always release the lock so the token can be re-evaluated later if needed

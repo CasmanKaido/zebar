@@ -221,6 +221,45 @@ export class BirdeyeService {
     }
 
     /**
+     * PUMP.FUN SCOUT: Fetches recently created tokens directly from Pump.fun's API.
+     * This catches tokens that Helius webhooks or Birdeye new_listing may miss.
+     * Returns raw mint addresses for resolution via DexScreener/Birdeye.
+     */
+    static async fetchPumpFunNewTokens(): Promise<string[]> {
+        try {
+            const response = await axios.get("https://frontend-api-v3.pump.fun/coins/latest", {
+                params: { limit: 50, offset: 0, includeNsfw: false },
+                timeout: 8000,
+                headers: { "accept": "application/json" }
+            });
+
+            if (!response.data || !Array.isArray(response.data)) return [];
+
+            return response.data
+                .filter((t: any) => t.mint && t.mint.length >= 40)
+                .map((t: any) => t.mint);
+        } catch (e: any) {
+            // Try alternative endpoint
+            try {
+                const response = await axios.get("https://frontend-api-v3.pump.fun/coins/for-you", {
+                    params: { limit: 50, offset: 0, includeNsfw: false },
+                    timeout: 8000,
+                    headers: { "accept": "application/json" }
+                });
+
+                if (!response.data || !Array.isArray(response.data)) return [];
+
+                return response.data
+                    .filter((t: any) => t.mint && t.mint.length >= 40)
+                    .map((t: any) => t.mint);
+            } catch (e2: any) {
+                console.warn(`[PUMPFUN] API fetch failed: ${e.message}`);
+                return [];
+            }
+        }
+    }
+
+    /**
      * ANALYST ENGINE: Fetches trending tokens based on market heat.
      * Target: /defi/token_trending
      */

@@ -49,6 +49,7 @@ export class BotManager {
     private isUsingBackup: boolean = false;
     private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
     private _flashRetryCount: Map<string, number> = new Map(); // Track retry attempts for DexScreener resolution
+    private _pumpfunWatchlist: Map<string, number> = new Map(); // Pump.fun tokens rejected on curve — re-evaluate on graduation
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
     private settings: BotSettings = {
@@ -460,6 +461,9 @@ export class BotManager {
         }
     }
 
+    private static readonly MAX_CONCURRENT_QUEUE = 3;
+    private activeQueueWorkers = 0;
+
     private async processQueue() {
         if (this.evaluationQueue.length === 0) {
             this.isProcessingQueue = false;
@@ -475,29 +479,41 @@ export class BotManager {
         }
 
         this.isProcessingQueue = true;
-        const result = this.evaluationQueue.shift()!;
-        const mintAddress = result.mint.toBase58();
 
-        // Guard: Skip if already being processed (prevents race condition duplicate buys)
-        if (this.pendingMints.has(mintAddress)) {
-            // Skip directly without entering try/finally (which would delete the other call's guard)
-            setTimeout(() => this.processQueue(), 500);
-            return;
+        // Launch up to MAX_CONCURRENT_QUEUE workers
+        while (this.evaluationQueue.length > 0 && this.activeQueueWorkers < BotManager.MAX_CONCURRENT_QUEUE) {
+            const result = this.evaluationQueue.shift()!;
+            const mintAddress = result.mint.toBase58();
+
+            // Guard: Skip if already being processed
+            if (this.pendingMints.has(mintAddress)) continue;
+
+            this.activeQueueWorkers++;
+            this.processQueueItem(result, mintAddress).finally(() => {
+                this.activeQueueWorkers--;
+                // Schedule next batch after a worker finishes
+                setTimeout(() => this.processQueue(), 500);
+            });
         }
 
+        // If no workers launched (all skipped), schedule retry
+        if (this.activeQueueWorkers === 0 && this.evaluationQueue.length > 0) {
+            setTimeout(() => this.processQueue(), 500);
+        }
+    }
+
+    private async processQueueItem(result: ScanResult, mintAddress: string) {
         try {
 
             // Exclusion Logic: Don't buy if we already have ANY pool for this token (active OR exited)
             const activePools: PoolData[] = await this.getPortfolio();
             if (activePools.some((p: PoolData) => p.mint === mintAddress)) {
-                // SocketManager.emitLog(`[QUEUE] Skipping ${result.symbol}: Already in portfolio.`, "info");
                 return;
             }
 
             // Check rejected token cache
             const cached = this.rejectedTokens.get(mintAddress);
             if (cached && cached.expiry > Date.now()) {
-                // console.log(`[QUEUE] Skipping ${result.symbol}: Recently rejected (${cached.reason}).`);
                 return;
             }
             this.rejectedTokens.delete(mintAddress);
@@ -637,8 +653,6 @@ export class BotManager {
             console.error(`[QUEUE ERROR] ${err.message}`);
         } finally {
             this.pendingMints.delete(mintAddress);
-            // Wait 1 second between processing queue items to be very safe on RPC
-            setTimeout(() => this.processQueue(), 1000);
         }
     }
 
@@ -705,6 +719,7 @@ export class BotManager {
         this.evaluationQueue = [];
         this.pendingMints.clear();
         this._flashRetryCount.clear();
+        this._pumpfunWatchlist.clear();
         if (flushed > 0) {
             console.log(`[BOT] Flushed ${flushed} pending tokens from evaluation queue.`);
         }
@@ -1205,11 +1220,20 @@ export class BotManager {
      * SCOUT UPGRADE: Flash Evaluation for real-time webhooks.
      * Resolves token and enqueues for immediate safety check.
      */
-    async triggerFlashScout(mint: string, pairAddress: string, dexId: string) {
+    async triggerFlashScout(mint: string, pairAddress: string, dexId: string, isGraduation: boolean = false) {
         if (!this.isRunning) return;
 
         // 1. Quick Guard
         if (this.pendingMints.has(mint)) return;
+
+        // Graduation re-evaluation: If a watched Pump.fun token graduates to Raydium,
+        // clear its rejection cache and watchlist so it gets a fresh evaluation with real pool data.
+        if (isGraduation && this._pumpfunWatchlist.has(mint)) {
+            this._pumpfunWatchlist.delete(mint);
+            this.rejectedTokens.delete(mint);
+            SocketManager.emitLog(`[HELIUS] 🎓 Pump.fun graduation detected for ${mint.slice(0, 8)}... Re-evaluating with pool data.`, "info");
+        }
+
         const cached = this.rejectedTokens.get(mint);
         if (cached && cached.expiry > Date.now()) return;
 
@@ -1263,10 +1287,14 @@ export class BotManager {
 
             // If we resolved data from any source, run through scanner criteria filters
             if (result && this.scanner) {
-                await this.scanner.evaluateToken(result);
+                const passed = await this.scanner.evaluateToken(result);
+                // If a Pump.fun token failed criteria, add to watchlist for graduation re-evaluation
+                if (!passed && dexId === "pumpfun") {
+                    this._pumpfunWatchlist.set(mint, Date.now());
+                }
             } else if (!result) {
                 // No source had data yet — schedule retry with increasing delays
-                const RETRY_DELAYS = [5000, 15000, 30000];
+                const RETRY_DELAYS = [5000, 15000, 30000, 60000, 120000];
                 const attempt = this._flashRetryCount.get(mint) ?? 0;
 
                 if (attempt < RETRY_DELAYS.length) {
@@ -1280,7 +1308,11 @@ export class BotManager {
                     }, delay);
                 } else {
                     this._flashRetryCount.delete(mint);
-                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. Dropping.`, "warning");
+                    // Add unresolved Pump.fun tokens to watchlist for graduation re-evaluation
+                    if (dexId === "pumpfun") {
+                        this._pumpfunWatchlist.set(mint, Date.now());
+                    }
+                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. ${dexId === "pumpfun" ? "Watching for graduation." : "Dropping."}`, "warning");
                 }
             }
         } catch (e) {
