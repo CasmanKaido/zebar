@@ -38,22 +38,19 @@ export class HeliusWebhookService {
                 // Ignore failed transactions
                 if (tx.transactionError) continue;
 
-                // Detect "Liquidity Add", "Pool Creation", or "Token Mint" events
-                // Helius 'type' field often identifies these. Pump.fun creations are mostly "TOKEN_MINT"
-                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") {
+                // Detect pool/liquidity events and Pump.fun bonding curve creations.
+                // Pump.fun tokens appear as TOKEN_MINT — this is the earliest signal before graduation.
+                const isPumpFunTx = tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+
+                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY" || (tx.type === "TOKEN_MINT" && isPumpFunTx)) {
                     this.processPoolEvent(tx, botManager);
                 } else {
                     // Fallback: Check instructions for DEX Program IDs
                     // Many pool creations don't get typed properly, check program IDs instead
-                    // Raydium V4: 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
-                    // Meteora CP-AMM: cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
-                    // Pump.fun: 6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P
                     const isRaydium = tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
                     const isMeteora = tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
-                    const isPumpFun = tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
 
-                    if (isRaydium || isMeteora || isPumpFun) {
-                        // We still process it broadly — the processPoolEvent will verify if it's new
+                    if (isRaydium || isMeteora || isPumpFunTx) {
                         this.processPoolEvent(tx, botManager);
                     }
                 }
@@ -78,11 +75,21 @@ export class HeliusWebhookService {
 
         const ignoredMints = new Set([SOL_MINT, USDC_MINT, USDT_MINT]);
 
-        const unconventionalTokens = tx.tokenTransfers
+        let unconventionalTokens = tx.tokenTransfers
             ?.map((t: any) => t.mint)
-            .filter((m: string) => m && !ignoredMints.has(m));
+            .filter((m: string) => m && !ignoredMints.has(m)) || [];
 
-        if (!unconventionalTokens || unconventionalTokens.length === 0) {
+        // Fallback: For Pump.fun TOKEN_MINT txs, tokenTransfers may be empty.
+        // Extract mints from accountData (token account creations) instead.
+        if (unconventionalTokens.length === 0 && tx.accountData) {
+            const accountMints = tx.accountData
+                .filter((a: any) => a.tokenBalanceChanges?.length > 0)
+                .flatMap((a: any) => a.tokenBalanceChanges.map((tbc: any) => tbc.mint))
+                .filter((m: string) => m && m.length >= 40 && !ignoredMints.has(m));
+            unconventionalTokens = [...new Set(accountMints)];
+        }
+
+        if (unconventionalTokens.length === 0) {
             console.log(`[HELIUS] Skipped tx ${tx.signature?.slice(0, 8)}: No tradeable tokens found`);
             return;
         }

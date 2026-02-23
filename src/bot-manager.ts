@@ -1242,7 +1242,7 @@ export class BotManager {
             // Attempt 2: Birdeye token overview (indexes faster than DexScreener for new tokens)
             if (!result) {
                 const birdeye = await BirdeyeService.fetchTokenOverview(mint);
-                if (birdeye && birdeye.price > 0 && birdeye.liquidity > 0 && birdeye.mcap > 0 && birdeye.symbol !== "UNKNOWN") {
+                if (birdeye && birdeye.price > 0 && birdeye.liquidity > 0) {
                     this._flashRetryCount.delete(mint);
                     result = {
                         mint: new PublicKey(mint),
