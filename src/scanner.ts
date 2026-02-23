@@ -505,7 +505,7 @@ export class MarketScanner {
 
             const meetsLiq = this.inRange(liquidity, this.criteria.liquidity);
             const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min * 0.5, max: this.criteria.mcap.max }); // 50% discount on min mcap for fresh tokens
-            const meetsMomentum = vol5m >= (this.criteria.volume5m.min * 2); // Must show immediate velocity
+            const meetsMomentum = this.inRange(vol5m, this.criteria.volume5m);
 
             if (meetsLiq && meetsMcap && (meetsMomentum || (result as any).volume1h > this.criteria.volume1h.min)) {
                 SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
