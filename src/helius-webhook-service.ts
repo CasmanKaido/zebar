@@ -40,7 +40,7 @@ export class HeliusWebhookService {
 
                 // Detect "Liquidity Add", "Pool Creation", or "Token Mint" events
                 // Helius 'type' field often identifies these. Pump.fun creations are mostly "TOKEN_MINT"
-                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY" || tx.type === "TOKEN_MINT") {
+                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") {
                     this.processPoolEvent(tx, botManager);
                 } else {
                     // Fallback: Check instructions for DEX Program IDs

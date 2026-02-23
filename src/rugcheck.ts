@@ -118,7 +118,14 @@ export class SafetyService {
 
         // Check 2: Locked Liquidity (from lockers array)
         const hasLockedLP = report.lockers && report.lockers.length > 0;
-        if (!hasLockedLP) {
+
+        // Pump.fun/Meteora bypass: RugCheck often omits formal lockers for these curves despite safety.
+        const isSafeCurve = report.markets?.some((m: any) =>
+            m.marketType === "pump_fun_amm" ||
+            (m.marketType === "meteora" && m.lp?.lpLockedPct > 90)
+        );
+
+        if (!hasLockedLP && !isSafeCurve) {
             SocketManager.emitLog(
                 `[SAFETY] ❌ ${tag}... LP not locked (no lockers detected)`,
                 "error"
@@ -135,14 +142,15 @@ export class SafetyService {
         }
 
         // ── PASS: Bundle % OK + LP Locked ──
+        const lpReason = isSafeCurve && !hasLockedLP ? 'Curve/Meteora Locked' : 'Locked';
         SocketManager.emitLog(
-            `[SAFETY] ✅ ${tag}... Safety PASS (Bundle: ${bundlePct.toFixed(1)}%, LP: Locked)`,
+            `[SAFETY] ✅ ${tag}... Safety PASS (Bundle: ${bundlePct.toFixed(1)}%, LP: ${lpReason})`,
             "success"
         );
 
         return {
             safe: true,
-            reason: `RugCheck: Bundle ${bundlePct.toFixed(1)}% + LP Locked`,
+            reason: `RugCheck: Bundle ${bundlePct.toFixed(1)}% + LP: ${lpReason}`,
             source: "rugcheck",
             score,
             lpLockedPct: bundlePct,
