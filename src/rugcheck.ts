@@ -130,9 +130,9 @@ export class SafetyService {
         // Check 2: Locked Liquidity (from lockers array)
         const hasLockedLP = report.lockers && report.lockers.length > 0;
 
-        // Pump.fun/Meteora bypass: RugCheck often omits formal lockers for these curves despite safety.
+        // Meteora/Pump.fun: Only bypass locker requirement if LP is actually locked (>90%)
         const isSafeCurve = report.markets?.some((m: any) =>
-            m.marketType === "pump_fun_amm" ||
+            (m.marketType === "pump_fun_amm" && m.lp?.lpLockedPct > 90) ||
             (m.marketType === "meteora" && m.lp?.lpLockedPct > 90)
         );
 
