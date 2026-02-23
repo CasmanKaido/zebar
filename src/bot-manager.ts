@@ -15,6 +15,7 @@ import { TokenMetadataService } from "./token-metadata-service";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { safeRpc } from "./rpc-utils";
 import { DexScreenerService } from "./dexscreener-service";
+import { BirdeyeService } from "./birdeye-service";
 
 
 
@@ -1213,14 +1214,16 @@ export class BotManager {
         if (cached && cached.expiry > Date.now()) return;
 
         try {
-            // 2. Resolve full data via DexScreener
-            // (We use batchLookup even for one to reuse normalization logic)
-            const resolved = await DexScreenerService.batchLookupTokens([mint], "HELIUS_FLASH");
+            let result: ScanResult | null = null;
 
+            // ── RESOLUTION CHAIN: DexScreener → Birdeye → On-Chain ──
+
+            // Attempt 1: DexScreener (best data quality — has pair address, all volume buckets)
+            const resolved = await DexScreenerService.batchLookupTokens([mint], "HELIUS_FLASH");
             if (resolved.length > 0) {
-                this._flashRetryCount.delete(mint); // Clean up retry tracking on success
+                this._flashRetryCount.delete(mint);
                 const data = resolved[0];
-                const result: ScanResult = {
+                result = {
                     mint: new PublicKey(data.baseToken.address),
                     pairAddress: data.pairAddress,
                     dexId: data.dexId,
@@ -1231,34 +1234,89 @@ export class BotManager {
                     priceUsd: parseFloat(data.priceUsd),
                     source: "HELIUS_LIVE"
                 };
-
-                // Add 5m and 1h volume specifically for Scout logic
                 (result as any).volume5m = data.volume.m5;
                 (result as any).volume1h = data.volume.h1;
+                SocketManager.emitLog(`[HELIUS] Flash Scout via DexScreener: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
+            }
 
-                SocketManager.emitLog(`[HELIUS] Flash Scout filtering: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
-                if (this.scanner) {
-                    await this.scanner.evaluateToken(result);
+            // Attempt 2: Birdeye token overview (indexes faster than DexScreener for new tokens)
+            if (!result) {
+                const birdeye = await BirdeyeService.fetchTokenOverview(mint);
+                if (birdeye && birdeye.price > 0 && birdeye.liquidity > 0) {
+                    this._flashRetryCount.delete(mint);
+                    result = {
+                        mint: new PublicKey(mint),
+                        pairAddress: "", // Birdeye doesn't give pair address
+                        dexId: dexId || "unknown",
+                        volume24h: birdeye.volume24h,
+                        liquidity: birdeye.liquidity,
+                        mcap: birdeye.mcap,
+                        symbol: birdeye.symbol,
+                        priceUsd: birdeye.price,
+                        source: "HELIUS_LIVE_BE"
+                    };
+                    (result as any).volume5m = birdeye.volume5m;
+                    (result as any).volume1h = birdeye.volume1h;
+                    SocketManager.emitLog(`[HELIUS] Flash Scout via Birdeye fallback: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
                 }
-            } else {
-                // DexScreener doesn't have it yet — token is extremely new.
-                // Retry with increasing delays: 5s, 15s, 30s
+            }
+
+            // Attempt 3: On-chain resolution (Jupiter price + RPC supply = mcap)
+            if (!result) {
+                const price = await JupiterPriceService.getPrice(mint);
+                if (price > 0) {
+                    let mcap = 0;
+                    let symbol = "NEW";
+                    try {
+                        const supplyRes = await safeRpc(() => connection.getTokenSupply(new PublicKey(mint)), "flashSupply");
+                        const totalSupply = supplyRes?.value?.uiAmount || 0;
+                        mcap = price * totalSupply;
+                    } catch { /* supply fetch failed, mcap stays 0 */ }
+
+                    try {
+                        symbol = await TokenMetadataService.getSymbol(mint, connection) || "NEW";
+                    } catch { /* symbol fetch failed */ }
+
+                    if (mcap > 0) {
+                        this._flashRetryCount.delete(mint);
+                        result = {
+                            mint: new PublicKey(mint),
+                            pairAddress: "",
+                            dexId: dexId || "unknown",
+                            volume24h: 0,
+                            liquidity: 0, // Unknown — evaluateToken will check this
+                            mcap,
+                            symbol,
+                            priceUsd: price,
+                            source: "HELIUS_LIVE_RPC"
+                        };
+                        (result as any).volume5m = 0;
+                        (result as any).volume1h = 0;
+                        SocketManager.emitLog(`[HELIUS] Flash Scout via on-chain fallback: ${symbol} (MCAP: $${Math.floor(mcap)})`, "info");
+                    }
+                }
+            }
+
+            // If we resolved data from any source, evaluate it
+            if (result && this.scanner) {
+                await this.scanner.evaluateToken(result);
+            } else if (!result) {
+                // No source had data yet — schedule retry with increasing delays
                 const RETRY_DELAYS = [5000, 15000, 30000];
                 const attempt = this._flashRetryCount.get(mint) ?? 0;
 
                 if (attempt < RETRY_DELAYS.length) {
                     this._flashRetryCount.set(mint, attempt + 1);
                     const delay = RETRY_DELAYS[attempt];
-                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not on DexScreener yet. Retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s`, "info");
+                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not resolved by any source. Retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s`, "info");
                     setTimeout(() => {
                         this.triggerFlashScout(mint, pairAddress, dexId).catch(err => {
                             console.warn(`[HELIUS] Flash retry ${attempt + 1} failed for ${mint}:`, err);
                         });
                     }, delay);
                 } else {
-                    // Exhausted retries — clean up
                     this._flashRetryCount.delete(mint);
-                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not found on DexScreener after ${RETRY_DELAYS.length} retries. Dropping.`, "warning");
+                    SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. Dropping.`, "warning");
                 }
             }
         } catch (e) {

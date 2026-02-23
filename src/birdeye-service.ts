@@ -180,6 +180,47 @@ export class BirdeyeService {
     }
 
     /**
+     * Fetches overview data for a single token by mint address.
+     * Useful as a fallback when DexScreener hasn't indexed a new token yet.
+     * Returns null if the token isn't found or Birdeye is unavailable.
+     */
+    static async fetchTokenOverview(mint: string): Promise<{
+        price: number; liquidity: number; mcap: number;
+        volume5m: number; volume1h: number; volume24h: number;
+        symbol: string;
+    } | null> {
+        if (!BIRDEYE_API_KEY || !this.isEnabled) return null;
+
+        try {
+            const response = await axios.get(`https://public-api.birdeye.so/defi/token_overview`, {
+                params: { address: mint },
+                headers: {
+                    "X-API-KEY": BIRDEYE_API_KEY as string,
+                    "x-chain": "solana",
+                    "accept": "application/json"
+                },
+                timeout: 5000
+            });
+
+            if (!response.data?.success || !response.data?.data) return null;
+
+            const d = response.data.data;
+            return {
+                price: d.price || 0,
+                liquidity: d.liquidity || 0,
+                mcap: d.mc || d.market_cap || 0,
+                volume5m: d.v5mUSD || d.volume_5m_usd || 0,
+                volume1h: d.v1hUSD || d.volume_1h_usd || 0,
+                volume24h: d.v24hUSD || d.volume_24h_usd || 0,
+                symbol: d.symbol || "UNKNOWN"
+            };
+        } catch (e: any) {
+            console.warn(`[BIRDEYE] Token overview failed for ${mint.slice(0, 8)}: ${e.message}`);
+            return null;
+        }
+    }
+
+    /**
      * ANALYST ENGINE: Fetches trending tokens based on market heat.
      * Target: /defi/token_trending
      */
