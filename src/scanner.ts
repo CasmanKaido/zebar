@@ -304,38 +304,15 @@ export class MarketScanner {
                 try {
                     const pumpMints = await BirdeyeService.fetchPumpFunNewTokens();
                     if (pumpMints.length > 0) {
-                        // Filter out mints we already have from other sources
+                        // Filter out mints we already have from other sources or recently seen
                         const existingMints = new Set(allPairs.map((p: any) => p.baseToken?.address).filter(Boolean));
-                        const newPumpMints = pumpMints.filter(m => !existingMints.has(m));
+                        const newPumpMints = pumpMints.filter(m => !existingMints.has(m) && !this.seenPairs.has(m));
 
                         if (newPumpMints.length > 0) {
-                            // Batch resolve through DexScreener
+                            // Batch resolve through DexScreener (single fast API call for up to 30 tokens)
                             const resolved = await DexScreenerService.batchLookupTokens(newPumpMints.slice(0, 30), "PUMPFUN_SCOUT");
                             allPairs = [...allPairs, ...resolved];
                             SocketManager.emitLog(`[PUMPFUN] ${resolved.length}/${newPumpMints.length} new Pump.fun tokens resolved.`, "info");
-
-                            // Fallback: tokens not on DexScreener yet, try Birdeye individual lookup
-                            const resolvedMints = new Set(resolved.map((p: any) => p.baseToken?.address));
-                            const unresolvedMints = newPumpMints.filter(m => !resolvedMints.has(m)).slice(0, 10);
-                            for (const mint of unresolvedMints) {
-                                try {
-                                    const overview = await BirdeyeService.fetchTokenOverview(mint);
-                                    if (overview && overview.price > 0 && overview.liquidity > 0) {
-                                        allPairs.push({
-                                            pairAddress: "",
-                                            baseToken: { address: mint, symbol: overview.symbol || "PUMP" },
-                                            quoteToken: { address: SOL_MINT.toBase58(), symbol: "SOL" },
-                                            dexId: "pumpfun",
-                                            chainId: "solana",
-                                            priceUsd: overview.price.toString(),
-                                            volume: { m5: overview.volume5m, h1: overview.volume1h, h24: overview.volume24h },
-                                            liquidity: { usd: overview.liquidity },
-                                            marketCap: overview.mcap,
-                                            source: "PUMPFUN_RAW"
-                                        });
-                                    }
-                                } catch {}
-                            }
                         }
                     }
                 } catch (e: any) {

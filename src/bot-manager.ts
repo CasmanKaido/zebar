@@ -461,11 +461,14 @@ export class BotManager {
         }
     }
 
-    private static readonly MAX_CONCURRENT_QUEUE = 3;
+    private static readonly MAX_CONCURRENT_QUEUE = 2;
     private activeQueueWorkers = 0;
+    private _queueScheduled = false;
 
     private async processQueue() {
-        if (this.evaluationQueue.length === 0) {
+        this._queueScheduled = false;
+
+        if (this.evaluationQueue.length === 0 && this.activeQueueWorkers === 0) {
             this.isProcessingQueue = false;
             return;
         }
@@ -480,7 +483,7 @@ export class BotManager {
 
         this.isProcessingQueue = true;
 
-        // Launch up to MAX_CONCURRENT_QUEUE workers
+        // Launch workers up to limit
         while (this.evaluationQueue.length > 0 && this.activeQueueWorkers < BotManager.MAX_CONCURRENT_QUEUE) {
             const result = this.evaluationQueue.shift()!;
             const mintAddress = result.mint.toBase58();
@@ -491,14 +494,20 @@ export class BotManager {
             this.activeQueueWorkers++;
             this.processQueueItem(result, mintAddress).finally(() => {
                 this.activeQueueWorkers--;
-                // Schedule next batch after a worker finishes
-                setTimeout(() => this.processQueue(), 500);
+                this.scheduleQueueCheck();
             });
         }
 
         // If no workers launched (all skipped), schedule retry
         if (this.activeQueueWorkers === 0 && this.evaluationQueue.length > 0) {
-            setTimeout(() => this.processQueue(), 500);
+            this.scheduleQueueCheck();
+        }
+    }
+
+    private scheduleQueueCheck() {
+        if (!this._queueScheduled) {
+            this._queueScheduled = true;
+            setTimeout(() => this.processQueue(), 1000);
         }
     }
 
