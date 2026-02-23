@@ -50,6 +50,7 @@ export class BotManager {
     private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
     private _flashRetryCount: Map<string, number> = new Map(); // Track retry attempts for DexScreener resolution
     private _pumpfunWatchlist: Map<string, number> = new Map(); // Pump.fun tokens rejected on curve — re-evaluate on graduation
+    private _wsSubscriptionIds: number[] = []; // WebSocket subscription IDs for cleanup
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
     private settings: BotSettings = {
@@ -452,6 +453,100 @@ export class BotManager {
         }, connection);
 
         this.scanner.start();
+
+        // Start real-time WebSocket listeners for instant pool detection
+        this.startPoolWebSocket();
+    }
+
+    /**
+     * FASTEST DETECTION: WebSocket subscription to Raydium & Meteora program logs.
+     * Fires ~0.4s after block confirmation — faster than Helius webhooks.
+     * Extracts new token mints from pool creation logs and feeds them to triggerFlashScout.
+     */
+    private startPoolWebSocket() {
+        const RAYDIUM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
+        const METEORA_CPMM = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
+
+        const SOL = "So11111111111111111111111111111111111111112";
+        const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+        const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+        const stables = new Set([SOL, USDC, USDT]);
+
+        const handleLogs = (logs: any, dexId: string) => {
+            if (!this.isRunning) return;
+            if (logs.err) return; // Skip failed txs
+
+            // Extract token mint addresses from the log messages
+            // Pool creation logs contain account keys which include the new token mint
+            const signature = logs.signature;
+            if (!signature) return;
+
+            // Parse the transaction to extract mints
+            this.resolveWsMint(signature, stables, dexId).catch(err => {
+                // Silent — don't spam logs for WS parse failures
+            });
+        };
+
+        try {
+            const raySub = connection.onLogs(
+                new PublicKey(RAYDIUM_V4),
+                (logs) => handleLogs(logs, "raydium"),
+                "confirmed"
+            );
+            this._wsSubscriptionIds.push(raySub);
+
+            const metSub = connection.onLogs(
+                new PublicKey(METEORA_CPMM),
+                (logs) => handleLogs(logs, "meteora"),
+                "confirmed"
+            );
+            this._wsSubscriptionIds.push(metSub);
+
+            SocketManager.emitLog(`[WS] Real-time WebSocket listeners active on Raydium + Meteora.`, "success");
+        } catch (err: any) {
+            console.warn(`[WS] Failed to start WebSocket listeners: ${err.message}`);
+        }
+    }
+
+    /**
+     * Resolve a WebSocket-detected transaction to extract token mints.
+     */
+    private async resolveWsMint(signature: string, stables: Set<string>, dexId: string) {
+        try {
+            // Small delay to let the transaction finalize
+            await new Promise(r => setTimeout(r, 500));
+
+            const tx = await safeRpc(
+                () => connection.getParsedTransaction(signature, {
+                    maxSupportedTransactionVersion: 0,
+                    commitment: "confirmed"
+                }),
+                "getWsTx"
+            );
+
+            if (!tx || !tx.meta || tx.meta.err) return;
+
+            // Extract token mints from post-token balances (most reliable)
+            const mints = new Set<string>();
+            const postBalances = tx.meta.postTokenBalances || [];
+            for (const bal of postBalances) {
+                const mint = bal.mint;
+                if (mint && mint.length >= 40 && !stables.has(mint)) {
+                    mints.add(mint);
+                }
+            }
+
+            for (const mint of mints) {
+                if (this.pendingMints.has(mint)) continue;
+                const cached = this.rejectedTokens.get(mint);
+                if (cached && cached.expiry > Date.now()) continue;
+
+                SocketManager.emitLog(`[WS] ⚡ Pool detected via WebSocket! ${mint.slice(0, 8)}... (${dexId})`, "info");
+                this.triggerFlashScout(mint, "", dexId, dexId !== "pumpfun").catch(() => {});
+            }
+        } catch {
+            // Silent — WS resolution is best-effort alongside Helius
+        }
     }
 
     private enqueueToken(result: ScanResult) {
@@ -729,6 +824,13 @@ export class BotManager {
         this.pendingMints.clear();
         this._flashRetryCount.clear();
         this._pumpfunWatchlist.clear();
+
+        // Unsubscribe WebSocket listeners
+        for (const subId of this._wsSubscriptionIds) {
+            connection.removeOnLogsListener(subId).catch(() => {});
+        }
+        this._wsSubscriptionIds = [];
+
         if (flushed > 0) {
             console.log(`[BOT] Flushed ${flushed} pending tokens from evaluation queue.`);
         }
