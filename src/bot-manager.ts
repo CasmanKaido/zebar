@@ -47,7 +47,6 @@ export class BotManager {
     private lastMonitorHeartbeat: number = Date.now(); // Watchdog: Track monitor activity
     private healthCheckInterval: NodeJS.Timeout | null = null;
     private isUsingBackup: boolean = false;
-    private slStrikeCount: Map<string, number> = new Map(); // Track consecutive SL hits (glitch protection)
     private _flashRetryCount: Map<string, number> = new Map(); // Track retry attempts for DexScreener resolution
     private _pumpfunWatchlist: Map<string, number> = new Map(); // Pump.fun tokens rejected on curve — re-evaluate on graduation
     private _wsSubscriptionIds: number[] = []; // WebSocket subscription IDs for cleanup
@@ -1146,47 +1145,18 @@ export class BotManager {
                             const slThreshold = this.settings.mode === "SCOUT" ? 0.2 : 0.7;
 
                             if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
-                                // 1. Internal Math Check (Glitch Protection Layer A)
-                                // If the token-to-lppp ratio (spotPrice) hasn't dropped but USD has, it's an LPPP price glitch.
-                                const priceRatioMultiplier = pool.initialPrice > 0 ? (posValue.spotPrice / pool.initialPrice) : 1;
-
-                                if (priceRatioMultiplier > 0.8 && basePrice < 0.00001) {
-                                    console.warn(`[GLITCH PREVENT] ${pool.token} MCAP dropped but Internal Math is healthy (Ratio: ${priceRatioMultiplier.toFixed(2)}x). Possible Base Token Price Glitch. Skipping SL strike.`);
-                                } else {
-                                    // 2. Wait and See (Glitch Protection Layer B - 3 consecutive strikes)
-                                    const strikes = (this.slStrikeCount.get(pool.poolId) || 0) + 1;
-                                    this.slStrikeCount.set(pool.poolId, strikes);
-
-                                    if (strikes < 3) {
-                                        console.warn(`[STOP LOSS STRIKE] ${pool.token} hit ${strikes}/3 strikes (Value: ${mcapMultiplier.toFixed(2)}x). Waiting for confirmation...`);
-                                    } else {
-                                        this.activeTpSlActions.add(pool.poolId);
-                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} confirmed ${slThreshold}x MCAP drop! Withdrawing 80%...`, "error");
-                                        const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
-                                        if (result.success) {
-                                            await this.liquidatePoolToSol(pool.mint);
-                                        }
-                                        this.activeTpSlActions.delete(pool.poolId);
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
-
-                                        // Clean up strike counter — pool is done
-                                        this.slStrikeCount.delete(pool.poolId);
-
-                                        if (mcapMultiplier <= 0.05) {
-                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
-                                            await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
-                                        }
-                                    }
+                                this.activeTpSlActions.add(pool.poolId);
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Withdrawing 80%...`, "error");
+                                const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
+                                if (result.success) {
+                                    await this.liquidatePoolToSol(pool.mint);
                                 }
-                            } else {
-                                // Reset strikes if we recover above threshold
-                                if (this.slStrikeCount.has(pool.poolId)) {
-                                    this.slStrikeCount.delete(pool.poolId);
-                                }
+                                this.activeTpSlActions.delete(pool.poolId);
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
-                                // Visibility: Why didn't it strike?
-                                if (mcapMultiplier <= slThreshold && pool.stopLossDone) {
-                                    if (sweepCount % 10 === 0) console.log(`[SL-SKIP] ${pool.token} is at ${mcapMultiplier.toFixed(2)}x but SL was already completed.`);
+                                if (mcapMultiplier <= 0.05) {
+                                    SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
+                                    await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                 }
                             }
                         }
