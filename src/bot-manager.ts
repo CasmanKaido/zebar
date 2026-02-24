@@ -1118,11 +1118,13 @@ export class BotManager {
                                 this.activeTpSlActions.add(pool.poolId);
                                 SocketManager.emitLog(`[TP1] ${pool.token} reached 5x MCAP! Withdrawing 30%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 30, "TP1");
+                                this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                                } else {
+                                    SocketManager.emitLog(`[TP1] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
                                 }
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
                             }
 
                             // ── Take Profit Stage 2: 10x Value → Close another 30% ──
@@ -1130,11 +1132,13 @@ export class BotManager {
                                 this.activeTpSlActions.add(pool.poolId);
                                 SocketManager.emitLog(`[TP2] ${pool.token} reached 10x MCAP! Withdrawing 30%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 30, "TP2");
+                                this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                                } else {
+                                    SocketManager.emitLog(`[TP2] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
                                 }
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
                             }
 
                             // ── Stop Loss: SCOUT uses 0.2x (-80%), ANALYST uses 0.7x (-30%) → Close 80% ──
@@ -1148,15 +1152,17 @@ export class BotManager {
                                 this.activeTpSlActions.add(pool.poolId);
                                 SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Withdrawing 80%...`, "error");
                                 const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
+                                this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
-                                }
-                                this.activeTpSlActions.delete(pool.poolId);
-                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
-                                if (mcapMultiplier <= 0.05) {
-                                    SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
-                                    await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                    if (mcapMultiplier <= 0.05) {
+                                        SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
+                                        await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                    }
+                                } else {
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
                                 }
                             }
                         }

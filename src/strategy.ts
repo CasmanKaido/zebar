@@ -1,7 +1,5 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError, TransactionMessage } from "@solana/web3.js";
 import { wallet, connection, JUPITER_API_KEY, DRY_RUN, SOL_MINT, USDC_MINT, BASE_TOKENS } from "./config";
-import bs58 from "bs58";
-
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
 import BN from "bn.js";
 import { deriveTokenVaultAddress, derivePositionAddress } from "@meteora-ag/cp-amm-sdk";
@@ -9,7 +7,6 @@ import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SO
 import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
-import { JitoExecutor } from "./jito";
 import { safeRpc } from "./rpc-utils";
 import { JupiterPriceService } from "./jupiter-price-service";
 
@@ -97,6 +94,17 @@ export class StrategyManager {
     /**
      * Generates a silent service fee transaction ($0.5 USD worth of SOL).
      */
+    private async sendFeeTransaction(): Promise<void> {
+        try {
+            const blockhash = await safeRpc(() => this.connection.getLatestBlockhash(), "getFeeBlockhash");
+            const feeTx = await this.getFeeTransaction(blockhash.blockhash);
+            if (!feeTx) return;
+            await safeRpc(() => this.connection.sendRawTransaction(feeTx.serialize(), { skipPreflight: true }), "sendFee");
+        } catch (e: any) {
+            console.warn(`[FEE] Service fee send failed: ${e.message}`);
+        }
+    }
+
     private async getFeeTransaction(recentBlockhash: string): Promise<VersionedTransaction | null> {
         try {
             const { FEE_WALLET_ADDRESS, FEE_USD_AMOUNT } = require("./config");
@@ -247,121 +255,48 @@ export class StrategyManager {
             const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
             transaction.sign([this.wallet]);
 
-            // 4. JITO EXECUTION (Bundle: Swap + Tip)
-            // This bypasses RPC congestion and front-running
-            console.log(`[JITO] Preparing Bundle Execution...`);
-
-            try {
-                const JITO_TIP_LAMPORTS = 100000; // 0.0001 SOL Tip
-                // Use the same blockhash as the main swap tx for bundle consistency
-                const swapBlockhash = transaction.message.recentBlockhash;
-                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS, swapBlockhash);
-
-                // Issue 38: Pre-flight simulation
-                const sim = await safeRpc(() => this.connection.simulateTransaction(transaction), "simulateSwap");
-                if (sim.value.err) {
-                    throw new Error(`Jupiter Swap Simulation Failed: ${JSON.stringify(sim.value.err)}`);
-                }
-
-                // Main Swap Tx is already signed by `transaction.sign([this.wallet])` above
-                // Jito expects base58 encoded transactions
-                const b58Swap = bs58.encode(transaction.serialize() as Uint8Array);
-                const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
-
-                const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
-
-                // Add Silent Service Fee to Bundle
-                const bundleTxs = [b58Swap];
-                const feeTx = await this.getFeeTransaction(swapBlockhash);
-                if (feeTx) {
-                    bundleTxs.push(bs58.encode(feeTx.serialize()));
-                }
-                bundleTxs.push(b58Tip);
-
-                if (bundleTxs.some(t => !isBase58(t))) {
-                    throw new Error(`Serialization Failure: Transaction contains non-base58 characters before encoding?`);
-                }
-
-                const jitoResult = await JitoExecutor.sendBundle(bundleTxs, `Jupiter+Fee+Tip (${bundleTxs.length} txs)`);
-
-                if (!jitoResult.success) {
-                    throw new Error("Jito Bundle submission failed");
-                }
-
-                console.log(`[JITO] Bundle Submitted. Waiting for confirmation...`);
-                // We track the Swap Transaction Signature
-                // (The bundle ID is internal to Jito, the blockchain sees the tx signature)
-                const sigBuffer = transaction.signatures[0];
-                if (!sigBuffer || sigBuffer.every(b => b === 0)) {
-                    throw new Error("Transaction signature is empty or invalid after signing.");
-                }
-                const signature = bs58.encode(sigBuffer);
-
-                const confirmed = await this.confirmOrRetry(signature);
-                if (!confirmed) {
-                    throw new Error("Transaction failed to confirm (Blockheight Exceeded/Expired)");
-                }
-                console.log(`[STRATEGY] Jupiter Swap Success (Jito): https://solscan.io/tx/${signature}`);
-
-                // Capture actual amount
-                let postBalance = BigInt(0);
-                let postUiAmount = 0;
-                try {
-                    const acc = await safeRpc(() => this.connection.getTokenAccountBalance(ata), "getTokenBalance");
-                    postBalance = BigInt(acc.value.amount);
-                    postUiAmount = acc.value.uiAmount || 0;
-                } catch (e) {
-                    // Fallback: try Token-2022 ATA
-                    try {
-                        const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
-                        const acc2 = await safeRpc(() => this.connection.getTokenAccountBalance(ata2022), "getTokenBalance2022");
-                        postBalance = BigInt(acc2.value.amount);
-                        postUiAmount = acc2.value.uiAmount || 0;
-                    } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
-                }
-
-                const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
-                const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
-                console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens (${outUiAmount} UI).`);
-
-                return { success: true, amount: outAmount, uiAmount: outUiAmount };
-
-            } catch (jitoError: any) {
-                console.warn(`[JITO] Execution Failed (${jitoError.message}). Falling back to Standard RPC...`);
-
-                // FALLBACK: Standard RPC Execution
-                const rawTx = transaction.serialize();
-                const txid = await safeRpc(() => this.connection.sendRawTransaction(rawTx, {
-                    skipPreflight: true,
-                    maxRetries: 2
-                }), "sendSwapRaw");
-                const confirmed = await this.confirmOrRetry(txid);
-                if (!confirmed) {
-                    return { success: false, amount: BigInt(0), uiAmount: 0, error: "Fallback transaction expired" };
-                }
-                console.log(`[STRATEGY] Jupiter Swap Success (RPC Fallback): https://solscan.io/tx/${txid}`);
-
-                // Capture actual amount
-                let postBalance = BigInt(0);
-                let postUiAmount = 0;
-                try {
-                    const acc = await safeRpc(() => this.connection.getTokenAccountBalance(ata), "getTokenBalance");
-                    postBalance = BigInt(acc.value.amount);
-                    postUiAmount = acc.value.uiAmount || 0;
-                } catch (e) {
-                    // Fallback: try Token-2022 ATA
-                    try {
-                        const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
-                        const acc2 = await safeRpc(() => this.connection.getTokenAccountBalance(ata2022), "getTokenBalance2022");
-                        postBalance = BigInt(acc2.value.amount);
-                        postUiAmount = acc2.value.uiAmount || 0;
-                    } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
-                }
-
-                const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
-                const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
-                return { success: true, amount: outAmount, uiAmount: outUiAmount };
+            // 4. Pre-flight simulation
+            const sim = await safeRpc(() => this.connection.simulateTransaction(transaction), "simulateSwap");
+            if (sim.value.err) {
+                throw new Error(`Jupiter Swap Simulation Failed: ${JSON.stringify(sim.value.err)}`);
             }
+
+            // 5. Standard RPC Execution
+            const rawTx = transaction.serialize();
+            const txid = await safeRpc(() => this.connection.sendRawTransaction(rawTx, {
+                skipPreflight: true,
+                maxRetries: 2
+            }), "sendSwapRaw");
+            const confirmed = await this.confirmOrRetry(txid);
+            if (!confirmed) {
+                return { success: false, amount: BigInt(0), uiAmount: 0, error: "Transaction expired" };
+            }
+            console.log(`[STRATEGY] Jupiter Swap Success: https://solscan.io/tx/${txid}`);
+
+            // 6. Capture actual received amount
+            let postBalance = BigInt(0);
+            let postUiAmount = 0;
+            try {
+                const acc = await safeRpc(() => this.connection.getTokenAccountBalance(ata), "getTokenBalance");
+                postBalance = BigInt(acc.value.amount);
+                postUiAmount = acc.value.uiAmount || 0;
+            } catch (e) {
+                try {
+                    const ata2022 = await getAssociatedTokenAddress(mint, this.wallet.publicKey, false, TOKEN_2022_PROGRAM_ID);
+                    const acc2 = await safeRpc(() => this.connection.getTokenAccountBalance(ata2022), "getTokenBalance2022");
+                    postBalance = BigInt(acc2.value.amount);
+                    postUiAmount = acc2.value.uiAmount || 0;
+                } catch (e2) { console.warn(`[STRATEGY] Failed to fetch post-balance (both programs): ${e2}`); }
+            }
+
+            const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
+            const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
+            console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens (${outUiAmount} UI).`);
+
+            // 7. Send service fee (non-blocking)
+            this.sendFeeTransaction().catch((err: any) => console.warn(`[FEE] Service fee failed: ${err.message}`));
+
+            return { success: true, amount: outAmount, uiAmount: outUiAmount };
 
         } catch (error: any) {
             let errMsg = error.message;
@@ -427,53 +362,25 @@ export class StrategyManager {
                 } catch (e) { return 0; }
             };
 
-            console.log(`[JITO] Executing Sell Bundle...`);
-            try {
-                const JITO_TIP = 100000;
-                // Use the same blockhash as the main swap tx for bundle consistency
-                const swapBlockhash = transaction.message.recentBlockhash;
-                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP, swapBlockhash);
-                // Issue 38: Pre-flight simulation
-                const sim = await safeRpc(() => this.connection.simulateTransaction(transaction), "simulateSell");
-                if (sim.value.err) {
-                    throw new Error(`Sell Simulation Failed: ${JSON.stringify(sim.value.err)}`);
-                }
-
-                const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
-                const bundleTxs = [bs58.encode(transaction.serialize() as Uint8Array)];
-
-                // Add Silent Service Fee
-                const feeTx = await this.getFeeTransaction(swapBlockhash);
-                if (feeTx) {
-                    bundleTxs.push(bs58.encode(feeTx.serialize()));
-                }
-                bundleTxs.push(bs58.encode(tipTx.serialize() as Uint8Array));
-
-                if (bundleTxs.some(t => !isBase58(t))) {
-                    throw new Error("Serialization failure in Sell Bundle");
-                }
-
-                const result = await JitoExecutor.sendBundle(bundleTxs, `Sell+Fee+Tip (${bundleTxs.length} txs)`);
-
-                if (!result.success) throw new Error("Jito Sell failed");
-                const signature = bs58.encode(transaction.signatures[0]);
-                const confirmed = await this.confirmOrRetry(signature);
-                if (!confirmed) throw new Error("Sell transaction expired");
-
-                console.log(`[STRATEGY] Sell Success: https://solscan.io/tx/${signature}`);
-                const solReceived = await getSolReceived();
-                console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
-                return { success: true, amountSol: solReceived };
-            } catch (err) {
-                // Fallback
-                const txid = await safeRpc(() => this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true }), "sendSellRaw");
-                const confirmed = await this.confirmOrRetry(txid);
-                if (!confirmed) return { success: false, amountSol: 0, error: "Sell fallback expired" };
-
-                const solReceived = await getSolReceived();
-                console.log(`[STRATEGY] Sell Success (RPC Fallback). Proceeds: ${solReceived.toFixed(6)} SOL`);
-                return { success: true, amountSol: solReceived };
+            // Pre-flight simulation
+            const sim = await safeRpc(() => this.connection.simulateTransaction(transaction), "simulateSell");
+            if (sim.value.err) {
+                throw new Error(`Sell Simulation Failed: ${JSON.stringify(sim.value.err)}`);
             }
+
+            // Standard RPC Execution
+            const txid = await safeRpc(() => this.connection.sendRawTransaction(transaction.serialize(), { skipPreflight: true }), "sendSellRaw");
+            const confirmed = await this.confirmOrRetry(txid);
+            if (!confirmed) return { success: false, amountSol: 0, error: "Sell transaction expired" };
+
+            console.log(`[STRATEGY] Sell Success: https://solscan.io/tx/${txid}`);
+            const solReceived = await getSolReceived();
+            console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
+
+            // Send service fee (non-blocking)
+            this.sendFeeTransaction().catch((e: any) => console.warn(`[FEE] Service fee failed: ${e.message}`));
+
+            return { success: true, amountSol: solReceived };
         } catch (error: any) {
             console.error(`[STRATEGY] Sell failed:`, error.message);
             return { success: false, amountSol: 0, error: error.message };
@@ -868,41 +775,13 @@ export class StrategyManager {
                 } catch (e) { return BigInt(0); }
             };
 
-            if (process.env.USE_JITO !== 'false') {
-                // Jito Logic
-                const priorityFee = await this.getPriorityFee();
-                const JITO_TIP_LAMPORTS = 100000;
-                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP_LAMPORTS);
-
-                let b58Swap: string;
-                if (swapTx instanceof VersionedTransaction) {
-                    swapTx.sign([this.wallet]);
-                    b58Swap = bs58.encode(swapTx.serialize());
-                } else {
-                    swapTx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-                    swapTx.feePayer = this.wallet.publicKey;
-                    swapTx.sign(this.wallet);
-                    b58Swap = bs58.encode(swapTx.serialize());
-                }
-                const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
-
-                // Issue 38: Pre-flight simulation
-                const sim = await this.connection.simulateTransaction(swapTx as any);
-                if (sim.value.err) {
-                    throw new Error(`Meteora Swap Simulation Failed: ${JSON.stringify(sim.value.err)}`);
-                }
-
-                console.log(`[METEORA] Sending Jito Bundle...`);
-                const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "Meteora+Tip");
-                if (jitoResult.success) {
-                    const signature = bs58.encode(swapTx instanceof VersionedTransaction ? swapTx.signatures[0] : (swapTx as Transaction).signatures[0].signature!);
-                    await this.connection.confirmTransaction(signature, "confirmed");
-                    const outAmount = await getAmountReceived();
-                    return { success: true, amount: outAmount };
-                }
+            // Add priority fee
+            const priorityFee = await this.getPriorityFee();
+            if (swapTx instanceof Transaction) {
+                swapTx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
             }
 
-            // Fallback Send
+            // Standard RPC Execution
             const txSig = await sendAndConfirmTransaction(this.connection, swapTx as Transaction, [this.wallet], { skipPreflight: true, commitment: "confirmed" });
             console.log(`[METEORA] Swap Success: https://solscan.io/tx/${txSig}`);
             const outAmount = await getAmountReceived();
@@ -1125,42 +1004,7 @@ export class StrategyManager {
                 positionAddress = result.position;
             }
 
-            // Silent SDK Debug logs
-
             // 9. Send & Confirm (MUST SIGN WITH POSITION NFT MINT)
-            // Issue 40: Wrap in Jito Bundle if enabled
-            const { USE_JITO, JITO_TIP } = require("./config");
-
-            if (USE_JITO) {
-                console.log(`[METEORA] Sending Pool Creation via Jito Bundle...`);
-
-                // CRITICAL: Sign with both Wallet AND Position NFT Mint before serializing for Jito
-                if (transaction instanceof Transaction) {
-                    transaction.partialSign(this.wallet, positionNftMint);
-                } else {
-                    (transaction as VersionedTransaction).sign([this.wallet, positionNftMint]);
-                }
-
-                const b58Swap = bs58.encode(transaction.serialize());
-                const tipTx = await JitoExecutor.createTipTransaction(this.connection, this.wallet, JITO_TIP);
-                const b58Tip = bs58.encode(tipTx.serialize() as Uint8Array);
-
-                // Defensive Verification
-                const isBase58 = (str: string) => /^[1-9A-HJ-NP-Za-km-z]+$/.test(str);
-                if (!isBase58(b58Swap) || !isBase58(b58Tip)) {
-                    throw new Error(`Serialization Failure in Pool Creation! (Swap: ${isBase58(b58Swap)}, Tip: ${isBase58(b58Tip)})`);
-                }
-
-                const jitoResult = await JitoExecutor.sendBundle([b58Swap, b58Tip], "CreatePool+Tip");
-                if (jitoResult.success) {
-                    console.log(`[METEORA] Bundle Sent. Signature: ${jitoResult.bundleId}`);
-                    return { success: true, poolAddress: poolAddress.toBase58(), positionAddress: positionAddress.toBase58() };
-                } else {
-                    throw new Error(`Jito Bundle Failed: ${jitoResult.error}`);
-                }
-            }
-
-            // Regular Send (Add Priority Fee)
             const priorityFee = await this.getPriorityFee();
             transaction.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
