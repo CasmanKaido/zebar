@@ -134,127 +134,118 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
     increaseLiquidity: (id: string) => void;
     withdrawLiquidity: (id: string, percent: number) => void;
     basePrice: number | null;
-}) => (
-    <div key={pool.poolId} className={`glass-card p-5 flex flex-col gap-4 group transition-all duration-300 ${isBot ? 'hover:border-primary/50 border-border shadow-[0_4px_12px_rgba(236,72,153,0.05)]' : 'hover:border-primary/50 border-border opacity-90'}`}>
-        <div className="flex justify-between items-start">
-            <div>
-                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Pair Address</p>
-                <div className="flex items-center gap-2">
-                    <a
-                        href={`https://solscan.io/account/${pool.poolId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`font-mono text-[13px] hover:underline flex items-center gap-1.5 transition-colors ${isBot ? 'text-primary/80' : 'text-primary'}`}
-                    >
-                        {pool.poolId.slice(0, 12)}...
-                        <ExternalLink size={10} className="opacity-50" />
-                    </a>
-                </div>
-                <div className="flex items-center gap-2 mt-2">
-                    <span className={`px-1.5 py-0.5 text-[10px] rounded font-bold ${isBot ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-primary/10 text-primary'}`}>{pool.token}</span>
-                    {isBot && (
-                        <span className="px-1.5 py-0.5 bg-primary/20 text-primary text-[8px] rounded font-black border border-primary/30 flex items-center gap-1 animate-pulse">
-                            <Zap size={8} /> LIVE SNIPE
+}) => {
+    const isProfit = pool.initialMcap && pool.currentMcap ? (pool.currentMcap / pool.initialMcap) >= 1 : false;
+
+    return (
+        <div key={pool.poolId} className={`glass-card p-5 flex flex-col gap-5 group transition-all duration-300 ${isBot ? 'hover:border-primary/50 border-border/60 shadow-[0_4px_20px_rgba(236,72,153,0.03)]' : 'hover:border-primary/50 border-border/40 opacity-90'}`}>
+
+            {/* ═══ Header Row ═══ */}
+            <div className="flex justify-between items-start">
+                <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-xl font-black tracking-widest text-white uppercase drop-shadow-md">
+                            {pool.token}
+                        </h3>
+                        {isBot && (
+                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[9px] rounded font-black border border-primary/20 flex items-center gap-1">
+                                <Zap size={10} className="animate-pulse" /> LIVE
+                            </span>
+                        )}
+                        <span className="text-[10px] text-muted-foreground font-mono ml-2 mt-0.5 opacity-60 bg-white/5 px-1.5 py-0.5 rounded">
+                            {new Date(pool.created).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                         </span>
-                    )}
-                    {pool.tp1Done && (
-                        <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[8px] rounded font-black border border-emerald-500/30">TP1</span>
-                    )}
-                    {pool.takeProfitDone && (
-                        <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[8px] rounded font-black border border-emerald-500/30">TP2</span>
-                    )}
-                    {pool.stopLossDone && (
-                        <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[8px] rounded font-black border border-red-500/30">SL</span>
-                    )}
-                    <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
-                </div>
-            </div>
-
-            {pool.initialMcap && pool.initialMcap > 0 && pool.currentMcap ? (
-                <div className="text-right flex flex-col items-end justify-start">
-                    <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1">Multiplier</p>
-                    <div className={`px-2.5 py-1 rounded-xl text-lg font-black shadow-lg ${(pool.currentMcap / pool.initialMcap) >= 1 ? 'bg-primary/20 text-primary border border-primary/30 shadow-[0_0_15px_rgba(205,255,0,0.1)]' : 'bg-red-500/20 text-red-500 border border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]'}`}>
-                        {((pool.currentMcap / pool.initialMcap)).toFixed(2)}x
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <a
+                            href={`https://solscan.io/account/${pool.poolId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-[11px] hover:underline flex items-center gap-1 transition-colors text-muted-foreground hover:text-primary opacity-80"
+                        >
+                            {pool.poolId.slice(0, 16)}...
+                            <ExternalLink size={10} />
+                        </a>
+                    </div>
+                    {/* Tags Flow */}
+                    <div className="flex gap-1.5 mt-1">
+                        {pool.tp1Done && <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[8px] rounded border border-emerald-500/20 font-bold tracking-wider">TP1</span>}
+                        {pool.takeProfitDone && <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[8px] rounded border border-emerald-500/20 font-bold tracking-wider">TP2</span>}
+                        {pool.stopLossDone && <span className="px-1.5 py-0.5 bg-red-500/10 text-red-500 text-[8px] rounded border border-red-500/20 font-bold tracking-wider">SL HIT</span>}
                     </div>
                 </div>
-            ) : null}
-        </div>
 
-        {/* ═══ Position value ═══ */}
-        <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
-            <p className="text-[10px] text-muted-foreground/70 mb-1">Position value</p>
-            <p className="text-lg font-bold text-white">
-                ${((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(6)}
-            </p>
-            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                {Number(pool.positionValue?.baseLp || 0).toFixed(9)} {pool.baseToken || "LPPP"}
-                <span className="mx-1 text-muted-foreground/30">+</span>
-                {Number(pool.positionValue?.tokenLp || 0).toFixed(6)} {pool.token}
-            </p>
-        </div>
-
-        {/* ═══ Market Cap ═══ */}
-        {pool.initialMcap && pool.initialMcap > 0 && pool.currentMcap ? (
-            <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
-                <p className="text-[10px] text-muted-foreground/70 mb-1">Market Cap</p>
-                <div className="flex justify-between items-center">
-                    <div>
-                        <p className="text-lg font-bold text-white">
-                            ${pool.currentMcap.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                            Initial: ${pool.initialMcap.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                        </p>
-                    </div>
-                    <div className={`px-2 py-1 rounded-lg text-xs font-bold ${(pool.currentMcap / pool.initialMcap) >= 1 ? 'bg-primary/20 text-primary border border-primary/30' : 'bg-red-500/20 text-red-500 border border-red-500/30'
+                {/* Multiplier Badge */}
+                {pool.initialMcap && pool.initialMcap > 0 && pool.currentMcap ? (
+                    <div className={`px-3 py-1.5 rounded-xl text-lg font-black shadow-lg flex items-center justify-center ${isProfit
+                            ? 'bg-primary/10 text-primary border border-primary/20 shadow-[0_0_20px_rgba(205,255,0,0.15)]'
+                            : 'bg-red-500/10 text-red-500 border border-red-500/20 shadow-[0_0_20px_rgba(239,68,68,0.1)]'
                         }`}>
                         {((pool.currentMcap / pool.initialMcap)).toFixed(2)}x
                     </div>
+                ) : null}
+            </div>
+
+            <div className="w-full h-[1px] bg-border/40 my-1"></div>
+
+            {/* ═══ Data Grid (Terminal Style) ═══ */}
+            <div className="grid grid-cols-3 gap-4">
+                {/* 1. Value */}
+                <div className="flex flex-col">
+                    <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1 opacity-70">Value</span>
+                    <span className="text-base font-bold text-white font-mono">
+                        ${((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(2)}
+                    </span>
+                    <span className="text-[9px] text-muted-foreground/50 font-mono mt-0.5 truncate" title={`${Number(pool.positionValue?.baseLp || 0).toFixed(4)} ${pool.baseToken || "LPPP"} + ${Number(pool.positionValue?.tokenLp || 0).toFixed(2)} ${pool.token}`}>
+                        {Number(pool.positionValue?.baseLp || 0).toFixed(3)}L / {Number(pool.positionValue?.tokenLp || 0).toFixed(1)}T
+                    </span>
+                </div>
+
+                {/* 2. Market Cap (Stacked) */}
+                <div className="flex flex-col border-l border-border/30 pl-4">
+                    <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1 opacity-70">Market Cap</span>
+                    <span className={`text-base font-bold font-mono ${isProfit ? 'text-primary' : 'text-red-400'}`}>
+                        ${pool.currentMcap ? (pool.currentMcap >= 1000000 ? (pool.currentMcap / 1000000).toFixed(2) + 'M' : (pool.currentMcap / 1000).toFixed(1) + 'K') : '---'}
+                    </span>
+                    <span className="text-[9px] text-muted-foreground/60 font-mono mt-0.5">
+                        IN: ${pool.initialMcap ? (pool.initialMcap >= 1000000 ? (pool.initialMcap / 1000000).toFixed(2) + 'M' : (pool.initialMcap / 1000).toFixed(1) + 'K') : '---'}
+                    </span>
+                </div>
+
+                {/* 3. Fees */}
+                <div className="flex flex-col border-l border-border/30 pl-4">
+                    <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1 opacity-70">Fees</span>
+                    <span className="text-base font-bold text-emerald-400 font-mono">
+                        ${((Number(pool.unclaimedFees?.totalLppp || 0)) * (basePrice || 0)).toFixed(3)}
+                    </span>
                 </div>
             </div>
-        ) : null}
 
-        {/* ═══ Fees from position ═══ */}
-        <div className="py-3 px-3 bg-card/30 rounded-2xl border border-border/50">
-            <p className="text-[10px] text-muted-foreground/70 mb-1">Fees from position</p>
-            <div className="flex justify-between items-center">
-                <div>
-                    <p className="text-lg font-bold text-white">
-                        ${((Number(pool.unclaimedFees?.totalLppp || 0)) * (basePrice || 0)).toFixed(6)}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-0.5">
-                        {Number(pool.unclaimedFees?.sol || 0).toFixed(6)} {pool.baseToken || "LPPP"}
-                        <span className="mx-1 text-muted-foreground/30">+</span>
-                        {Number(pool.unclaimedFees?.token || 0).toFixed(6)} {pool.token}
-                    </p>
-                </div>
-                <button
-                    onClick={() => claimFees(pool.poolId)}
-                    className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-white text-[11px] font-bold rounded-2xl transition-all shadow-lg shadow-emerald-500/20"
-                >
-                    Claim fees
-                </button>
-            </div>
-        </div>
-
-        <div className="flex flex-col gap-2 mt-auto">
-            <div className="grid grid-cols-2 gap-2">
+            {/* ═══ Action Bar ═══ */}
+            <div className="flex gap-2 mt-2 pt-4 border-t border-border/30">
                 <button
                     onClick={() => increaseLiquidity(pool.poolId)}
-                    className="py-1.5 bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-black rounded border border-primary/20 transition-all flex items-center justify-center gap-1"
+                    className="flex-1 py-2.5 bg-transparent hover:bg-white/5 text-muted-foreground hover:text-white text-[10px] font-bold rounded-lg border border-border transition-all flex items-center justify-center gap-1.5"
+                    title="Add Liquidity"
                 >
-                    <Droplets size={10} /> ADD LIQ
+                    <Droplets size={12} className="opacity-70" /> ADD
+                </button>
+                <button
+                    onClick={() => claimFees(pool.poolId)}
+                    className="flex-1 py-2.5 bg-transparent hover:bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded-lg border border-emerald-500/20 transition-all flex items-center justify-center gap-1.5"
+                >
+                    <Wallet size={12} /> CLAIM
                 </button>
                 <button
                     onClick={() => withdrawLiquidity(pool.poolId, 100)}
-                    className={`py-1.5 text-white text-[10px] font-black rounded shadow-lg transition-all ${isBot ? 'bg-pink-600 hover:bg-pink-700' : 'bg-red-600 hover:bg-red-700'}`}
+                    className="flex-[2] py-2.5 bg-red-500/10 hover:bg-red-500 hover:text-white text-red-500 text-[11px] font-black tracking-widest rounded-lg border border-red-500/30 transition-all shadow-lg shadow-red-500/5 group"
                 >
                     FULL CLOSE
                 </button>
             </div>
         </div>
-    </div>
-);
+    );
+};
 
 function App() {
     const [running, setRunning] = useState(false);
