@@ -1,4 +1,4 @@
-import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
+import { connection, monitorConnection, secondaryConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -429,7 +429,7 @@ export class BotManager {
         }
 
         // Check Balance
-        const balance = await safeRpc(() => connection.getBalance(wallet.publicKey), "getWalletBalance");
+        const balance = await safeRpc(() => secondaryConnection.getBalance(wallet.publicKey), "getWalletBalance");
         if (balance === 0) {
             SocketManager.emitLog(`[WARNING] Your wallet (${wallet.publicKey.toBase58().slice(0, 8)}...) has 0 SOL. Buys will fail.`, "error");
         } else {
@@ -687,7 +687,7 @@ export class BotManager {
                 SocketManager.emitLog(`[EXEC] Buy Success! Seeding Liquidity...`, "success");
                 await new Promise(r => setTimeout(r, 2000)); // Wait for settlement
 
-                const tokenAccounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint }), "getPostSwapBalance");
+                const tokenAccounts = await safeRpc(() => monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: result.mint }), "getPostSwapBalance");
                 const actualAmountRaw = tokenAccounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
                 const actualUiAmount = tokenAccounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
 
@@ -722,7 +722,7 @@ export class BotManager {
                 const targetBaseAmount = equivalentBaseTokenAmount * 0.99;
 
                 // Dynamically fetch base token decimals to support Base Tokens that don't use 9 decimals (e.g. USDC has 6)
-                const baseMintAccountInfo = await safeRpc(() => connection.getParsedAccountInfo(activeBaseMint), "getBaseMintInfo");
+                const baseMintAccountInfo = await safeRpc(() => monitorConnection.getParsedAccountInfo(activeBaseMint), "getBaseMintInfo");
                 const baseDecimals = (baseMintAccountInfo?.value?.data as any)?.parsed?.info?.decimals || 9;
                 const baseScale = Math.pow(10, baseDecimals);
                 const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * baseScale));
@@ -735,7 +735,7 @@ export class BotManager {
                     // Now, initialPrice is perfectly synced to our true Jupiter execution price.
                     const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / baseScale) / tokenUiAmountChecked : 0;
 
-                    const supplyRes = await safeRpc(() => connection.getTokenSupply(result.mint), "getTokenSupply");
+                    const supplyRes = await safeRpc(() => monitorConnection.getTokenSupply(result.mint), "getTokenSupply");
                     const totalSupply = supplyRes.value.uiAmount || 0;
                     const trueInitialUsdPrice = initialPrice * basePrice;
                     const initialMcap = totalSupply * (trueInitialUsdPrice > 0 ? trueInitialUsdPrice : result.priceUsd);
@@ -869,11 +869,11 @@ export class BotManager {
 
     async getWalletBalance() {
         try {
-            const solBalance = await safeRpc(() => connection.getBalance(wallet.publicKey), "getSolBalance");
+            const solBalance = await safeRpc(() => secondaryConnection.getBalance(wallet.publicKey), "getSolBalance");
 
             const baseTokenBalances: Record<string, number> = {};
             for (const [symbol, mint] of Object.entries(BASE_TOKENS)) {
-                const accounts = await safeRpc(() => connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint }), "getPortfolio");
+                const accounts = await safeRpc(() => secondaryConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint }), "getPortfolio");
                 const uiAmount = accounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
                 baseTokenBalances[symbol] = uiAmount;
             }
@@ -928,15 +928,29 @@ export class BotManager {
                 const eligiblePools = activePools.filter(p => {
                     if (p.withdrawalPending || p.exited || this.activeTpSlActions.has(p.poolId)) return false;
 
-                    // ── SMART BACKOFF POLLING ──
-                    // Reduces RPS by only checking older bags periodically instead of constantly
+                    // ── TIERED MONITOR FREQUENCY ──
+                    // Prioritizes RPC for pools that need active monitoring.
+
+                    // Tier 1: Pending sell — must retry ASAP
+                    if (p.pendingSell) return true;
+
+                    // Tier 2: SL-done moonbag (20% remaining) — check every 8 sweeps (~2 min)
+                    if (p.stopLossDone) return sweepCount % 8 === 0;
+
+                    // Tier 3: TP1+TP2 done moonbag (~40% remaining) — check every 6 sweeps (~90s)
+                    if (p.tp1Done && p.takeProfitDone) return sweepCount % 6 === 0;
+
+                    // Tier 4: TP1 done, watching for TP2 — check every 3 sweeps (~45s)
+                    if (p.tp1Done) return sweepCount % 3 === 0;
+
+                    // Tier 5: Age-based backoff for active pools
                     const ageMs = now - (p.created ? new Date(p.created).getTime() : 0);
                     if (ageMs > 60 * 60 * 1000) {
-                        return sweepCount % 4 === 0; // > 1 Hour old: check every 4 sweeps
+                        return sweepCount % 4 === 0; // > 1 hour old: every 4 sweeps (~60s)
                     } else if (ageMs > 10 * 60 * 1000) {
-                        return sweepCount % 2 === 0; // > 10 Mins old: check every 2 sweeps
+                        return sweepCount % 2 === 0; // > 10 min old: every 2 sweeps (~30s)
                     }
-                    return true; // < 10 Mins old: check every sweep
+                    return true; // < 10 min old: every sweep (~15s)
                 });
 
                 // ── BATCHED RPC FETCHING (CRITICAL FIX FOR 429 LIMITS) ──
@@ -963,10 +977,13 @@ export class BotManager {
                         const posValue = posValueResults[i];
 
                         if (posValue.success && posValue.spotPrice > 0) {
-                            /* ═══ DEBUG: Show raw values for diagnosis ═══
-                            if (sweepCount < 10 || sweepCount % 5 === 0) {
-                                console.log(`[MONITOR RAW] ${pool.token} | totalSol: ${posValue.totalSol.toFixed(6)} | spotPrice: ${posValue.spotPrice.toFixed(8)} | fees: ${posValue.feesSol.toFixed(6)} | initialSolValue: ${pool.initialSolValue?.toFixed(6) || 'N/A'}`);
-                            } */
+                            // ── AUTO-EXIT: Dead pools below 0.05x MCAP with SL already done ──
+                            // These are worth fractions of a penny — stop burning RPC checking them.
+                            if (pool.stopLossDone && posValue.totalSol <= 0) {
+                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (SL done, zero value). Stopping monitoring.`, "warning");
+                                await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                continue;
+                            }
 
                             // ═══ SANITY GUARD: Reject zero-value responses from RPC glitches ═══
                             if (posValue.totalSol <= 0 && pool.initialSolValue && pool.initialSolValue > 0) {
@@ -1066,7 +1083,7 @@ export class BotManager {
                             // Without a supply the multiplier always stays 1 and TP/SL never triggers.
                             if (!pool.totalSupply || pool.totalSupply <= 0) {
                                 try {
-                                    const supplyRes = await safeRpc(() => connection.getTokenSupply(new (require("@solana/web3.js").PublicKey)(pool.mint)), "backfillTotalSupply");
+                                    const supplyRes = await safeRpc(() => monitorConnection.getTokenSupply(new (require("@solana/web3.js").PublicKey)(pool.mint)), "backfillTotalSupply");
                                     const fetched = supplyRes?.value?.uiAmount || 0;
                                     if (fetched > 0) {
                                         pool.totalSupply = fetched;
@@ -1137,6 +1154,13 @@ export class BotManager {
                                 currentMcap: currentMcap,
                                 initialMcap: pool.initialMcap
                             });
+
+                            // ── AUTO-EXIT: SL-done pools at dust MCAP — stop wasting RPC ──
+                            if (pool.stopLossDone && mcapMultiplier <= 0.05 && mcapMultiplier !== 1) {
+                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (${mcapMultiplier.toFixed(3)}x MCAP, SL done). Stopping monitoring.`, "warning");
+                                await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                continue;
+                            }
 
                             // ── Retry pending sell (withdrawal succeeded but sell failed on previous tick) ──
                             if (pool.pendingSell) {
@@ -1357,7 +1381,7 @@ export class BotManager {
         // future pools. Selling it would drain the entire wallet balance.
         const getRawBalance = async (mintStr: string) => {
             try {
-                const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mintStr) });
+                const accounts = await monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mintStr) });
                 return accounts.value.reduce((acc, account) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
             } catch (e) { return 0n; }
         };
