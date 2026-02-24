@@ -11,6 +11,7 @@ export interface PoolData {
     tp1Done?: boolean;       // Flag: TP Stage 1 (3x) completed
     takeProfitDone?: boolean; // Flag: TP Stage 2 (6x) completed
     stopLossDone?: boolean;  // Flag: Stop Loss (-30%) completed
+    pendingSell?: string;    // Flag: withdrawal done but sell failed — value is the action (TP1/TP2/STOP LOSS)
     positionId?: string; // Meteora Position PDA
     unclaimedFees?: { sol: string; token: string; totalLppp?: string };
     positionValue?: { baseLp: string; tokenLp: string; totalLppp: string };
