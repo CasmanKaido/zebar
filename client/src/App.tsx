@@ -42,6 +42,9 @@ interface Pool {
     totalSupply?: number;
     initialMcap?: number;
     currentMcap?: number;
+    tp1Done?: boolean;
+    takeProfitDone?: boolean;
+    stopLossDone?: boolean;
 }
 
 interface PoolUpdate {
@@ -53,6 +56,9 @@ interface PoolUpdate {
     exited?: boolean;
     currentMcap?: number;
     initialMcap?: number;
+    tp1Done?: boolean;
+    takeProfitDone?: boolean;
+    stopLossDone?: boolean;
 }
 
 interface SettingInputProps {
@@ -150,6 +156,15 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                         <span className="px-1.5 py-0.5 bg-primary/20 text-primary text-[8px] rounded font-black border border-primary/30 flex items-center gap-1 animate-pulse">
                             <Zap size={8} /> LIVE SNIPE
                         </span>
+                    )}
+                    {pool.tp1Done && (
+                        <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[8px] rounded font-black border border-emerald-500/30">TP1</span>
+                    )}
+                    {pool.takeProfitDone && (
+                        <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[8px] rounded font-black border border-emerald-500/30">TP2</span>
+                    )}
+                    {pool.stopLossDone && (
+                        <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[8px] rounded font-black border border-red-500/30">SL</span>
                     )}
                     <span className="text-[10px] text-muted-foreground">{new Date(pool.created).toLocaleTimeString()}</span>
                 </div>
@@ -363,7 +378,10 @@ function App() {
                 positionValue: update.positionValue || p.positionValue,
                 exited: update.exited !== undefined ? update.exited : p.exited,
                 currentMcap: update.currentMcap !== undefined ? update.currentMcap : p.currentMcap,
-                initialMcap: update.initialMcap !== undefined ? update.initialMcap : p.initialMcap
+                initialMcap: update.initialMcap !== undefined ? update.initialMcap : p.initialMcap,
+                tp1Done: update.tp1Done !== undefined ? update.tp1Done : p.tp1Done,
+                takeProfitDone: update.takeProfitDone !== undefined ? update.takeProfitDone : p.takeProfitDone,
+                stopLossDone: update.stopLossDone !== undefined ? update.stopLossDone : p.stopLossDone
             } : p));
         });
         socket.on('pool', (pool: Pool) => {

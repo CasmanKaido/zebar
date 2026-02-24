@@ -62,7 +62,7 @@ export class SocketManager {
         }
     }
 
-    static emitPoolUpdate(update: { poolId: string, roi?: string, netRoi?: string, unclaimedFees?: any, positionValue?: any, exited?: boolean, currentMcap?: number, initialMcap?: number }) {
+    static emitPoolUpdate(update: { poolId: string, roi?: string, netRoi?: string, unclaimedFees?: any, positionValue?: any, exited?: boolean, currentMcap?: number, initialMcap?: number, tp1Done?: boolean, takeProfitDone?: boolean, stopLossDone?: boolean }) {
         // Update history
         const index = this.poolHistory.findIndex(p => p.poolId === update.poolId);
         if (index !== -1) {

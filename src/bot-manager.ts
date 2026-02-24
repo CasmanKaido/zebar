@@ -374,7 +374,10 @@ export class BotManager {
                 unclaimedFees: updatedPool.unclaimedFees,
                 positionValue: updatedPool.positionValue,
                 currentMcap: partial?.currentMcap,
-                initialMcap: updatedPool.initialMcap
+                initialMcap: updatedPool.initialMcap,
+                tp1Done: updatedPool.tp1Done,
+                takeProfitDone: updatedPool.takeProfitDone,
+                stopLossDone: updatedPool.stopLossDone
             });
         } catch (e) {
             console.error("[DB] Update ROI Failed:", e);
@@ -1108,11 +1111,11 @@ export class BotManager {
                             // Small delay to prevent 429s in big loops - Be aggressive for DRPC
                             await new Promise(r => setTimeout(r, 1000));
 
-                            // ── Take Profit Stage 1: 4x Value → Close 40% ──
-                            if (mcapMultiplier >= 4.0 && !pool.tp1Done) {
+                            // ── Take Profit Stage 1: 5x Value → Close 30% ──
+                            if (mcapMultiplier >= 5.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} reached 4x MCAP! Withdrawing 40%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 40, "TP1");
+                                SocketManager.emitLog(`[TP1] ${pool.token} reached 5x MCAP! Withdrawing 30%...`, "success");
+                                const result = await this.withdrawLiquidity(pool.poolId, 30, "TP1");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
@@ -1120,11 +1123,11 @@ export class BotManager {
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
                             }
 
-                            // ── Take Profit Stage 2: 7x Value → Close another 40% ──
-                            if (mcapMultiplier >= 7.0 && pool.tp1Done && !pool.takeProfitDone) {
+                            // ── Take Profit Stage 2: 10x Value → Close another 30% ──
+                            if (mcapMultiplier >= 10.0 && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} reached 7x MCAP! Withdrawing 40%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 40, "TP2");
+                                SocketManager.emitLog(`[TP2] ${pool.token} reached 10x MCAP! Withdrawing 30%...`, "success");
+                                const result = await this.withdrawLiquidity(pool.poolId, 30, "TP2");
                                 if (result.success) {
                                     await this.liquidatePoolToSol(pool.mint);
                                 }
