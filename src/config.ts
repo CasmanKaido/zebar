@@ -23,6 +23,7 @@ export const FEE_USD_AMOUNT = parseFloat(process.env.FEE_USD_AMOUNT || "0.5");
 // Helius Configuration
 export const HELIUS_AUTH_SECRET = (process.env.HELIUS_AUTH_SECRET || "").trim();
 export const HELIUS_RPC_URL = process.env.HELIUS_RPC_URL;
+export const MONITOR_RPC_URL = process.env.MONITOR_RPC_URL;
 
 // Paths
 import * as path from "path";
@@ -71,6 +72,11 @@ export function updateConnection(newUrl: string) {
 // Low-Priority Connection for Informational Tasks (Metadata/Prices)
 export const secondaryConnection = BACKUP_RPC_URL
     ? new Connection(BACKUP_RPC_URL, { commitment: "confirmed" })
+    : connection;
+
+// Dedicated Monitor Connection (isolated from scanner/buyer traffic)
+export const monitorConnection = MONITOR_RPC_URL
+    ? new Connection(MONITOR_RPC_URL, { commitment: "confirmed" })
     : connection;
 
 // Load wallet from private key in .env

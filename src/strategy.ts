@@ -1451,10 +1451,11 @@ export class StrategyManager {
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
-    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; userBaseInLp: number; userTokenInLp: number; success: boolean }> {
+    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; userBaseInLp: number; userTokenInLp: number; success: boolean }> {
         try {
+            const conn = connectionOverride || this.connection;
             const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
-            const cpAmm = new CpAmm(this.connection);
+            const cpAmm = new CpAmm(conn);
             const poolPubkey = new PublicKey(poolAddress);
 
             // 1. Fetch Pool State & Sorted Mints
@@ -1464,10 +1465,10 @@ export class StrategyManager {
 
             // 2. Fetch Reserves from Pool State (True reserves without unclaimed fees)
             const getRobustMint = async (mint: PublicKey) => {
-                const info = await safeRpc(() => this.connection.getAccountInfo(mint), "getMintInfo");
+                const info = await safeRpc(() => conn.getAccountInfo(mint), "getMintInfo");
                 if (!info) throw new Error(`Mint not found: ${mint.toBase58()}`);
                 const programId = info.owner;
-                return safeRpc(() => getMint(this.connection, mint, "confirmed", programId), "getMintData");
+                return safeRpc(() => getMint(conn, mint, "confirmed", programId), "getMintData");
             };
 
             const [mintAInfo, mintBInfo] = await Promise.all([
@@ -1481,8 +1482,8 @@ export class StrategyManager {
             const vaultB = poolState.tokenBVault;
 
             const [balA, balB] = await Promise.all([
-                safeRpc(() => this.connection.getTokenAccountBalance(vaultA), "getVaultABalance"),
-                safeRpc(() => this.connection.getTokenAccountBalance(vaultB), "getVaultBBalance")
+                safeRpc(() => conn.getTokenAccountBalance(vaultA), "getVaultABalance"),
+                safeRpc(() => conn.getTokenAccountBalance(vaultB), "getVaultBBalance")
             ]);
 
             const protocolAFee = poolState.protocolAFee ? new BN(poolState.protocolAFee) : new BN(0);

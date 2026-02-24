@@ -1,4 +1,4 @@
-import { connection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
+import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -903,7 +903,7 @@ export class BotManager {
 
                 if (activePools.length === 0) {
                     if (sweepCount % 10 === 0) console.log(`[MONITOR DEBUG] No active bot pools found.`);
-                    this.monitorInterval = setTimeout(runMonitor, 60000);
+                    this.monitorInterval = setTimeout(runMonitor, 30000);
                     return;
                 }
 
@@ -924,13 +924,19 @@ export class BotManager {
                     return;
                 }
 
-                for (const pool of activePools) {
-                    try {
-                        if (pool.withdrawalPending) continue;
-                        if (pool.exited) continue;
-                        if (this.activeTpSlActions.has(pool.poolId)) continue;
+                // Parallel fetch all position values, then process sequentially for TP/SL
+                const eligiblePools = activePools.filter(p => !p.withdrawalPending && !p.exited && !this.activeTpSlActions.has(p.poolId));
+                const posValueResults = await Promise.all(
+                    eligiblePools.map(pool =>
+                        this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId, monitorConnection)
+                            .catch(() => ({ totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false }))
+                    )
+                );
 
-                        const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId);
+                for (let i = 0; i < eligiblePools.length; i++) {
+                    const pool = eligiblePools[i];
+                    try {
+                        const posValue = posValueResults[i];
 
                         if (posValue.success && posValue.spotPrice > 0) {
                             /* ═══ DEBUG: Show raw values for diagnosis ═══
@@ -1108,9 +1114,6 @@ export class BotManager {
                                 initialMcap: pool.initialMcap
                             });
 
-                            // Small delay to prevent 429s in big loops - Be aggressive for DRPC
-                            await new Promise(r => setTimeout(r, 1000));
-
                             // ── Take Profit Stage 1: 5x Value → Close 30% ──
                             if (mcapMultiplier >= 5.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
@@ -1199,7 +1202,7 @@ export class BotManager {
                 // Use activePools (non-exited, bot-created) not pools (all historical records),
                 // so the monitor self-terminates once all active positions are closed.
                 if (this.isRunning || activePools.length > 0) {
-                    this.monitorInterval = setTimeout(runMonitor, 60000); // Check every 60s
+                    this.monitorInterval = setTimeout(runMonitor, 15000); // Check every 15s
                 } else {
                     this.monitorInterval = null; // Nothing left to watch — stop the loop
                 }
