@@ -1132,13 +1132,14 @@ export class BotManager {
                                 await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
                             }
 
-                            // ── Stop Loss: 0.7x Value (-30%) → Close 80% ──
+                            // ── Stop Loss: SCOUT uses 0.2x (-80%), ANALYST uses 0.7x (-30%) → Close 80% ──
                             // 1-minute cooldown: don't trigger SL in the exact launch minute due to violent volatility
                             const createdTs = pool.created ? new Date(pool.created).getTime() : 0;
                             const poolAgeMs = createdTs > 0 ? Date.now() - createdTs : Infinity;
                             const SL_COOLDOWN_MS = 60 * 1000;
+                            const slThreshold = this.settings.mode === "SCOUT" ? 0.2 : 0.7;
 
-                            if (mcapMultiplier <= 0.7 && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
+                            if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 // 1. Internal Math Check (Glitch Protection Layer A)
                                 // If the token-to-lppp ratio (spotPrice) hasn't dropped but USD has, it's an LPPP price glitch.
                                 const priceRatioMultiplier = pool.initialPrice > 0 ? (posValue.spotPrice / pool.initialPrice) : 1;
@@ -1154,7 +1155,7 @@ export class BotManager {
                                         console.warn(`[STOP LOSS STRIKE] ${pool.token} hit ${strikes}/3 strikes (Value: ${mcapMultiplier.toFixed(2)}x). Waiting for confirmation...`);
                                     } else {
                                         this.activeTpSlActions.add(pool.poolId);
-                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} confirmed 0.7x MCAP drop! Withdrawing 80%...`, "error");
+                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} confirmed ${slThreshold}x MCAP drop! Withdrawing 80%...`, "error");
                                         const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                                         if (result.success) {
                                             await this.liquidatePoolToSol(pool.mint);
@@ -1172,14 +1173,13 @@ export class BotManager {
                                     }
                                 }
                             } else {
-                                // Reset strikes if we recover above 0.7x
+                                // Reset strikes if we recover above threshold
                                 if (this.slStrikeCount.has(pool.poolId)) {
                                     this.slStrikeCount.delete(pool.poolId);
                                 }
 
-                                // Visibility: Why didn't it strike? 
-                                // Helps user understand that a -76% ROI pool is skipped because SL already happened.
-                                if (mcapMultiplier <= 0.7 && pool.stopLossDone) {
+                                // Visibility: Why didn't it strike?
+                                if (mcapMultiplier <= slThreshold && pool.stopLossDone) {
                                     if (sweepCount % 10 === 0) console.log(`[SL-SKIP] ${pool.token} is at ${mcapMultiplier.toFixed(2)}x but SL was already completed.`);
                                 }
                             }
