@@ -230,7 +230,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                 <div className="flex flex-col items-end text-right shrink-0">
                     <div className="flex items-center gap-2 sm:gap-3">
                         {Number(feesValue) > 0 && (
-                            <div className="flex flex-col items-end hidden sm:flex">
+                            <div className="flex flex-col items-end">
                                 <span className="text-[9px] text-emerald-500/80 uppercase font-bold tracking-wider mb-0.5 flex items-center gap-1">
                                     <Zap size={8} /> Pending Fees
                                 </span>
@@ -242,7 +242,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                             className="h-10 px-3 sm:px-4 bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-black hover:font-black text-[9px] sm:text-[10px] font-bold rounded-xl border border-emerald-500/30 transition-all flex items-center justify-center gap-1.5 sm:gap-2 group/claim"
                         >
                             <Wallet size={12} className="group-hover/claim:-translate-y-0.5 transition-transform" />
-                            <span className="hidden sm:inline">CLAIM</span>
+                            <span>CLAIM</span>
                         </button>
                     </div>
                 </div>
