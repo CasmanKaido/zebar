@@ -136,113 +136,121 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
     basePrice: number | null;
 }) => {
     const isProfit = pool.initialMcap && pool.currentMcap ? (pool.currentMcap / pool.initialMcap) >= 1 : false;
+    const multiplier = pool.initialMcap && pool.currentMcap ? (pool.currentMcap / pool.initialMcap).toFixed(2) : "0.00";
+    const posValue = ((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(2);
+    const feesValue = ((Number(pool.unclaimedFees?.totalLppp || 0)) * (basePrice || 0)).toFixed(3);
 
     return (
-        <div key={pool.poolId} className={`glass-card p-5 flex flex-col gap-5 group transition-all duration-300 ${isBot ? 'hover:border-primary/50 border-border/60 shadow-[0_4px_20px_rgba(236,72,153,0.03)]' : 'hover:border-primary/50 border-border/40 opacity-90'}`}>
+        <div key={pool.poolId} className={`relative glass-card p-5 group transition-all duration-300 overflow-hidden ${isBot ? 'hover:bg-card/60 shadow-[0_8px_30px_rgba(0,0,0,0.4)]' : 'opacity-90'}`}>
 
-            {/* ═══ Header Row ═══ */}
-            <div className="flex justify-between items-start">
-                <div className="flex flex-col gap-1.5">
+            {/* Action-Oriented Top Status Bar */}
+            <div className={`absolute top-0 left-0 right-0 h-1.5 ${isProfit ? 'bg-primary shadow-[0_0_10px_rgba(205,255,0,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`}></div>
+
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                        <h3 className="text-xl font-black tracking-widest text-white uppercase drop-shadow-md">
+                        <h3 className="text-2xl font-black tracking-widest text-white uppercase drop-shadow-md">
                             {pool.token}
                         </h3>
                         {isBot && (
-                            <span className="px-1.5 py-0.5 bg-primary/10 text-primary text-[9px] rounded font-black border border-primary/20 flex items-center gap-1">
-                                <Zap size={10} className="animate-pulse" /> LIVE
+                            <span className="px-1.5 py-0.5 bg-primary/20 text-primary text-[8px] rounded font-black flex items-center gap-1">
+                                <Zap size={8} className="animate-pulse" /> LIVE
                             </span>
                         )}
-                        <span className="text-[10px] text-muted-foreground font-mono ml-2 mt-0.5 opacity-60 bg-white/5 px-1.5 py-0.5 rounded">
-                            {new Date(pool.created).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </span>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <a
-                            href={`https://solscan.io/account/${pool.poolId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-mono text-[11px] hover:underline flex items-center gap-1 transition-colors text-muted-foreground hover:text-primary opacity-80"
-                        >
-                            {pool.poolId.slice(0, 16)}...
-                            <ExternalLink size={10} />
-                        </a>
-                    </div>
-                    {/* Tags Flow */}
-                    <div className="flex gap-1.5 mt-1">
-                        {pool.tp1Done && <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[8px] rounded border border-emerald-500/20 font-bold tracking-wider">TP1</span>}
-                        {pool.takeProfitDone && <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 text-[8px] rounded border border-emerald-500/20 font-bold tracking-wider">TP2</span>}
-                        {pool.stopLossDone && <span className="px-1.5 py-0.5 bg-red-500/10 text-red-500 text-[8px] rounded border border-red-500/20 font-bold tracking-wider">SL HIT</span>}
-                    </div>
+                    <a
+                        href={`https://solscan.io/account/${pool.poolId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-[10px] hover:underline flex items-center gap-1 transition-colors text-muted-foreground hover:text-white"
+                    >
+                        {pool.poolId.slice(0, 16)}...
+                        <ExternalLink size={8} />
+                    </a>
                 </div>
 
-                {/* Multiplier Badge */}
-                {pool.initialMcap && pool.initialMcap > 0 && pool.currentMcap ? (
-                    <div className={`px-3 py-1.5 rounded-xl text-lg font-black shadow-lg flex items-center justify-center ${isProfit
-                            ? 'bg-primary/10 text-primary border border-primary/20 shadow-[0_0_20px_rgba(205,255,0,0.15)]'
-                            : 'bg-red-500/10 text-red-500 border border-red-500/20 shadow-[0_0_20px_rgba(239,68,68,0.1)]'
-                        }`}>
-                        {((pool.currentMcap / pool.initialMcap)).toFixed(2)}x
-                    </div>
-                ) : null}
+                {/* Minimal Header Actions - Circular */}
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => increaseLiquidity(pool.poolId)}
+                        className="w-8 h-8 rounded-full bg-border/40 hover:bg-white/10 flex items-center justify-center transition-colors border border-border"
+                        title="Add Liquidity"
+                    >
+                        <Droplets size={14} className="text-white opacity-80" />
+                    </button>
+                    <button
+                        onClick={() => withdrawLiquidity(pool.poolId, 100)}
+                        className="w-8 h-8 rounded-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 flex items-center justify-center transition-all group/close shadow-[0_0_15px_rgba(239,68,68,0.1)] hover:shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                        title="FULL CLOSE"
+                    >
+                        <Power size={14} className="text-red-500 group-hover/close:animate-pulse" />
+                    </button>
+                </div>
             </div>
 
-            <div className="w-full h-[1px] bg-border/40 my-1"></div>
+            {/* ═══ ROI Central Focus Stage ═══ */}
+            <div className="flex items-center justify-between bg-black/40 border border-border/30 rounded-2xl p-4 my-6 shadow-inner relative overflow-hidden">
+                <div className={`absolute inset-0 opacity-10 ${isProfit ? 'bg-gradient-to-r from-transparent via-primary to-transparent' : 'bg-gradient-to-r from-transparent via-red-500 to-transparent'}`}></div>
 
-            {/* ═══ Data Grid (Terminal Style) ═══ */}
-            <div className="grid grid-cols-3 gap-4">
-                {/* 1. Value */}
-                <div className="flex flex-col">
-                    <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1 opacity-70">Value</span>
-                    <span className="text-base font-bold text-white font-mono">
-                        ${((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(2)}
-                    </span>
-                    <span className="text-[9px] text-muted-foreground/50 font-mono mt-0.5 truncate" title={`${Number(pool.positionValue?.baseLp || 0).toFixed(4)} ${pool.baseToken || "LPPP"} + ${Number(pool.positionValue?.tokenLp || 0).toFixed(2)} ${pool.token}`}>
-                        {Number(pool.positionValue?.baseLp || 0).toFixed(3)}L / {Number(pool.positionValue?.tokenLp || 0).toFixed(1)}T
+                {/* Entry Point */}
+                <div className="flex flex-col items-center flex-1 z-10">
+                    <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mb-1 opacity-60">Entry Mcap</span>
+                    <span className="text-sm font-mono font-bold text-muted-foreground">
+                        ${pool.initialMcap ? (pool.initialMcap >= 1000000 ? (pool.initialMcap / 1000000).toFixed(2) + 'M' : (pool.initialMcap / 1000).toFixed(1) + 'K') : '---'}
                     </span>
                 </div>
 
-                {/* 2. Market Cap (Stacked) */}
-                <div className="flex flex-col border-l border-border/30 pl-4">
-                    <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1 opacity-70">Market Cap</span>
-                    <span className={`text-base font-bold font-mono ${isProfit ? 'text-primary' : 'text-red-400'}`}>
+                {/* The Hero Multiplier */}
+                <div className="flex flex-col items-center flex-1 px-4 border-x border-border/40 z-10">
+                    <div className={`text-4xl font-black tracking-tighter ${isProfit ? 'text-primary drop-shadow-[0_0_15px_rgba(205,255,0,0.4)]' : 'text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.4)]'}`}>
+                        {multiplier}x
+                    </div>
+                </div>
+
+                {/* Current Point */}
+                <div className="flex flex-col items-center flex-1 z-10">
+                    <span className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mb-1 opacity-60">Live Mcap</span>
+                    <span className={`text-sm font-mono font-bold ${isProfit ? 'text-white' : 'text-red-400'}`}>
                         ${pool.currentMcap ? (pool.currentMcap >= 1000000 ? (pool.currentMcap / 1000000).toFixed(2) + 'M' : (pool.currentMcap / 1000).toFixed(1) + 'K') : '---'}
                     </span>
-                    <span className="text-[9px] text-muted-foreground/60 font-mono mt-0.5">
-                        IN: ${pool.initialMcap ? (pool.initialMcap >= 1000000 ? (pool.initialMcap / 1000000).toFixed(2) + 'M' : (pool.initialMcap / 1000).toFixed(1) + 'K') : '---'}
-                    </span>
-                </div>
-
-                {/* 3. Fees */}
-                <div className="flex flex-col border-l border-border/30 pl-4">
-                    <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-widest mb-1 opacity-70">Fees</span>
-                    <span className="text-base font-bold text-emerald-400 font-mono">
-                        ${((Number(pool.unclaimedFees?.totalLppp || 0)) * (basePrice || 0)).toFixed(3)}
-                    </span>
                 </div>
             </div>
 
-            {/* ═══ Action Bar ═══ */}
-            <div className="flex gap-2 mt-2 pt-4 border-t border-border/30">
-                <button
-                    onClick={() => increaseLiquidity(pool.poolId)}
-                    className="flex-1 py-2.5 bg-transparent hover:bg-white/5 text-muted-foreground hover:text-white text-[10px] font-bold rounded-lg border border-border transition-all flex items-center justify-center gap-1.5"
-                    title="Add Liquidity"
-                >
-                    <Droplets size={12} className="opacity-70" /> ADD
-                </button>
-                <button
-                    onClick={() => claimFees(pool.poolId)}
-                    className="flex-1 py-2.5 bg-transparent hover:bg-emerald-500/10 text-emerald-500 text-[10px] font-bold rounded-lg border border-emerald-500/20 transition-all flex items-center justify-center gap-1.5"
-                >
-                    <Wallet size={12} /> CLAIM
-                </button>
-                <button
-                    onClick={() => withdrawLiquidity(pool.poolId, 100)}
-                    className="flex-[2] py-2.5 bg-red-500/10 hover:bg-red-500 hover:text-white text-red-500 text-[11px] font-black tracking-widest rounded-lg border border-red-500/30 transition-all shadow-lg shadow-red-500/5 group"
-                >
-                    FULL CLOSE
-                </button>
+            {/* ═══ Condensed Summary Row ═══ */}
+            <div className="flex items-end justify-between px-1">
+                <div className="flex flex-col">
+                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-0.5">Pos Value</span>
+                    <span className="text-xl font-bold text-white font-mono">${posValue}</span>
+                </div>
+
+                <div className="flex flex-col items-end text-right">
+                    <div className="flex items-center gap-3">
+                        {Number(feesValue) > 0 && (
+                            <div className="flex flex-col items-end">
+                                <span className="text-[9px] text-emerald-500/80 uppercase font-bold tracking-wider mb-0.5 flex items-center gap-1">
+                                    <Zap size={8} /> Pending Fees
+                                </span>
+                                <span className="text-sm font-bold text-emerald-400 font-mono">+${feesValue}</span>
+                            </div>
+                        )}
+                        <button
+                            onClick={() => claimFees(pool.poolId)}
+                            className="h-10 px-4 bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-black hover:font-black text-[10px] font-bold rounded-xl border border-emerald-500/30 transition-all flex items-center justify-center gap-2 group/claim"
+                        >
+                            <Wallet size={12} className="group-hover/claim:-translate-y-0.5 transition-transform" />
+                            CLAIM
+                        </button>
+                    </div>
+                </div>
             </div>
+
+            {/* Milestone Tags Absolute Positioned */}
+            <div className="absolute top-4 right-4 flex gap-1.5 pointer-events-none">
+                {pool.tp1Done && <span className="px-2 py-0.5 bg-zinc-900 border border-emerald-500/50 text-emerald-400 text-[9px] rounded font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]">TP1</span>}
+                {pool.takeProfitDone && <span className="px-2 py-0.5 bg-zinc-900 border border-emerald-500/50 text-emerald-400 text-[9px] rounded font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]">TP2</span>}
+                {pool.stopLossDone && <span className="px-2 py-0.5 bg-zinc-900 border border-red-500/50 text-red-500 text-[9px] rounded font-bold shadow-[0_0_10px_rgba(239,68,68,0.2)]">SL</span>}
+            </div>
+
         </div>
     );
 };
