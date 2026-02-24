@@ -343,6 +343,7 @@ export class StrategyManager {
                 outputMint: SOL_MINT.toBase58(),
                 amount: amountUnits.toString(),
                 taker: this.wallet.publicKey.toBase58(),
+                slippageBps: (slippagePercent * 100).toString()
             });
 
             const orderResponse = (await axios.get(`https://api.jup.ag/ultra/v1/order?${params}`, { headers })).data;

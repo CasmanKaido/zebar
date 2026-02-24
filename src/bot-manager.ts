@@ -501,7 +501,7 @@ export class BotManager {
             );
             if (!isPoolCreation) return;
 
-            this.resolveWsMint(signature, stables, dexId).catch(() => {});
+            this.resolveWsMint(signature, stables, dexId).catch(() => { });
         };
 
         // Clean up seen signatures periodically (every 60s, keep last 5 minutes)
@@ -565,7 +565,7 @@ export class BotManager {
                 if (cached && cached.expiry > Date.now()) continue;
 
                 SocketManager.emitLog(`[WS] ⚡ New pool detected! ${mint.slice(0, 8)}... (${dexId})`, "info");
-                this.triggerFlashScout(mint, "", dexId, true).catch(() => {});
+                this.triggerFlashScout(mint, "", dexId, true).catch(() => { });
             }
         } catch {
             // Silent
@@ -850,7 +850,7 @@ export class BotManager {
 
         // Unsubscribe WebSocket listeners
         for (const subId of this._wsSubscriptionIds) {
-            connection.removeOnLogsListener(subId).catch(() => {});
+            connection.removeOnLogsListener(subId).catch(() => { });
         }
         this._wsSubscriptionIds = [];
 
@@ -924,13 +924,38 @@ export class BotManager {
                 }
 
                 // Parallel fetch all position values, then process sequentially for TP/SL
-                const eligiblePools = activePools.filter(p => !p.withdrawalPending && !p.exited && !this.activeTpSlActions.has(p.poolId));
-                const posValueResults = await Promise.all(
-                    eligiblePools.map(pool =>
-                        this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId, monitorConnection)
-                            .catch(() => ({ totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false }))
-                    )
-                );
+                const now = Date.now();
+                const eligiblePools = activePools.filter(p => {
+                    if (p.withdrawalPending || p.exited || this.activeTpSlActions.has(p.poolId)) return false;
+
+                    // ── SMART BACKOFF POLLING ──
+                    // Reduces RPS by only checking older bags periodically instead of constantly
+                    const ageMs = now - (p.created ? new Date(p.created).getTime() : 0);
+                    if (ageMs > 60 * 60 * 1000) {
+                        return sweepCount % 4 === 0; // > 1 Hour old: check every 4 sweeps
+                    } else if (ageMs > 10 * 60 * 1000) {
+                        return sweepCount % 2 === 0; // > 10 Mins old: check every 2 sweeps
+                    }
+                    return true; // < 10 Mins old: check every sweep
+                });
+
+                // ── BATCHED RPC FETCHING (CRITICAL FIX FOR 429 LIMITS) ──
+                // Replaces unbounded Promise.all which crashed the RPC with 1000s of requests at once.
+                const posValueResults: any[] = [];
+                const BATCH_SIZE = 5;
+                for (let i = 0; i < eligiblePools.length; i += BATCH_SIZE) {
+                    const batch = eligiblePools.slice(i, i + BATCH_SIZE);
+                    const batchResults = await Promise.all(
+                        batch.map(pool =>
+                            this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId, monitorConnection)
+                                .catch(() => ({ totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false }))
+                        )
+                    );
+                    posValueResults.push(...batchResults);
+                    if (i + BATCH_SIZE < eligiblePools.length) {
+                        await new Promise(r => setTimeout(r, 800)); // 800ms buffer between batches
+                    }
+                }
 
                 for (let i = 0; i < eligiblePools.length; i++) {
                     const pool = eligiblePools[i];
@@ -1113,6 +1138,28 @@ export class BotManager {
                                 initialMcap: pool.initialMcap
                             });
 
+                            // ── Retry pending sell (withdrawal succeeded but sell failed on previous tick) ──
+                            if (pool.pendingSell) {
+                                SocketManager.emitLog(`[${pool.pendingSell}] Retrying sell for ${pool.token}...`, "warning");
+                                const sold = await this.liquidatePoolToSol(pool.mint);
+                                if (sold) {
+                                    const flagUpdate: any = { pendingSell: null };
+                                    if (pool.pendingSell === "TP1") flagUpdate.tp1Done = true;
+                                    else if (pool.pendingSell === "TP2") flagUpdate.takeProfitDone = true;
+                                    else if (pool.pendingSell === "STOP LOSS") {
+                                        flagUpdate.stopLossDone = true;
+                                        if (mcapMultiplier <= 0.05) {
+                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
+                                            await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, flagUpdate);
+                                            continue;
+                                        }
+                                    }
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, flagUpdate);
+                                    SocketManager.emitLog(`[${pool.pendingSell}] ${pool.token} sell retry succeeded.`, "success");
+                                }
+                                continue; // skip TP/SL checks this tick — either sold or will retry next tick
+                            }
+
                             // ── Take Profit Stage 1: 5x Value → Close 30% ──
                             if (mcapMultiplier >= 5.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
@@ -1120,8 +1167,12 @@ export class BotManager {
                                 const result = await this.withdrawLiquidity(pool.poolId, 30, "TP1");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                                    const sold = await this.liquidatePoolToSol(pool.mint);
+                                    if (sold) {
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
+                                    } else {
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "TP1" });
+                                    }
                                 } else {
                                     SocketManager.emitLog(`[TP1] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
                                 }
@@ -1134,8 +1185,12 @@ export class BotManager {
                                 const result = await this.withdrawLiquidity(pool.poolId, 30, "TP2");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                                    const sold = await this.liquidatePoolToSol(pool.mint);
+                                    if (sold) {
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
+                                    } else {
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "TP2" });
+                                    }
                                 } else {
                                     SocketManager.emitLog(`[TP2] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
                                 }
@@ -1154,12 +1209,16 @@ export class BotManager {
                                 const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
-                                    await this.liquidatePoolToSol(pool.mint);
-                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                                    const sold = await this.liquidatePoolToSol(pool.mint);
+                                    if (sold) {
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
-                                    if (mcapMultiplier <= 0.05) {
-                                        SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
-                                        await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                        if (mcapMultiplier <= 0.05) {
+                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
+                                            await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                                        }
+                                    } else {
+                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "STOP LOSS" });
                                     }
                                 } else {
                                     SocketManager.emitLog(`[STOP LOSS] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
@@ -1178,7 +1237,8 @@ export class BotManager {
                 // Use activePools (non-exited, bot-created) not pools (all historical records),
                 // so the monitor self-terminates once all active positions are closed.
                 if (this.isRunning || activePools.length > 0) {
-                    this.monitorInterval = setTimeout(runMonitor, 15000); // Check every 15s
+                    const nextInterval = activePools.length > 50 ? 30000 : 15000;
+                    this.monitorInterval = setTimeout(runMonitor, nextInterval);
                 } else {
                     this.monitorInterval = null; // Nothing left to watch — stop the loop
                 }
@@ -1291,7 +1351,7 @@ export class BotManager {
         return result;
     }
 
-    private async liquidatePoolToSol(tokenMint: string) {
+    private async liquidatePoolToSol(tokenMint: string): Promise<boolean> {
         // Only sell the sniped token back to SOL.
         // IMPORTANT: Do NOT sell LPPP here. LPPP is a reserve asset used to seed
         // future pools. Selling it would drain the entire wallet balance.
@@ -1305,9 +1365,16 @@ export class BotManager {
         const tokenBal = await getRawBalance(tokenMint);
         if (tokenBal > 0n) {
             SocketManager.emitLog(`[LIQUIDATE] Closing $${tokenMint.slice(0, 6)} and converting to SOL...`, "warning");
-            await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+            try {
+                await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+                return true;
+            } catch (e: any) {
+                SocketManager.emitLog(`[LIQUIDATE] Sell failed for ${tokenMint.slice(0, 6)}: ${e.message}. Will retry next tick.`, "error");
+                return false;
+            }
         } else {
             SocketManager.emitLog(`[LIQUIDATE] No ${tokenMint.slice(0, 6)} balance to sell.`, "info");
+            return true; // nothing to sell = complete
         }
     }
 
