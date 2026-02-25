@@ -70,13 +70,17 @@ export function updateConnection(newUrl: string) {
 }
 
 // Low-Priority Connection for Informational Tasks (Metadata/Prices)
-export const secondaryConnection = BACKUP_RPC_URL
-    ? new Connection(BACKUP_RPC_URL, { commitment: "confirmed" })
+// Falls back to Helius RPC, then main RPC
+const SECONDARY_URL = BACKUP_RPC_URL || HELIUS_RPC_URL;
+export const secondaryConnection = SECONDARY_URL
+    ? new Connection(SECONDARY_URL, { commitment: "confirmed" })
     : connection;
 
 // Dedicated Monitor Connection (isolated from scanner/buyer traffic)
-export const monitorConnection = MONITOR_RPC_URL
-    ? new Connection(MONITOR_RPC_URL, { commitment: "confirmed" })
+// Falls back to Helius RPC, then main RPC
+const MONITOR_URL = MONITOR_RPC_URL || HELIUS_RPC_URL;
+export const monitorConnection = MONITOR_URL
+    ? new Connection(MONITOR_URL, { commitment: "confirmed" })
     : connection;
 
 // Load wallet from private key in .env

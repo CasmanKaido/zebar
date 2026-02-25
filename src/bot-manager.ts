@@ -1220,17 +1220,19 @@ export class BotManager {
                                 }
                             }
 
-                            // ── Stop Loss: SCOUT uses 0.2x (-80%), ANALYST uses 0.7x (-30%) → Close 80% ──
+                            // ── Stop Loss: SCOUT uses 0.92x (-8%), ANALYST uses 0.7x (-30%) ──
+                            // SCOUT: withdraw 30% at -8% MCAP drop, ANALYST: withdraw 80% at -30% MCAP drop
                             // 1-minute cooldown: don't trigger SL in the exact launch minute due to violent volatility
                             const createdTs = pool.created ? new Date(pool.created).getTime() : 0;
                             const poolAgeMs = createdTs > 0 ? Date.now() - createdTs : Infinity;
                             const SL_COOLDOWN_MS = 60 * 1000;
-                            const slThreshold = this.settings.mode === "SCOUT" ? 0.2 : 0.7;
+                            const slThreshold = this.settings.mode === "SCOUT" ? 0.92 : 0.7;
+                            const slWithdrawPct = this.settings.mode === "SCOUT" ? 30 : 80;
 
                             if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Withdrawing 80%...`, "error");
-                                const result = await this.withdrawLiquidity(pool.poolId, 80, "STOP LOSS");
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Withdrawing ${slWithdrawPct}%...`, "error");
+                                const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "STOP LOSS");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
                                     const sold = await this.liquidatePoolToSol(pool.mint);
