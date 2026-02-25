@@ -1251,8 +1251,13 @@ export class BotManager {
                                         SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
                                         await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                     }
+                                } else if (atomicResult.bundleAccepted) {
+                                    // Bundle was accepted by Jito but not confirmed — do NOT fall back or we'll double-withdraw
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} bundle accepted but unconfirmed (${atomicResult.error}). Marking stopLossDone to prevent double withdrawal.`, "warning");
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
                                 } else {
-                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} atomic exit failed: ${atomicResult.error}. Falling back to standard...`, "warning");
+                                    // Bundle was rejected by Jito — safe to fall back
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} atomic exit rejected: ${atomicResult.error}. Falling back to standard...`, "warning");
                                     const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "STOP LOSS");
                                     if (result.success) {
                                         const sold = await this.liquidatePoolToSol(pool.mint);

@@ -1864,7 +1864,7 @@ export class StrategyManager {
     /**
      * Executes an Atomic Stop Loss by bundling Liquidity Removal and Token Swap into a single Jito Bundle.
      */
-    async executeAtomicStopLoss(poolAddress: string, tokenMint: string, percent: number = 80, positionId?: string): Promise<{ success: boolean; bundleId?: string; signatures?: string[]; error?: string }> {
+    async executeAtomicStopLoss(poolAddress: string, tokenMint: string, percent: number = 80, positionId?: string): Promise<{ success: boolean; bundleAccepted?: boolean; bundleId?: string; signatures?: string[]; error?: string }> {
         console.log(`[ATOMIC-SL] Initiating bundled exit for ${tokenMint.slice(0, 8)}...`);
         try {
             // 1. Get position value to estimate swap amount
@@ -1915,9 +1915,9 @@ export class StrategyManager {
                             return { success: false, error: `Bundle tx failed on-chain: ${JSON.stringify(status.err)}` };
                         }
                     }
-                    return { success: false, error: "Bundle not confirmed after 30s" };
+                    return { success: false, bundleAccepted: true, bundleId: bundleRes.bundleId, error: "Bundle not confirmed after 30s" };
                 } else {
-                    return { success: false, error: "No valid signature to confirm" };
+                    return { success: false, bundleAccepted: true, bundleId: bundleRes.bundleId, error: "No valid signature to confirm" };
                 }
             } else {
                 return { success: false, error: bundleRes.error };
