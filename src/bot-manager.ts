@@ -1392,7 +1392,11 @@ export class BotManager {
         if (tokenBal > 0n) {
             SocketManager.emitLog(`[LIQUIDATE] Closing $${tokenMint.slice(0, 6)} and converting to SOL...`, "warning");
             try {
-                await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+                const result = await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+                if (!result.success) {
+                    SocketManager.emitLog(`[LIQUIDATE] Sell failed for ${tokenMint.slice(0, 6)}: ${result.error || "unknown"}. Will retry next tick.`, "error");
+                    return false;
+                }
                 return true;
             } catch (e: any) {
                 SocketManager.emitLog(`[LIQUIDATE] Sell failed for ${tokenMint.slice(0, 6)}: ${e.message}. Will retry next tick.`, "error");
