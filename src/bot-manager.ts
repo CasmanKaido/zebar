@@ -867,25 +867,38 @@ export class BotManager {
         SocketManager.emitLog("LPPP BOT Scanning Service Stopped.", "warning");
     }
 
+    private portfolioCache: { data: any; ts: number } = { data: null, ts: 0 };
+    private static PORTFOLIO_CACHE_MS = 30_000; // 30s cache — no point refetching faster than frontend polls
+
     async getWalletBalance() {
-        try {
-            const solBalance = await safeRpc(() => secondaryConnection.getBalance(wallet.publicKey), "getSolBalance");
-
-            const baseTokenBalances: Record<string, number> = {};
-            for (const [symbol, mint] of Object.entries(BASE_TOKENS)) {
-                const accounts = await safeRpc(() => secondaryConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint }), "getPortfolio");
-                const uiAmount = accounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
-                baseTokenBalances[symbol] = uiAmount;
-            }
-
-            return {
-                sol: solBalance / 1e9,
-                baseTokens: baseTokenBalances
-            };
-        } catch (error) {
-            console.error("Portfolio Fetch Error:", error);
-            return { sol: 0, lppp: 0 };
+        // Return cached result if fresh
+        const now = Date.now();
+        if (this.portfolioCache.data && now - this.portfolioCache.ts < BotManager.PORTFOLIO_CACHE_MS) {
+            return this.portfolioCache.data;
         }
+
+        // Try secondaryConnection first, fall back to monitorConnection, then main
+        const rpcs = [secondaryConnection, monitorConnection, connection];
+        for (const rpc of rpcs) {
+            try {
+                const solBalance = await safeRpc(() => rpc.getBalance(wallet.publicKey), "getSolBalance");
+
+                const baseTokenBalances: Record<string, number> = {};
+                for (const [symbol, mint] of Object.entries(BASE_TOKENS)) {
+                    const accounts = await safeRpc(() => rpc.getParsedTokenAccountsByOwner(wallet.publicKey, { mint }), "getPortfolio");
+                    const uiAmount = accounts.value.reduce((acc, account) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+                    baseTokenBalances[symbol] = uiAmount;
+                }
+
+                const result = { sol: solBalance / 1e9, baseTokens: baseTokenBalances };
+                this.portfolioCache = { data: result, ts: now };
+                return result;
+            } catch (_) { /* try next RPC */ }
+        }
+
+        // All RPCs failed — return stale cache if available, otherwise zeros
+        if (this.portfolioCache.data) return this.portfolioCache.data;
+        return { sol: 0, baseTokens: {} };
     }
 
     private async monitorPositions() {
@@ -977,10 +990,10 @@ export class BotManager {
                         const posValue = posValueResults[i];
 
                         if (posValue.success && posValue.spotPrice > 0) {
-                            // ── AUTO-EXIT: Dead pools below 0.05x MCAP with SL already done ──
-                            // These are worth fractions of a penny — stop burning RPC checking them.
-                            if (pool.stopLossDone && posValue.totalSol <= 0) {
-                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (SL done, zero value). Stopping monitoring.`, "warning");
+                            // ── AUTO-EXIT: Dead pools with zero position value ──
+                            // These are worth nothing — stop burning RPC checking them.
+                            if (posValue.totalSol <= 0 && pool.stopLossDone) {
+                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (zero value, SL done). Stopping monitoring.`, "warning");
                                 await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                 continue;
                             }
@@ -1155,9 +1168,10 @@ export class BotManager {
                                 initialMcap: pool.initialMcap
                             });
 
-                            // ── AUTO-EXIT: SL-done pools at dust MCAP — stop wasting RPC ──
-                            if (pool.stopLossDone && mcapMultiplier <= 0.05 && mcapMultiplier !== 1) {
-                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (${mcapMultiplier.toFixed(3)}x MCAP, SL done). Stopping monitoring.`, "warning");
+                            // ── AUTO-EXIT: Dust MCAP pools — stop wasting RPC ──
+                            if (mcapMultiplier <= 0.05 && mcapMultiplier !== 1) {
+                                const reason = pool.stopLossDone ? "SL done" : "legacy (no SL)";
+                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (${mcapMultiplier.toFixed(3)}x MCAP, ${reason}). Stopping monitoring.`, "warning");
                                 await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                 continue;
                             }
