@@ -1198,12 +1198,12 @@ export class StrategyManager {
                         currentPoint: new BN(0)
                     });
                 } else {
-                    // SL FIX: Calculate target based on TOTAL position, but cap removal at the max UNLOCKED amount.
+                    // Calculate removal amount: percent of total, capped at unlocked
                     const targetAmount = totalLiquidity.mul(new BN(percent)).div(new BN(100));
                     const liquidityDelta = targetAmount.gt(unlocked) ? unlocked : targetAmount;
 
                     if (!liquidityDelta.isZero()) {
-                        console.log(`[METEORA] Removing ${percent}% of total (Target: ${targetAmount.toString()}, Removing: ${liquidityDelta.toString()} unlocked) from position: ${pos.position.toBase58()}`);
+                        console.log(`[METEORA] Removing ${percent}% | unlocked: ${unlocked.toString()} | vested: ${vested.toString()} | locked: ${locked.toString()} | target: ${targetAmount.toString()} | actual: ${liquidityDelta.toString()} | position: ${pos.position.toBase58()}`);
                         tx = await cpAmm.removeLiquidity({
                             owner: this.wallet.publicKey,
                             pool: poolPubkey,
