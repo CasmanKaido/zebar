@@ -1081,11 +1081,14 @@ export class StrategyManager {
 
             for (const pos of userPositions) {
                 let tx: Transaction | null = null;
-                const currentLiquidity = new BN(pos.positionState.unlockedLiquidity.toString());
+                const unlocked = new BN(pos.positionState.unlockedLiquidity.toString());
+                const vested = new BN(pos.positionState.vestedLiquidity.toString());
+                const locked = new BN(pos.positionState.permanentLockedLiquidity.toString());
+                const totalLiquidity = unlocked.add(vested).add(locked);
 
-                if (currentLiquidity.isZero()) {
+                if (unlocked.isZero()) {
                     // Clean up empty position if confirmed empty OR dust (< 1000 units)
-                    if (percent >= 100 || currentLiquidity.lt(new BN(1000))) {
+                    if (percent >= 100 || totalLiquidity.lt(new BN(1000))) {
                         console.log(`[METEORA] Cleaning up empty/dust position: ${pos.position.toBase58()}`);
                         tx = await cpAmm.removeAllLiquidityAndClosePosition({
                             owner: this.wallet.publicKey,
@@ -1113,9 +1116,12 @@ export class StrategyManager {
                         currentPoint: new BN(0)
                     });
                 } else {
-                    const liquidityDelta = currentLiquidity.mul(new BN(percent)).div(new BN(100));
+                    // SL FIX: Calculate target based on TOTAL position, but cap removal at the max UNLOCKED amount.
+                    const targetAmount = totalLiquidity.mul(new BN(percent)).div(new BN(100));
+                    const liquidityDelta = targetAmount.gt(unlocked) ? unlocked : targetAmount;
+
                     if (!liquidityDelta.isZero()) {
-                        console.log(`[METEORA] Removing ${percent}% from position: ${pos.position.toBase58()}`);
+                        console.log(`[METEORA] Removing ${percent}% of total (Target: ${targetAmount.toString()}, Removing: ${liquidityDelta.toString()} unlocked) from position: ${pos.position.toBase58()}`);
                         tx = await cpAmm.removeLiquidity({
                             owner: this.wallet.publicKey,
                             pool: poolPubkey,
