@@ -1,7 +1,7 @@
 import axios from "axios";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { GeckoService } from "./gecko-service";
-import { secondaryConnection } from "./config";
+import { monitorConnection } from "./config";
 
 export interface TokenMetadata {
     symbol: string;
@@ -60,8 +60,8 @@ export class TokenMetadataService {
         if (gecko) return gecko.symbol;
 
         // 4. On-Chain (Slowest, but works for everything)
-        // Use secondaryConnection by default to save RPS on main Helius node
-        const conn = connection || secondaryConnection;
+        // Use monitorConnection to save RPS on main Helius node
+        const conn = connection || monitorConnection;
         try {
             const info = await conn.getParsedAccountInfo(new PublicKey(mint));
             if (info.value?.data && "parsed" in info.value.data) {

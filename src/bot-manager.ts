@@ -1,4 +1,4 @@
-import { connection, monitorConnection, secondaryConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
+import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -429,7 +429,7 @@ export class BotManager {
         }
 
         // Check Balance
-        const balance = await safeRpc(() => secondaryConnection.getBalance(wallet.publicKey), "getWalletBalance");
+        const balance = await safeRpc(() => monitorConnection.getBalance(wallet.publicKey), "getWalletBalance");
         if (balance === 0) {
             SocketManager.emitLog(`[WARNING] Your wallet (${wallet.publicKey.toBase58().slice(0, 8)}...) has 0 SOL. Buys will fail.`, "error");
         } else {
@@ -877,8 +877,8 @@ export class BotManager {
             return this.portfolioCache.data;
         }
 
-        // Try secondaryConnection first, fall back to monitorConnection, then main
-        const rpcs = [secondaryConnection, monitorConnection, connection];
+        // Try monitorConnection first, fall back to main
+        const rpcs = [monitorConnection, connection];
         for (const rpc of rpcs) {
             try {
                 const solBalance = await safeRpc(() => rpc.getBalance(wallet.publicKey), "getSolBalance");
