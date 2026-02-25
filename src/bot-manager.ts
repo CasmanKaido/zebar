@@ -990,11 +990,8 @@ export class BotManager {
                         const posValue = posValueResults[i];
 
                         if (posValue.success && posValue.spotPrice > 0) {
-                            // ── AUTO-EXIT: Dead pools with zero position value ──
-                            // These are worth nothing — stop burning RPC checking them.
+                            // ── Dead pools with zero position value + SL done: skip this tick ──
                             if (posValue.totalSol <= 0 && pool.stopLossDone) {
-                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (zero value, SL done). Stopping monitoring.`, "warning");
-                                await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                 continue;
                             }
 
@@ -1168,11 +1165,11 @@ export class BotManager {
                                 initialMcap: pool.initialMcap
                             });
 
-                            // ── AUTO-EXIT: Dust MCAP pools — stop wasting RPC ──
-                            if (mcapMultiplier <= 0.05 && mcapMultiplier !== 1) {
-                                const reason = pool.stopLossDone ? "SL done" : "legacy (no SL)";
-                                SocketManager.emitLog(`[AUTO-EXIT] ${pool.token} is dead (${mcapMultiplier.toFixed(3)}x MCAP, ${reason}). Stopping monitoring.`, "warning");
-                                await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
+                            // ── DUST MCAP: Mark stopLossDone so tiered monitoring deprioritizes ──
+                            if (mcapMultiplier <= 0.05 && mcapMultiplier !== 1 && !pool.stopLossDone) {
+                                const reason = "legacy (no SL)";
+                                SocketManager.emitLog(`[DUST] ${pool.token} is dead (${mcapMultiplier.toFixed(3)}x MCAP, ${reason}). Deprioritizing.`, "warning");
+                                await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
                                 continue;
                             }
 
