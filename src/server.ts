@@ -234,7 +234,8 @@ const PORT = Number(process.env.PORT) || 3000;
 
 httpServer.listen(PORT, () => {
     console.log(`LPPP BOT Unified Server running on port ${PORT}`);
-    console.log(`LPPP BOT Version: v1.5.9 (Birdeye Sync + Optimized)`);
+    const pkg = require("../package.json");
+    console.log(`LPPP BOT Version: v${pkg.version}`);
     console.log(`[CONFIG] API_SECRET Status: ${API_SECRET ? "CONFIGURED (Locked)" : "UNSET (Public Access Mode)"}`);
     console.log(`[CONFIG] RPC_URL: ${process.env.RPC_URL ? "OK" : "MISSING"}`);
     const birdKey = process.env.BIRDEYE_API_KEY;
