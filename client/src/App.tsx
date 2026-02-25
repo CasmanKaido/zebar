@@ -178,17 +178,15 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
 
                 {/* Minimal Header Actions - Circular */}
                 <div className="flex gap-2 shrink-0">
-                    {pool.mint && (
-                        <a
-                            href={`https://gmgn.ai/sol/token/${pool.mint}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="w-8 h-8 rounded-full bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 flex items-center justify-center transition-all shrink-0"
-                            title="View on GMGN"
-                        >
-                            <ExternalLink size={14} className="text-green-400" />
-                        </a>
-                    )}
+                    <a
+                        href={`https://gmgn.ai/sol/token/${pool.poolId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-8 h-8 rounded-full bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 flex items-center justify-center transition-all shrink-0"
+                        title="View on GMGN"
+                    >
+                        <ExternalLink size={14} className="text-green-400" />
+                    </a>
                     <button
                         onClick={() => refreshPool(pool.poolId)}
                         className="w-8 h-8 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 flex items-center justify-center transition-all shrink-0"
