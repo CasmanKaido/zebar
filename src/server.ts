@@ -194,6 +194,13 @@ app.post("/api/pool/claim", async (req, res) => {
     res.json(result);
 });
 
+app.post("/api/pool/refresh", async (req, res) => {
+    const { poolId } = req.body;
+    if (!poolId) return res.status(400).json({ error: "Missing poolId" });
+    const result = await botManager.refreshPool(poolId);
+    res.json(result);
+});
+
 // Config Endpoints
 app.post("/api/config/key", async (req, res) => {
     const { privateKey, adminPassword } = req.body;

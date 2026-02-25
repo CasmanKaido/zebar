@@ -14,7 +14,8 @@ import {
     LineChart,
     Search,
     Wallet,
-    ExternalLink
+    ExternalLink,
+    RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Modal } from './Modal';
@@ -127,12 +128,13 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
     );
 };
 
-const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, basePrice }: {
+const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, refreshPool, basePrice }: {
     pool: Pool;
     isBot: boolean;
     claimFees: (id: string) => void;
     increaseLiquidity: (id: string) => void;
     withdrawLiquidity: (id: string, percent: number) => void;
+    refreshPool: (id: string) => void;
     basePrice: number | null;
 }) => {
     const isProfit = pool.initialMcap && pool.currentMcap ? (pool.currentMcap / pool.initialMcap) >= 1 : false;
@@ -175,6 +177,15 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
 
                 {/* Minimal Header Actions - Circular */}
                 <div className="flex gap-2 shrink-0">
+                    {(pool.stopLossDone || (pool.tp1Done && pool.takeProfitDone)) && (
+                        <button
+                            onClick={() => refreshPool(pool.poolId)}
+                            className="w-8 h-8 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 flex items-center justify-center transition-all shrink-0"
+                            title="Refresh Data"
+                        >
+                            <RefreshCw size={14} className="text-blue-400" />
+                        </button>
+                    )}
                     <button
                         onClick={() => increaseLiquidity(pool.poolId)}
                         className="w-8 h-8 rounded-full bg-border/40 hover:bg-white/10 flex items-center justify-center transition-colors border border-border shrink-0"
@@ -550,6 +561,14 @@ function App() {
                     });
                 }
             }
+        });
+    };
+
+    const refreshPool = async (poolId: string) => {
+        await fetch(`${BACKEND_URL}/api/pool/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': apiSecret },
+            body: JSON.stringify({ poolId })
         });
     };
 
@@ -1157,6 +1176,7 @@ function App() {
                                                     claimFees={claimFees}
                                                     increaseLiquidity={increaseLiquidity}
                                                     withdrawLiquidity={withdrawLiquidity}
+                                                    refreshPool={refreshPool}
                                                     basePrice={baseTokenPrices[token]}
                                                 />
                                             ))}

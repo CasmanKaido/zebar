@@ -947,11 +947,9 @@ export class BotManager {
                     // Tier 1: Pending sell — must retry ASAP
                     if (p.pendingSell) return true;
 
-                    // Tier 2: SL-done moonbag (20% remaining) — check every 8 sweeps (~2 min)
-                    if (p.stopLossDone) return sweepCount % 8 === 0;
-
-                    // Tier 3: TP1+TP2 done moonbag (~40% remaining) — check every 6 sweeps (~90s)
-                    if (p.tp1Done && p.takeProfitDone) return sweepCount % 6 === 0;
+                    // Tier 2: Completed pools — no automatic monitoring, refresh on-demand only
+                    if (p.stopLossDone) return false;
+                    if (p.tp1Done && p.takeProfitDone) return false;
 
                     // Tier 4: TP1 done, watching for TP2 — check every 3 sweeps (~45s)
                     if (p.tp1Done) return sweepCount % 3 === 0;
@@ -1386,6 +1384,56 @@ export class BotManager {
             SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
         }
         return result;
+    }
+
+    async refreshPool(poolId: string): Promise<{ success: boolean; error?: string }> {
+        try {
+            const pool = await dbService.getPool(poolId);
+            if (!pool) return { success: false, error: "Pool not found" };
+
+            const posValue = await this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId, monitorConnection);
+            if (!posValue.success) return { success: false, error: "Failed to fetch position value" };
+
+            // Update fees
+            const totalFeesLppp = posValue.feesSol + (posValue.feesToken * posValue.spotPrice);
+            const fees = { sol: posValue.feesSol.toString(), token: posValue.feesToken.toString(), totalLppp: totalFeesLppp.toString() };
+
+            // Update position value
+            const posValueLppp = posValue.userBaseInLp + (posValue.userTokenInLp * posValue.spotPrice);
+            const positionValue = { baseLp: posValue.userBaseInLp.toString(), tokenLp: posValue.userTokenInLp.toString(), totalLppp: posValueLppp.toString() };
+
+            // Calculate ROI
+            const roiVal = (posValue.spotPrice - pool.initialPrice) / pool.initialPrice * 100;
+            const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
+            const roiString = cappedRoi > 10000 ? "MOON" : `${cappedRoi.toFixed(2)}%`;
+
+            // Calculate Net ROI
+            const netProfit = posValue.totalSol - (pool.initialSolValue || 0);
+            const netRoiVal = (pool.initialSolValue && pool.initialSolValue > 0) ? (netProfit / pool.initialSolValue) * 100 : 0;
+            const netRoi = `${netRoiVal.toFixed(2)}%`;
+
+            // MCAP
+            let currentMcap = 0;
+            if (pool.totalSupply && pool.totalSupply > 0) {
+                const poolBaseTokenKey = pool.baseToken || "LPPP";
+                let activeBaseMintStr = BASE_TOKENS["LPPP"].toBase58();
+                if (poolBaseTokenKey === "SOL") activeBaseMintStr = SOL_MINT.toBase58();
+                else if (poolBaseTokenKey === "USDC") activeBaseMintStr = USDC_MINT.toBase58();
+                else if (BASE_TOKENS[poolBaseTokenKey]) activeBaseMintStr = BASE_TOKENS[poolBaseTokenKey].toBase58();
+
+                const basePrice = await this.getBaseTokenPrice(activeBaseMintStr);
+                const tokenPrice = posValue.spotPrice * basePrice;
+                currentMcap = tokenPrice * pool.totalSupply;
+            }
+
+            await this.updatePoolROI(pool.poolId, roiString, false, fees, {
+                netRoi, positionValue, currentMcap, initialMcap: pool.initialMcap
+            }, true);
+
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
     }
 
     private async liquidatePoolToSol(tokenMint: string): Promise<boolean> {
