@@ -1387,6 +1387,7 @@ export class BotManager {
         const result = await this.strategy.claimMeteoraFees(poolId);
         if (result.success) {
             SocketManager.emitLog(`[SUCCESS] Fees harvested!`, "success");
+            await this.refreshPool(poolId);
         } else {
             SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
         }
