@@ -1240,23 +1240,30 @@ export class BotManager {
 
                             if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Withdrawing ${slWithdrawPct}%...`, "error");
-                                const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "STOP LOSS");
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Atomic exit via Jito...`, "error");
+                                const atomicResult = await this.strategy.executeAtomicStopLoss(pool.poolId, pool.mint, slWithdrawPct, pool.positionId);
                                 this.activeTpSlActions.delete(pool.poolId);
-                                if (result.success) {
-                                    const sold = await this.liquidatePoolToSol(pool.mint);
-                                    if (sold) {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                                if (atomicResult.success) {
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} atomic exit sent! Bundle: ${atomicResult.bundleId}`, "success");
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
-                                        if (mcapMultiplier <= 0.05) {
-                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
-                                            await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
-                                        }
-                                    } else {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "STOP LOSS" });
+                                    if (mcapMultiplier <= 0.05) {
+                                        SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
+                                        await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                     }
                                 } else {
-                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} atomic exit failed: ${atomicResult.error}. Falling back to standard...`, "warning");
+                                    const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "STOP LOSS");
+                                    if (result.success) {
+                                        const sold = await this.liquidatePoolToSol(pool.mint);
+                                        if (sold) {
+                                            await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
+                                        } else {
+                                            await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "STOP LOSS" });
+                                        }
+                                    } else {
+                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} fallback withdrawal also failed. Will retry next tick.`, "warning");
+                                    }
                                 }
                             }
                         }

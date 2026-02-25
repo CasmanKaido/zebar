@@ -1897,8 +1897,28 @@ export class StrategyManager {
             const bundleRes = await this.sendJitoBundle(allTxs);
 
             if (bundleRes.success) {
-                SocketManager.emitLog(`[ATOMIC-SL] Bundle Sent! Content-ID: ${bundleRes.bundleId}`, "warning");
-                return { success: true, bundleId: bundleRes.bundleId, signatures: bundleRes.signatures };
+                SocketManager.emitLog(`[ATOMIC-SL] Bundle accepted by Jito. Confirming on-chain...`, "warning");
+
+                // Wait for on-chain confirmation (poll every 2s, max 30s)
+                const sigToConfirm = bundleRes.signatures?.find(s => s !== "unknown");
+                if (sigToConfirm) {
+                    const MAX_POLLS = 15;
+                    for (let i = 0; i < MAX_POLLS; i++) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        const statusRes = await this.connection.getSignatureStatuses([sigToConfirm]);
+                        const status = statusRes.value?.[0];
+                        if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
+                            SocketManager.emitLog(`[ATOMIC-SL] Bundle confirmed on-chain! Bundle: ${bundleRes.bundleId}`, "success");
+                            return { success: true, bundleId: bundleRes.bundleId, signatures: bundleRes.signatures };
+                        }
+                        if (status?.err) {
+                            return { success: false, error: `Bundle tx failed on-chain: ${JSON.stringify(status.err)}` };
+                        }
+                    }
+                    return { success: false, error: "Bundle not confirmed after 30s" };
+                } else {
+                    return { success: false, error: "No valid signature to confirm" };
+                }
             } else {
                 return { success: false, error: bundleRes.error };
             }
