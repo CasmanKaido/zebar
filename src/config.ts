@@ -97,3 +97,17 @@ console.log("Wallet Public Key:", wallet.publicKey.toBase58());
 // Meteora Pool Fee in Basis Points (100 bps = 1%)
 // Standard is 20 (0.2%)
 export const METEORA_POOL_FEE_BPS = parseInt(process.env.METEORA_POOL_FEE_BPS || "20");
+
+// Jito Configuration
+export const JITO_BLOCK_ENGINE_URL = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
+export const JITO_TIP_LAMPORTS = parseInt(process.env.JITO_TIP_LAMPORTS || "100000"); // 0.0001 SOL
+export const JITO_TIP_ADDRESSES = [
+    "96g9sGbShQC97vY6QK663Y84W51nruXKj4M96c26fCgE",
+    "HFqU5x63VTqvQss8hp5X206rU96hVn8vSpzVRnwCHXi",
+    "Cw8CFyMvGrnC7APhShtNoRBhAbSC3H7sRLCfJv9C5B7h",
+    "ADaUMid9yfUytqMBmgrZ9iSgqsU9Zq2pB3Vqto7X28p6",
+    "ADuUk9ZbeL22Sreak4q2Xpzti3S9XAXUXG6U4qH29XmN",
+    "DfXygSm4j9vPRp3asR96m7qfB2EitTfey8idKTrUnuBq",
+    "DttWaMuVvTiduHkhfbL2A76Bxzp9qAyK9H699vG2Y7K",
+    "3AV99v7yJpS9nS92f1Yrdz4NfBkkd7A9qP1n8S9r3Wv8"
+];

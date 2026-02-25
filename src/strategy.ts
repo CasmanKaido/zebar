@@ -1,5 +1,6 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError, TransactionMessage } from "@solana/web3.js";
-import { wallet, connection, JUPITER_API_KEY, DRY_RUN, SOL_MINT, USDC_MINT, BASE_TOKENS } from "./config";
+import bs58 from "bs58";
+import { wallet, connection, JUPITER_API_KEY, DRY_RUN, SOL_MINT, USDC_MINT, BASE_TOKENS, JITO_TIP_ADDRESSES, JITO_BLOCK_ENGINE_URL, JITO_TIP_LAMPORTS } from "./config";
 import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
 import BN from "bn.js";
 import { deriveTokenVaultAddress, derivePositionAddress } from "@meteora-ag/cp-amm-sdk";
@@ -88,6 +89,81 @@ export class StrategyManager {
             return Math.min(Math.max(median, 100000), 1000000);
         } catch (e) {
             return 100000;
+        }
+    }
+
+    /**
+     * Sends an array of transactions as a Jito Bundle.
+     * Adds a dedicated tip transaction to the end of the bundle.
+     */
+    async sendJitoBundle(txs: (Transaction | VersionedTransaction)[]): Promise<{ success: boolean; bundleId?: string; signatures?: string[]; error?: string }> {
+        try {
+            if (DRY_RUN) {
+                console.log(`[JITO] Dry run: Simulating bundle with ${txs.length} transactions.`);
+                return { success: true, bundleId: "DRY_RUN_BUNDLE" };
+            }
+
+            const tipAccount = new PublicKey(JITO_TIP_ADDRESSES[Math.floor(Math.random() * JITO_TIP_ADDRESSES.length)]);
+            const recentBlockhash = await this.connection.getLatestBlockhash();
+
+            // Create a dedicated tip transaction and add it to the bundle
+            const tipTransaction = new Transaction().add(
+                SystemProgram.transfer({
+                    fromPubkey: this.wallet.publicKey,
+                    toPubkey: tipAccount,
+                    lamports: JITO_TIP_LAMPORTS
+                })
+            );
+            tipTransaction.recentBlockhash = recentBlockhash.blockhash;
+            tipTransaction.feePayer = this.wallet.publicKey;
+            tipTransaction.sign(this.wallet);
+
+            // Add to the bundle list
+            const finalTxs = [...txs, tipTransaction];
+
+            // Jito Limit: Max 5 transactions per bundle
+            if (finalTxs.length > 5) {
+                throw new Error(`Bundle too large: ${finalTxs.length} transactions. Jito limit is 5. Please reduce the number of positions.`);
+            }
+
+            // Extract signatures for tracking
+            const signatures = finalTxs.map(tx => {
+                const sig = tx.signatures?.[0];
+                if (!sig) return "unknown";
+
+                if (tx instanceof Transaction) {
+                    const signature = (sig as any).signature;
+                    return signature ? bs58.encode(signature) : "unknown";
+                } else {
+                    return bs58.encode(sig as Uint8Array);
+                }
+            });
+
+            // Serialize all transactions for Jito
+            const serializedTxs = finalTxs.map(tx => {
+                return bs58.encode(tx.serialize());
+            });
+
+            // Send to Jito Block Engine
+            const response = await axios.post(JITO_BLOCK_ENGINE_URL, {
+                jsonrpc: "2.0",
+                id: 1,
+                method: "sendBundle",
+                params: [serializedTxs]
+            });
+
+            if (response.data.error) {
+                console.error(`[JITO] Block Engine Error:`, response.data.error);
+                throw new Error(response.data.error.message || "Jito Error");
+            }
+
+            const bundleId = response.data.result;
+            console.log(`[JITO] Bundle Sent Content-ID: ${bundleId}`);
+            return { success: true, bundleId, signatures };
+
+        } catch (error: any) {
+            console.error(`[JITO] Bundle Failed:`, error.message);
+            return { success: false, error: error.message };
         }
     }
 
@@ -316,7 +392,7 @@ export class StrategyManager {
     /**
      * Sells a token for SOL using Jupiter Aggregator.
      */
-    async sellToken(mint: PublicKey, amountUnits: bigint, slippagePercent: number = 10): Promise<{ success: boolean; amountSol: number; error?: string }> {
+    async sellToken(mint: PublicKey, amountUnits: bigint, slippagePercent: number = 10, skipExecution: boolean = false): Promise<{ success: boolean; amountSol: number; transaction?: VersionedTransaction; error?: string }> {
         const { DRY_RUN } = require("./config");
         console.log(`[STRATEGY] Selling ${amountUnits.toString()} units of ${mint.toBase58()} for SOL via Jupiter ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
@@ -353,6 +429,10 @@ export class StrategyManager {
 
             const transaction = VersionedTransaction.deserialize(Buffer.from(swapTransaction, 'base64'));
             transaction.sign([this.wallet]);
+
+            if (skipExecution) {
+                return { success: true, amountSol: 0, transaction };
+            }
 
             // Helper to calculate SOL received
             const getSolReceived = async (): Promise<number> => {
@@ -1053,7 +1133,7 @@ export class StrategyManager {
     /**
      * Removes a percentage of liquidity from a Meteora CP-AMM pool.
      */
-    async removeMeteoraLiquidity(poolAddress: string, percent: number = 80, positionId?: string): Promise<{ success: boolean; txSig?: string; error?: string }> {
+    async removeMeteoraLiquidity(poolAddress: string, percent: number = 80, positionId?: string, skipExecution: boolean = false): Promise<{ success: boolean; txSig?: string; transactions?: Transaction[]; error?: string }> {
         const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const BN = require("bn.js");
 
@@ -1078,6 +1158,8 @@ export class StrategyManager {
 
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
             const transactions: Transaction[] = [];
+
+            const { blockhash } = skipExecution ? await this.connection.getLatestBlockhash() : { blockhash: null };
 
             for (const pos of userPositions) {
                 let tx: Transaction | null = null;
@@ -1145,12 +1227,23 @@ export class StrategyManager {
                 if (tx) {
                     const priorityFee = await this.getPriorityFee();
                     tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
+
+                    if (skipExecution && blockhash) {
+                        tx.recentBlockhash = blockhash;
+                        tx.feePayer = this.wallet.publicKey;
+                        tx.sign(this.wallet);
+                    }
+
                     transactions.push(tx);
                 }
             }
 
             if (transactions.length === 0) {
                 return { success: false, error: "No executable transactions generated." };
+            }
+
+            if (skipExecution) {
+                return { success: true, transactions };
             }
 
             // Execute all transactions sequentially (to avoid nonce issues)
@@ -1302,7 +1395,7 @@ export class StrategyManager {
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
-    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; userBaseInLp: number; userTokenInLp: number; success: boolean }> {
+    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; userBaseInLp: number; userTokenInLp: number; userTokenRaw: bigint; success: boolean }> {
         try {
             const conn = connectionOverride || this.connection;
             const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
@@ -1417,7 +1510,7 @@ export class StrategyManager {
                 const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
                 if (userPositions.length === 0) {
                     // console.warn(`[STRATEGY] No position found for pool ${poolPubkey.toBase58()}. Marking as fetch failure.`);
-                    return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice, userBaseInLp: 0, userTokenInLp: 0, success: false };
+                    return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
                 }
                 pos = userPositions[0];
             }
@@ -1490,6 +1583,7 @@ export class StrategyManager {
 
             const userBaseInLp = baseIsA ? userAmountA : userAmountB;
             const userTokenInLp = baseIsA ? userAmountB : userAmountA;
+            const userTokenRaw = baseIsA ? amountB_red : amountA_red;
 
 
             // 7. User's Pending Fees (Manual Calculation for DAMM v2)
@@ -1593,11 +1687,12 @@ export class StrategyManager {
                 spotPrice,
                 userBaseInLp: netBaseInLp,   // Now strictly Principal
                 userTokenInLp: netTokenInLp, // Now strictly Principal
+                userTokenRaw,
                 success: true
             };
         } catch (error) {
             console.error(`[STRATEGY] getPositionValue Failed:`, error);
-            return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false };
+            return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
         }
     }
 
@@ -1763,6 +1858,54 @@ export class StrategyManager {
         } catch (error) {
             console.error("[STRATEGY] Sync Positions Error:", error);
             return [];
+        }
+    }
+
+    /**
+     * Executes an Atomic Stop Loss by bundling Liquidity Removal and Token Swap into a single Jito Bundle.
+     */
+    async executeAtomicStopLoss(poolAddress: string, tokenMint: string, percent: number = 80, positionId?: string): Promise<{ success: boolean; bundleId?: string; signatures?: string[]; error?: string }> {
+        console.log(`[ATOMIC-SL] Initiating bundled exit for ${tokenMint.slice(0, 8)}...`);
+        try {
+            // 1. Get position value to estimate swap amount
+            const posValue = await this.getPositionValue(poolAddress, tokenMint, positionId);
+            if (!posValue.success || (posValue.userTokenInLp <= 0 && posValue.userTokenRaw <= 0n)) {
+                return { success: false, error: "Could not fetch position value for bundling." };
+            }
+
+            // Use raw units for precision
+            const atomicAmount = posValue.userTokenRaw * BigInt(percent) / 100n;
+
+            if (atomicAmount <= 0n) {
+                return { success: false, error: "Estimated swap amount is zero." };
+            }
+
+            // 2. Prepare Withdrawal Transactions (But don't send)
+            const withdrawRes = await this.removeMeteoraLiquidity(poolAddress, percent, positionId, true);
+            if (!withdrawRes.success || !withdrawRes.transactions || withdrawRes.transactions.length === 0) {
+                return { success: false, error: `Withdrawal prep failed: ${withdrawRes.error}` };
+            }
+
+            // 3. Prepare Swap Transaction (But don't send)
+            const swapRes = await this.sellToken(new PublicKey(tokenMint), atomicAmount, 10, true);
+            if (!swapRes.success || !swapRes.transaction) {
+                return { success: false, error: `Swap prep failed: ${swapRes.error}` };
+            }
+
+            // 4. Bundle and Send!
+            const allTxs = [...withdrawRes.transactions, swapRes.transaction];
+            const bundleRes = await this.sendJitoBundle(allTxs);
+
+            if (bundleRes.success) {
+                SocketManager.emitLog(`[ATOMIC-SL] Bundle Sent! Content-ID: ${bundleRes.bundleId}`, "warning");
+                return { success: true, bundleId: bundleRes.bundleId, signatures: bundleRes.signatures };
+            } else {
+                return { success: false, error: bundleRes.error };
+            }
+
+        } catch (error: any) {
+            console.error(`[ATOMIC-SL] Execution Failed:`, error.message);
+            return { success: false, error: error.message };
         }
     }
 }

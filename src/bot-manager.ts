@@ -1196,36 +1196,24 @@ export class BotManager {
                             // ── Take Profit Stage 1: 5x Value → Close 30% ──
                             if (mcapMultiplier >= 5.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} reached 5x MCAP! Withdrawing 30%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 30, "TP1");
+                                SocketManager.emitLog(`[ATOMIC-TP1] ${pool.token} reached 5x MCAP! Executing bundled exit...`, "success");
+                                const result = await this.withdrawLiquidityAtomic(pool.poolId, 30, "TP1");
                                 this.activeTpSlActions.delete(pool.poolId);
+
                                 if (result.success) {
-                                    const sold = await this.liquidatePoolToSol(pool.mint);
-                                    if (sold) {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
-                                    } else {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "TP1" });
-                                    }
-                                } else {
-                                    SocketManager.emitLog(`[TP1] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { tp1Done: true });
                                 }
                             }
 
                             // ── Take Profit Stage 2: 10x Value → Close another 30% ──
                             if (mcapMultiplier >= 10.0 && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} reached 10x MCAP! Withdrawing 30%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 30, "TP2");
+                                SocketManager.emitLog(`[ATOMIC-TP2] ${pool.token} reached 10x MCAP! Executing bundled exit...`, "success");
+                                const result = await this.withdrawLiquidityAtomic(pool.poolId, 30, "TP2");
                                 this.activeTpSlActions.delete(pool.poolId);
+
                                 if (result.success) {
-                                    const sold = await this.liquidatePoolToSol(pool.mint);
-                                    if (sold) {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
-                                    } else {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "TP2" });
-                                    }
-                                } else {
-                                    SocketManager.emitLog(`[TP2] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { takeProfitDone: true });
                                 }
                             }
 
@@ -1240,23 +1228,13 @@ export class BotManager {
 
                             if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Withdrawing ${slWithdrawPct}%...`, "error");
-                                const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "STOP LOSS");
+                                SocketManager.emitLog(`[ATOMIC STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Executing bundled exit...`, "error");
+                                const result = await this.withdrawLiquidityAtomic(pool.poolId, slWithdrawPct, "STOP LOSS");
                                 this.activeTpSlActions.delete(pool.poolId);
-                                if (result.success) {
-                                    const sold = await this.liquidatePoolToSol(pool.mint);
-                                    if (sold) {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
-                                        if (mcapMultiplier <= 0.05) {
-                                            SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
-                                            await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
-                                        }
-                                    } else {
-                                        await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "STOP LOSS" });
-                                    }
-                                } else {
-                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
+                                if (result.success && mcapMultiplier <= 0.05) {
+                                    SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
+                                    await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                 }
                             }
                         }
@@ -1363,6 +1341,62 @@ export class BotManager {
             return { success: false, error: err.message };
         }
     }
+
+    /**
+     * Executes an Atomic Withdrawal (Withdraw + Sell) using Jito Bundling.
+     */
+    async withdrawLiquidityAtomic(poolId: string, percent: number = 80, source: string = "STOP LOSS") {
+        SocketManager.emitLog(`[ATOMIC-${source}] Initiating bundled exit for ${poolId.slice(0, 8)}...`, "warning");
+
+        // 1. Mark as Pending
+        await this.updatePoolROI(poolId, "PENDING...", false, undefined, { withdrawalPending: true });
+
+        try {
+            const pool = await dbService.getPool(poolId);
+            if (!pool) throw new Error("Pool not found in database.");
+
+            const result = await this.strategy.executeAtomicStopLoss(pool.poolId, pool.mint, percent, pool.positionId);
+
+            if (result.success) {
+                if (result.signatures && result.signatures.length > 0) {
+                    SocketManager.emitLog(`[SUCCESS] Atomic bundle sent for ${pool.token}. Waiting for confirmation...`, "success");
+                    const confirmed = await this.strategy.confirmOrRetry(result.signatures[result.signatures.length - 1]);
+                    if (!confirmed) {
+                        throw new Error("Bundle sent but failed to confirm on-chain (likely dropped by Jito).");
+                    }
+                } else {
+                    SocketManager.emitLog(`[SUCCESS] Atomic bundle simulated for ${pool.token} (Dry Run).`, "success");
+                }
+
+                // Update ROI state
+                // Update initialSolValue proportionally for partial withdrawals.
+                if (percent < 100 && pool.initialSolValue) {
+                    const remainingRatio = 1 - (percent / 100);
+                    const newInitialVal = pool.initialSolValue * remainingRatio;
+                    await dbService.updatePoolEntryValue(poolId, newInitialVal);
+                    SocketManager.emitLog(`[ROI FIX] Adjusted Entry Value: ${pool.initialSolValue.toFixed(4)} -> ${newInitialVal.toFixed(4)} LPPP`, "info");
+                }
+
+                const roiUpdates: any = {
+                    withdrawalPending: false,
+                    stopLossDone: source === "STOP LOSS" || percent >= 100,
+                    tp1Done: source === "TP1" || percent >= 100,
+                    takeProfitDone: source === "TP2" || percent >= 100
+                };
+
+                await this.updatePoolROI(poolId, percent >= 100 ? "CLOSED" : "PARTIAL", percent >= 100, undefined, roiUpdates);
+
+                return result;
+            } else {
+                throw new Error(result.error);
+            }
+        } catch (err: any) {
+            console.error("[ATOMIC-WITHDRAW] Critical Error:", err);
+            await this.updatePoolROI(poolId, "FAILED", false, undefined, { withdrawalPending: false });
+            return { success: false, error: err.message };
+        }
+    }
+
 
     async increaseLiquidity(poolId: string, amountSol: number) {
         SocketManager.emitLog(`[MANUAL] Increasing liquidity by ${amountSol} SOL in ${poolId.slice(0, 8)}...`, "warning");
