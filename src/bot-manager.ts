@@ -1227,7 +1227,7 @@ export class BotManager {
                             const poolAgeMs = createdTs > 0 ? Date.now() - createdTs : Infinity;
                             const SL_COOLDOWN_MS = 60 * 1000;
                             const slThreshold = this.settings.mode === "SCOUT" ? 0.92 : 0.7;
-                            const slWithdrawPct = this.settings.mode === "SCOUT" ? 30 : 80;
+                            const slWithdrawPct = 80;
 
                             if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
