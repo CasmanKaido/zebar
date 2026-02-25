@@ -1284,7 +1284,8 @@ export class BotManager {
                 // Use activePools (non-exited, bot-created) not pools (all historical records),
                 // so the monitor self-terminates once all active positions are closed.
                 if (this.isRunning || activePools.length > 0) {
-                    const nextInterval = activePools.length > 50 ? 30000 : 15000;
+                    const monitorableCount = activePools.filter(p => !p.stopLossDone && !(p.tp1Done && p.takeProfitDone)).length;
+                    const nextInterval = monitorableCount > 50 ? 30000 : 15000;
                     this.monitorInterval = setTimeout(runMonitor, nextInterval);
                 } else {
                     this.monitorInterval = null; // Nothing left to watch — stop the loop
