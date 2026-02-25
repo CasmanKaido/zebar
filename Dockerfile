@@ -18,6 +18,9 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
+# cache-bust: v1.1.0
+ARG CACHE_BUST=1
+
 # Copy root manifest and install backend dependencies
 COPY package*.json ./
 RUN apk add --no-cache build-base python3 && \
