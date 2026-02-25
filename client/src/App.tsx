@@ -257,7 +257,7 @@ function App() {
     const [logs, setLogs] = useState<Log[]>([]);
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
-    const [activePoolTab, setActivePoolTab] = useState<'NEW' | 'LEGACY' | 'LPPP' | 'HTP'>('NEW');
+    const [activePoolTab, setActivePoolTab] = useState<'NEW' | 'LEGACY' | 'STOPPED' | 'LPPP' | 'HTP'>('NEW');
 
     // Live Prices
     const [solPrice, setSolPrice] = useState<number | null>(null);
@@ -1084,7 +1084,9 @@ function App() {
                                 {(() => {
                                     const PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
                                     return pools.filter(p => {
-                                        if (p.exited || !p.isBotCreated) return false;
+                                        if (!p.isBotCreated) return false;
+                                        if (activePoolTab === 'STOPPED') return !!p.stopLossDone;
+                                        if (p.exited || p.stopLossDone) return false;
                                         const token = p.baseToken || "LPPP";
                                         const isNew = p.created ? new Date(p.created).getTime() >= PATCH_DATE : false;
                                         if (activePoolTab === 'NEW') return isNew;
@@ -1099,11 +1101,15 @@ function App() {
 
                         {/* Tab Navigation */}
                         <div className="flex items-center gap-1 bg-black/40 p-1.5 rounded-full border border-white/5 overflow-x-auto w-full sm:w-auto">
-                            {['NEW', 'LEGACY', 'LPPP', 'HTP'].map(tab => (
+                            {['NEW', 'LEGACY', 'STOPPED', 'LPPP', 'HTP'].map(tab => (
                                 <button
                                     key={tab}
                                     onClick={() => setActivePoolTab(tab as any)}
-                                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${activePoolTab === tab ? 'bg-primary text-black shadow-[0_0_15px_rgba(205,255,0,0.3)]' : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${activePoolTab === tab
+                                        ? tab === 'STOPPED'
+                                            ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]'
+                                            : 'bg-primary text-black shadow-[0_0_15px_rgba(205,255,0,0.3)]'
+                                        : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
                                 >
                                     {tab}
                                 </button>
@@ -1116,10 +1122,12 @@ function App() {
                             {Object.keys(baseTokenPrices).map(token => {
                                 const PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
                                 const tokenPools = pools.filter(p => {
-                                    if (p.exited || !p.isBotCreated) return false;
+                                    if (!p.isBotCreated) return false;
                                     const pToken = p.baseToken || "LPPP";
                                     if (pToken !== token) return false;
 
+                                    if (activePoolTab === 'STOPPED') return !!p.stopLossDone;
+                                    if (p.exited || p.stopLossDone) return false;
                                     const isNew = p.created ? new Date(p.created).getTime() >= PATCH_DATE : false;
                                     if (activePoolTab === 'NEW') return isNew;
                                     if (activePoolTab === 'LEGACY') return !isNew;
