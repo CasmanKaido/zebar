@@ -1193,10 +1193,10 @@ export class BotManager {
                                 continue; // skip TP/SL checks this tick — either sold or will retry next tick
                             }
 
-                            // ── Take Profit Stage 1: 5x Value → Close 30% ──
-                            if (mcapMultiplier >= 5.0 && !pool.tp1Done) {
+                            // ── Take Profit Stage 1: 7x Value → Close 30% ──
+                            if (mcapMultiplier >= 7.0 && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} reached 5x MCAP! Withdrawing 30%...`, "success");
+                                SocketManager.emitLog(`[TP1] ${pool.token} reached 7x MCAP! Withdrawing 30%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 30, "TP1");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
@@ -1211,10 +1211,10 @@ export class BotManager {
                                 }
                             }
 
-                            // ── Take Profit Stage 2: 10x Value → Close another 30% ──
-                            if (mcapMultiplier >= 10.0 && pool.tp1Done && !pool.takeProfitDone) {
+                            // ── Take Profit Stage 2: 14x Value → Close another 30% ──
+                            if (mcapMultiplier >= 14.0 && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} reached 10x MCAP! Withdrawing 30%...`, "success");
+                                SocketManager.emitLog(`[TP2] ${pool.token} reached 14x MCAP! Withdrawing 30%...`, "success");
                                 const result = await this.withdrawLiquidity(pool.poolId, 30, "TP2");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
@@ -1229,13 +1229,13 @@ export class BotManager {
                                 }
                             }
 
-                            // ── Stop Loss: SCOUT uses 0.92x (-8%), ANALYST uses 0.7x (-30%) ──
-                            // SCOUT: withdraw 30% at -8% MCAP drop, ANALYST: withdraw 80% at -30% MCAP drop
+                            // ── Stop Loss: Tight -2% SL for both modes ──
+                            // Both SCOUT and ANALYST: withdraw 80% at -2% MCAP drop
                             // 1-minute cooldown: don't trigger SL in the exact launch minute due to violent volatility
                             const createdTs = pool.created ? new Date(pool.created).getTime() : 0;
                             const poolAgeMs = createdTs > 0 ? Date.now() - createdTs : Infinity;
                             const SL_COOLDOWN_MS = 60 * 1000;
-                            const slThreshold = this.settings.mode === "SCOUT" ? 0.92 : 0.7;
+                            const slThreshold = 0.98;
                             const slWithdrawPct = 80;
 
                             if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
