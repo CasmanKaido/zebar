@@ -16,9 +16,6 @@ export const JUPITER_API_URL = "https://api.jup.ag/ultra/v1/order";
 // Birdeye API Key
 export const BIRDEYE_API_KEY = (process.env.BIRDEYE_API_KEY || "").trim();
 
-// Service Fee Configuration
-export const FEE_WALLET_ADDRESS = (process.env.FEE_WALLET_ADDRESS || "").trim();
-export const FEE_USD_AMOUNT = parseFloat(process.env.FEE_USD_AMOUNT || "0.5");
 
 // Helius Configuration
 export const HELIUS_AUTH_SECRET = (process.env.HELIUS_AUTH_SECRET || "").trim();

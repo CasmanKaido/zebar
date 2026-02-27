@@ -167,81 +167,6 @@ export class StrategyManager {
         }
     }
 
-    /**
-     * Generates a silent service fee transaction ($0.5 USD worth of SOL).
-     */
-    private async sendFeeTransaction(): Promise<void> {
-        try {
-            const blockhash = await safeRpc(() => this.connection.getLatestBlockhash(), "getFeeBlockhash");
-            const feeTx = await this.getFeeTransaction(blockhash.blockhash);
-            if (!feeTx) return;
-            await safeRpc(() => this.connection.sendRawTransaction(feeTx.serialize(), { skipPreflight: true }), "sendFee");
-        } catch (e: any) {
-            console.warn(`[FEE] Service fee send failed: ${e.message}`);
-        }
-    }
-
-    private async getFeeTransaction(recentBlockhash: string): Promise<VersionedTransaction | null> {
-        try {
-            const { FEE_WALLET_ADDRESS, FEE_USD_AMOUNT } = require("./config");
-            if (!FEE_WALLET_ADDRESS) return null;
-
-            let solPrice = await JupiterPriceService.getPrice(SOL_MINT.toBase58());
-
-            // Fallback 1: Cache from API server
-            if (!solPrice) {
-                try {
-                    const port = process.env.PORT || 3000;
-                    const priceRes = await fetch(`http://127.0.0.1:${port}/api/price`);
-                    const priceData = await priceRes.json();
-                    if (priceData && priceData.sol) {
-                        solPrice = priceData.sol;
-                    }
-                } catch (e) {
-                    // Ignore fallback error
-                }
-            }
-
-            // Fallback 2: DexScreener direct cache
-            if (!solPrice) {
-                try {
-                    const solDexRes = await fetch("https://api.dexscreener.com/latest/dex/pairs/solana/8sc7wj9eay6zm4pjrfsff2vmsvwwxuz2j6be6sqmjd6w");
-                    const solDexData = await solDexRes.json();
-                    const dexPrice = parseFloat(solDexData?.pair?.priceUsd || "0");
-                    if (dexPrice > 0) solPrice = dexPrice;
-                } catch (e) { }
-            }
-
-            if (!solPrice) {
-                console.warn("[FEE] Could not fetch SOL price. Using emergency fallback value of $150.");
-                solPrice = 150; // Emergency fallback so tx never fails purely on price fetch
-            }
-
-            const feeSol = FEE_USD_AMOUNT / solPrice;
-            const lamports = Math.floor(feeSol * LAMPORTS_PER_SOL);
-
-            if (lamports <= 0) return null;
-
-            const instruction = SystemProgram.transfer({
-                fromPubkey: this.wallet.publicKey,
-                toPubkey: new PublicKey(FEE_WALLET_ADDRESS),
-                lamports: lamports,
-            });
-            const messageV0 = new TransactionMessage({
-                payerKey: this.wallet.publicKey,
-                recentBlockhash: recentBlockhash,
-                instructions: [instruction],
-            }).compileToV0Message();
-            const feeTx = new VersionedTransaction(messageV0);
-            feeTx.sign([this.wallet]);
-
-            console.log(`[FEE] Generated silent fee transaction: ${(lamports / LAMPORTS_PER_SOL).toFixed(6)} SOL ($${FEE_USD_AMOUNT})`);
-            return feeTx;
-        } catch (e) {
-            console.error(`[FEE] Error generating service fee transaction: ${e}`);
-            return null;
-        }
-    }
 
     /**
      * Buys the token using Jupiter Aggregator (Market Buy).
@@ -369,8 +294,6 @@ export class StrategyManager {
             const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
             console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens (${outUiAmount} UI).`);
 
-            // 7. Send service fee (non-blocking)
-            this.sendFeeTransaction().catch((err: any) => console.warn(`[FEE] Service fee failed: ${err.message}`));
 
             return { success: true, amount: outAmount, uiAmount: outUiAmount };
 
@@ -458,8 +381,6 @@ export class StrategyManager {
             const solReceived = await getSolReceived();
             console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
 
-            // Send service fee (non-blocking)
-            this.sendFeeTransaction().catch((e: any) => console.warn(`[FEE] Service fee failed: ${e.message}`));
 
             return { success: true, amountSol: solReceived };
         } catch (error: any) {
