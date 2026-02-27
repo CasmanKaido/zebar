@@ -187,6 +187,15 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                     >
                         <ExternalLink size={14} className="text-green-400" />
                     </a>
+                    <a
+                        href={`https://dexscreener.com/solana/${pool.mint || pool.poolId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-8 h-8 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 flex items-center justify-center transition-all shrink-0"
+                        title="View on DexScreener"
+                    >
+                        <BarChart3 size={14} className="text-blue-400" />
+                    </a>
                     <button
                         onClick={() => refreshPool(pool.poolId)}
                         className="w-8 h-8 rounded-full bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 flex items-center justify-center transition-all shrink-0"
