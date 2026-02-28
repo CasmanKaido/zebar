@@ -300,6 +300,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
 
 function App() {
     const [running, setRunning] = useState(false);
+    const [activeView, setActiveView] = useState<'dashboard' | 'settings'>('dashboard');
     const [logs, setLogs] = useState<Log[]>([]);
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
@@ -841,523 +842,325 @@ function App() {
                             <span className="text-[11px] font-medium text-muted-foreground block mt-0.5 tracking-wider uppercase">Finance Revolution Execution</span>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${running ? 'bg-primary shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-muted-foreground'}`}></span>
-                        <span className="text-sm font-medium text-muted-foreground">
-                            {running ? 'Scanner Active' : 'System Offline'}
-                        </span>
+                    <div className="flex items-center gap-6">
+                        <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 mr-4">
+                            <button
+                                onClick={() => setActiveView('dashboard')}
+                                className={`px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${activeView === 'dashboard' ? 'bg-primary text-black shadow-[0_0_15px_rgba(196,240,0,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}
+                            >
+                                Dashboard
+                            </button>
+                            <button
+                                onClick={() => setActiveView('settings')}
+                                className={`px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${activeView === 'settings' ? 'bg-primary text-black shadow-[0_0_15px_rgba(196,240,0,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}
+                            >
+                                Settings
+                            </button>
+                        </nav>
+                        <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${running ? 'bg-primary shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-muted-foreground'}`}></span>
+                            <span className="text-sm font-medium text-muted-foreground">
+                                {running ? 'Scanner Active' : 'System Offline'}
+                            </span>
+                        </div>
                     </div>
                 </div>
             </header>
 
-            <main className="grid grid-cols-1 lg:grid-cols-[320px_1fr_400px] gap-6 p-6 max-w-[1440px] mx-auto w-full flex-1">
-
-                {/* Left Column: Controls */}
-                <div className="flex flex-col gap-6">
-                    {/* Configuration Card */}
-                    <div className="glass-card p-5 flex flex-col">
-                        <div className="flex items-center justify-between mb-5">
-                            <div className="flex items-center gap-2">
-                                <Settings2 size={18} className="text-muted-foreground" />
-                                <h2 className="text-sm font-semibold">Configuration</h2>
-                            </div>
-                            <div className="flex flex-wrap justify-end gap-2">
-                                <select
-                                    value={selectedBaseToken}
-                                    onChange={(e) => setSelectedBaseToken(e.target.value)}
-                                    className="bg-transparent text-emerald-400 font-bold border border-emerald-500/20 rounded px-1.5 py-0.5 text-[10px] outline-none"
-                                    disabled={running}
-                                >
-                                    {Object.keys(baseTokenPrices).length > 0 ? Object.keys(baseTokenPrices).map(t => (
-                                        <option key={t} value={t} className="bg-zinc-900 font-sans">{t}</option>
-                                    )) : <option value="LPPP" className="bg-zinc-900">LPPP</option>}
-                                </select>
-                                {solPrice && <span className="text-[10px] text-muted-foreground font-mono bg-white/5 px-2 py-0.5 rounded border border-border">SOL: ${solPrice.toFixed(2)}</span>}
-                                {baseTokenPrices[selectedBaseToken] && <span className="text-[10px] text-emerald-400/80 font-mono bg-emerald-900/10 px-2 py-0.5 rounded border border-emerald-500/20">{selectedBaseToken}: ${baseTokenPrices[selectedBaseToken].toFixed(4)}</span>}
-                            </div>
-                        </div>
-
-                        <div className="mb-4">
-                            <button
-                                onClick={toggleBuyUnit}
-                                className="text-[9px] font-bold text-primary/80 hover:text-primary transition-colors flex items-center gap-1 bg-primary/5 px-2 py-1 rounded border border-primary/20 mb-2"
-                            >
-                                <Zap size={8} />
-                                SWITCH TO {isBuyUsd ? 'SOL' : 'USD'}
-                            </button>
-
-                            <SettingInput
-                                label={`Buy Size (${isBuyUsd ? 'USD' : 'SOL'})`}
-                                value={buyAmount}
-                                onChange={setBuyAmount}
-                                disabled={running}
-                                prefix={isBuyUsd ? "$" : ""}
-                                unit={isBuyUsd ? "USD" : "SOL"}
-                                subtext={!isBuyUsd && solPrice ? `≈ $${(buyAmount * solPrice).toFixed(2)}` : (isBuyUsd && solPrice ? `≈ ${(buyAmount / solPrice).toFixed(4)} SOL` : undefined)}
-                            />
-                        </div>
-
-                        <div className="mb-4">
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">LP Match ({selectedBaseToken}) — Auto</label>
-                                <div className="relative">
-                                    <input
-                                        type="text"
-                                        readOnly
-                                        value={solPrice && baseTokenPrices[selectedBaseToken] && baseTokenPrices[selectedBaseToken] > 0 ? `≈ ${((isBuyUsd ? buyAmount : buyAmount * solPrice) / baseTokenPrices[selectedBaseToken]).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${selectedBaseToken}` : 'Fetching prices...'}
-                                        className="w-full bg-input/50 border border-border/50 text-muted-foreground px-2.5 py-1.5 rounded-xl font-mono text-[12px] cursor-not-allowed"
-                                    />
-                                </div>
-                                {solPrice && baseTokenPrices[selectedBaseToken] && baseTokenPrices[selectedBaseToken] > 0 && (
-                                    <span className="text-[9px] text-muted-foreground/70">≈ ${(isBuyUsd ? buyAmount : buyAmount * solPrice).toFixed(2)} USD equivalent</span>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Discovery Engine Selection */}
-                        <div className="mb-6 pt-4 border-t border-border">
-                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 block">Discovery Engine</label>
-                            <div className="grid grid-cols-2 gap-1.5 p-1 bg-secondary rounded-2xl border border-border">
-                                {['SCOUT', 'ANALYST'].map((m) => (
-                                    <button
-                                        key={m}
-                                        onClick={() => setDiscoveryMode(m as any)}
-                                        disabled={running}
-                                        className={`py-2 rounded-xl text-[10px] font-black transition-all border flex flex-col items-center gap-0.5 ${discoveryMode === m
-                                            ? 'bg-primary/20 border-primary text-primary shadow-[0_0_10px_rgba(16,185,129,0.1)] scale-[1.02]'
-                                            : 'bg-transparent border-transparent text-muted-foreground/60 hover:text-muted-foreground'
-                                            }`}
-                                    >
-                                        <span className="tracking-tighter">{m}</span>
-                                        {m === 'SCOUT' && <span className="text-[7px] opacity-60">New</span>}
-                                        {m === 'ANALYST' && <span className="text-[7px] opacity-60">Hot</span>}
+            <main className="max-w-[1440px] mx-auto w-full flex-1 p-6">
+                {activeView === 'dashboard' ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
+                        {/* Dashboard Left: Pools */}
+                        <div className="flex flex-col gap-6">
+                            {/* Stats Bar */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="glass-card p-4 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                            <Wallet size={20} />
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">SOL Balance</p>
+                                            <p className="text-lg font-black font-mono">{portfolio.sol.toFixed(3)}</p>
+                                        </div>
+                                    </div>
+                                    <button onClick={refreshBalance} className="text-muted-foreground hover:text-primary transition-colors">
+                                        <RefreshCw size={14} />
                                     </button>
-                                ))}
-                            </div>
-                            <div className="mt-2 text-[9px] text-muted-foreground/60 italic px-1">
-                                {discoveryMode === 'SCOUT' && "• Real-time sniping via Helius + Birdeye"}
-                                {discoveryMode === 'ANALYST' && "• Targeting high-rank trending momentum"}
-                            </div>
-                        </div>
-
-                        <div className="mt-4">
-                            <SettingInput label="Max Pair Age (Minutes)" value={maxAgeMinutes} onChange={setMaxAgeMinutes} disabled={running} unit="min" subtext="0 = No limit. Rejects older pools." />
-                        </div>
-
-                        <div className="mt-4 pt-4 border-t border-border">
-                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-4">Scanner Criteria</p>
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <SettingInput label="Slippage" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
-                                    <SettingInput label="Session Limits" value={maxPools} onChange={setMaxPools} disabled={running} unit="POOLS" />
                                 </div>
-
-                                <div className="h-[1px] bg-border/40 my-2"></div>
-
-                                {/* 5m Volume Range */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <SettingInput label="5m Vol Min ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
-                                    <SettingInput label="5m Vol Max ($)" value={maxVolume5m} onChange={setMaxVolume5m} disabled={running} prefix="$" subtext="0 = No limit" />
-                                </div>
-
-                                {/* 1h Volume Range */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <SettingInput label="1h Vol Min ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
-                                    <SettingInput label="1h Vol Max ($)" value={maxVolume} onChange={setMaxVolume} disabled={running} prefix="$" subtext="0 = No limit" />
-                                </div>
-
-                                {/* 24h Volume Range */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <SettingInput label="24h Vol Min ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
-                                    <SettingInput label="24h Vol Max ($)" value={maxVolume24h} onChange={setMaxVolume24h} disabled={running} prefix="$" subtext="0 = No limit" />
-                                </div>
-
-                                {/* Liquidity Range */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <SettingInput label="Liquidity Min ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
-                                    <SettingInput label="Liquidity Max ($)" value={maxLiquidity} onChange={setMaxLiquidity} disabled={running} prefix="$" subtext="0 = No limit" />
-                                </div>
-
-                                {/* Mcap Range */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <SettingInput label="Mcap Min ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
-                                    <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" subtext="0 = No limit" />
-                                </div>
-
-                                <div className="space-y-4 pt-4 border-t border-border mt-4">
-                                    <h4 className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-4 bg-primary/5 p-2 rounded border-l-2 border-primary">Forensic Guard & Risk</h4>
-                                    <div className="bg-zinc-950/40 p-3 rounded-2xl border border-white/5 space-y-3">
-                                        <SettingInput label="Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="e.g. -2 for 2% drop" />
-                                        <div className="h-px bg-white/5 my-2"></div>
-                                        <Toggle label="Dev Reputation" enabled={enableReputation} onChange={setEnableReputation} disabled={running} />
-                                        {enableReputation && (
-                                            <SettingInput label="Min Dev TXs" value={minDevTxCount} onChange={setMinDevTxCount} disabled={running} subtext="Rejects low-activity wallets" />
-                                        )}
-                                        <Toggle label="Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} />
-                                        <Toggle label="Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} />
-                                        <Toggle label="Sell Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} />
+                                <div className="glass-card p-4 flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                        <Zap size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{selectedBaseToken} Portfolio</p>
+                                        <p className="text-lg font-black font-mono">{(portfolio.baseTokens[selectedBaseToken] || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</p>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-
-                        {/* Meteora Specific UI */}
-                        <div className="mt-4 pt-4 border-t border-border space-y-4">
-                            <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Meteora Config</p>
-
-                            <div className="flex flex-col gap-2">
-                                <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Fee Tier (%)</label>
-                                <div className="grid grid-cols-4 gap-1">
-                                    {[25, 100, 200, 400].map((bps) => (
+                                <div className="glass-card p-4 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                                            <Activity size={20} />
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">System Status</p>
+                                            <p className={`text-sm font-black uppercase tracking-tight ${running ? 'text-primary' : 'text-muted-foreground'}`}>
+                                                {running ? 'Scanner Live' : 'Scanner Idle'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
                                         <button
-                                            key={bps}
-                                            onClick={() => setMeteoraFeeBps(bps)}
-                                            disabled={running}
-                                            className={`py-1.5 rounded text-[10px] font-bold border transition-all ${meteoraFeeBps === bps
-                                                ? 'bg-primary/20 border-primary text-primary'
-                                                : 'bg-input border-border text-muted-foreground hover:border-muted-foreground/50'
-                                                }`}
+                                            onClick={toggleBot}
+                                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${running ? 'bg-red-500/20 text-red-500 border border-red-500/30' : 'bg-primary text-black'}`}
                                         >
-                                            {bps / 100}%
+                                            <Power size={14} />
                                         </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Pools Container */}
+                            <div className="glass-card min-h-[500px] flex flex-col">
+                                <div className="p-4 border-b border-white/5 flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex items-center gap-2">
+                                            <Droplets size={18} className="text-primary" />
+                                            <h2 className="text-sm font-bold uppercase tracking-widest">Active Snipes</h2>
+                                        </div>
+                                        <div className="flex gap-1 bg-white/5 p-1 rounded-lg border border-white/5">
+                                            {['NEW', 'LEGACY', 'STOPPED', 'LPPP', 'HTP'].map((tab) => (
+                                                <button
+                                                    key={tab}
+                                                    onClick={() => setActivePoolTab(tab as any)}
+                                                    className={`px-3 py-1 rounded-md text-[9px] font-bold transition-all ${activePoolTab === tab ? 'bg-white/10 text-white shadow-sm' : 'text-muted-foreground hover:text-white'}`}
+                                                >
+                                                    {tab}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-muted-foreground bg-white/5 px-2 py-1 rounded border border-white/5 uppercase">
+                                        {pools.filter(p => !p.exited && p.isBotCreated).length} ACTIVE
+                                    </span>
+                                </div>
+
+                                <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+                                    {pools.filter(p => {
+                                        if (activePoolTab === 'NEW') return !p.exited && p.isBotCreated;
+                                        if (activePoolTab === 'LEGACY') return !p.exited && !p.isBotCreated;
+                                        if (activePoolTab === 'STOPPED') return p.exited;
+                                        if (activePoolTab === 'LPPP') return p.baseToken === 'LPPP' && !p.exited;
+                                        if (activePoolTab === 'HTP') return false;
+                                        return true;
+                                    }).sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()).map(pool => (
+                                        <PoolCard
+                                            key={pool.poolId}
+                                            pool={pool}
+                                            isBot={pool.isBotCreated || false}
+                                            claimFees={claimFees}
+                                            increaseLiquidity={increaseLiquidity}
+                                            withdrawLiquidity={withdrawLiquidity}
+                                            refreshPool={refreshPool}
+                                            basePrice={baseTokenPrices[pool.baseToken || 'LPPP']}
+                                        />
                                     ))}
-                                </div>
-                                <span className="text-[9px] text-muted-foreground/60 italic">
-                                    {meteoraFeeBps / 100}% LP fee for optimized routing
-                                </span>
-                            </div>
-                        </div>
 
-                        <div className="mt-4 pt-4 border-t border-border">
-                            <div className="flex items-center justify-between mb-2">
-                                <p className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase">Security & API Access</p>
-                                <ShieldAlert size={12} className="text-amber-500" />
-                            </div>
-
-                            <div className="flex flex-col gap-1.5 mb-4">
-                                <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">API Secret Key</label>
-                                <div className="relative">
-                                    <input
-                                        type={isSecretVisible ? "text" : "password"}
-                                        value={apiSecret}
-                                        onChange={(e) => {
-                                            const val = e.target.value;
-                                            setApiSecret(val);
-                                            localStorage.setItem('API_SECRET', val);
-                                        }}
-                                        placeholder="Enter your API_SECRET"
-                                        className="w-full bg-input border border-border text-foreground px-2.5 py-1.5 rounded-xl font-mono text-[11px] focus:outline-none focus:border-primary/50 transition-colors pr-8"
-                                    />
-                                    <button
-                                        onClick={() => setIsSecretVisible(!isSecretVisible)}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                                    >
-                                        <Activity size={12} />
-                                    </button>
-                                </div>
-                                <p className="text-[8px] text-muted-foreground/60 leading-tight"> Required to Lauch Bot or close positions. Match your .env file.</p>
-                            </div>
-
-                            <button
-                                onClick={updatePrivateKey}
-                                className="w-full flex items-center justify-center gap-2 py-2.5 bg-secondary hover:bg-secondary/80 text-muted-foreground hover:text-foreground text-[10px] font-bold rounded border border-border transition-all"
-                            >
-                                <Wallet size={12} />
-                                UPDATE BOT WALLET
-                            </button>
-                            <p className="text-[9px] text-amber-500/60 mt-2 text-center leading-tight">
-                                ⚠️ <b>WARNING:</b> Key swap is volatile and resets on server restart. Use a low-balance hot wallet.
-                            </p>
-                        </div>
-
-                        <div className="mt-6 p-3 bg-white/5 rounded-xl border border-dashed border-border flex items-center gap-3">
-                            <Activity size={20} className={running ? "text-primary animate-pulse" : "text-muted-foreground"} />
-                            <span className="text-[12px] text-muted-foreground">
-                                {running ? "Monitoring market conditions..." : "Waiting for parameters..."}
-                            </span>
-                        </div>
-                    </div>
-
-                    {/* Action Card */}
-                    <div className="glass-card p-5 flex flex-col items-center text-center gap-4">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center border transition-all ${running ? 'bg-primary/10 border-primary text-primary shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-secondary border-border text-muted-foreground'}`}>
-                            <Power size={24} />
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-semibold mb-1">System Status</h3>
-                            <span className="text-[12px] text-muted-foreground">
-                                {running ? "LPPP BOT Is Active" : "Ready to initialize"}
-                            </span>
-                        </div>
-                        <div className="flex gap-3 w-full mt-4 items-center">
-                            <button
-                                onClick={saveSettings}
-                                className="w-10 h-10 bg-zinc-950/60 border border-white/5 rounded-full flex items-center justify-center text-zinc-500 hover:text-primary hover:border-primary/40 transition-all shrink-0 active:scale-90"
-                                title="SAVE CONFIG TO SQLITE"
-                            >
-                                <Settings2 size={16} />
-                            </button>
-                            <button
-                                onClick={toggleBot}
-                                className={`flex-1 py-3.5 rounded-full font-black flex items-center justify-center gap-2 transition-all text-[11px] tracking-[0.2em] shadow-lg active:scale-95
-                                    ${running
-                                        ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/30'
-                                        : 'bg-primary text-black hover:opacity-90'
-                                    }`}
-                            >
-                                <Power size={16} className={running ? 'animate-pulse' : ''} />
-                                {running ? 'STOP SCANNER' : 'LAUNCH LPPP BOT'}
-                            </button>
-                        </div>
-                    </div>
-
-                </div>
-
-                {/* Middle Column: Stats & Display */}
-                <div className="flex flex-col gap-6">
-                    <div className="grid grid-cols-2 gap-6">
-                        {/* Active Pools Stat */}
-                        <div className="glass-card p-6 flex flex-col justify-between">
-                            <div className="flex justify-between items-start">
-                                <span className="text-[13px] text-muted-foreground font-medium">Active Pools</span>
-                                <Droplets size={16} className="text-muted-foreground" />
-                            </div>
-                            <div className="text-3xl font-bold mt-3 font-mono">
-                                {pools.filter(p => !p.exited).length}
-                            </div>
-                        </div>
-
-                        {/* Wallet Portfolio */}
-                        <div className="glass-card p-5 flex flex-col justify-between">
-                            <div className="flex justify-between items-start mb-2">
-                                <span className="text-[13px] text-muted-foreground font-medium">My Portfolio</span>
-                                <Wallet size={16} className="text-muted-foreground" />
-                            </div>
-                            <div className="flex flex-col gap-2">
-                                <div className="flex justify-between items-end">
-                                    <span className="text-xs font-mono text-muted-foreground font-bold">SOL</span>
-                                    <div className="text-right leading-none">
-                                        <div className="font-bold text-base">{portfolio.sol.toFixed(3)}</div>
-                                        <div className="text-[10px] text-muted-foreground mt-0.5">
-                                            {solPrice ? `≈ $${(portfolio.sol * solPrice).toFixed(2)}` : '$-.--'}
-                                        </div>
-                                    </div>
-                                </div>
-                                {Object.keys(portfolio.baseTokens).length > 0 && Object.keys(portfolio.baseTokens).map(t => (
-                                    <div key={t} className="mt-2">
-                                        <div className="h-[1px] bg-border/40 mb-2"></div>
-                                        <div className="flex justify-between items-end">
-                                            <span className="text-xs font-mono text-emerald-400 font-bold">{t}</span>
-                                            <div className="text-right leading-none">
-                                                <div className="font-bold text-base text-emerald-400">{(portfolio.baseTokens[t] || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })}</div>
-                                                <div className="text-[10px] text-emerald-500/60 mt-0.5">
-                                                    {baseTokenPrices[t] ? `≈ $${((portfolio.baseTokens[t] || 0) * baseTokenPrices[t]).toFixed(2)}` : '$-.--'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Chart / Performance Area */}
-                    <div className="glass-card p-5 flex-1 min-h-[300px] flex flex-col">
-                        <div className="flex items-center justify-between mb-5">
-                            <div className="flex items-center gap-2">
-                                <LineChart size={18} className="text-muted-foreground" />
-                                <h2 className="text-sm font-semibold">Performance</h2>
-                            </div>
-                            <div className="flex gap-1">
-                                <button className="px-2 py-1 text-[10px] rounded border border-border text-muted-foreground hover:text-foreground">1H</button>
-                                <button className="px-2 py-1 text-[10px] rounded border border-primary/50 text-primary bg-primary/10 font-bold">24H</button>
-                            </div>
-                        </div>
-
-                        <div className="flex-1 border border-dashed border-border rounded-xl bg-white/[0.01] flex items-center justify-center">
-                            <div className="text-center">
-                                <Activity size={32} className="text-muted mb-2 mx-auto" />
-                                <p className="text-[13px] text-muted-foreground">Real-time stats coming soon</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right Column: Terminal */}
-                <div className="bg-[#050505] border border-border rounded-2xl flex flex-col h-[600px] overflow-hidden shadow-2xl relative">
-                    <div className="bg-secondary p-2 px-4 border-b border-border flex items-center justify-between shrink-0">
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setActiveTab('terminal')}
-                                className={`px-3 py-1 text-[11px] rounded transition-all font-bold ${activeTab === 'terminal' ? 'bg-primary/10 text-primary border border-primary/30' : 'text-muted-foreground hover:text-foreground border border-transparent'}`}
-                            >
-                                TERMINAL
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('chart')}
-                                className={`px-3 py-1 text-[11px] rounded transition-all font-bold ${activeTab === 'chart' ? 'bg-primary/10 text-primary border border-primary/30' : 'text-muted-foreground hover:text-foreground border border-transparent'}`}
-                            >
-                                LIVE_CHART
-                            </button>
-                        </div>
-                        <button onClick={clearLogs} className="text-[11px] text-muted-foreground hover:text-foreground px-2 py-1">CLEAR</button>
-                    </div>
-
-                    <div className="flex-1 relative overflow-hidden bg-black/40">
-                        <AnimatePresence mode="wait">
-                            {activeTab === 'terminal' ? (
-                                <motion.div
-                                    key="terminal"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                    className="absolute inset-0 p-4 overflow-y-auto font-mono text-[13px] text-primary space-y-2 leading-relaxed custom-scrollbar"
-                                >
-                                    {logs.length === 0 && (
-                                        <div className="h-full flex flex-col items-center justify-center text-muted-foreground/30 gap-2">
-                                            <Search size={24} />
-                                            <span>Waiting for signals...</span>
+                                    {pools.length === 0 && Object.keys(baseTokenPrices).length === 0 && (
+                                        <div className="col-span-full py-16 text-center bg-primary/[0.02] border border-dashed border-primary/10 rounded-2xl flex flex-col items-center gap-3">
+                                            <Zap size={40} className="opacity-15 text-primary" />
+                                            <p className="text-sm font-medium text-muted-foreground/50">Fetching Base Tokens...</p>
                                         </div>
                                     )}
+
+                                    {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && Object.keys(baseTokenPrices).length > 0 && activePoolTab === 'NEW' && (
+                                        <div className="col-span-full py-16 text-center bg-primary/[0.02] border border-dashed border-primary/10 rounded-2xl flex flex-col items-center gap-3">
+                                            <Zap size={40} className="opacity-15 text-primary" />
+                                            <p className="text-sm font-medium text-muted-foreground/50">Waiting for bot to snipe...</p>
+                                            <p className="text-[10px] text-muted-foreground/30">Pools will appear here when the bot creates them</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Dashboard Right: Terminal */}
+                        <div className="flex flex-col gap-6">
+                            <div className="glass-card flex-1 flex flex-col min-h-[600px] overflow-hidden">
+                                <div className="p-4 border-b border-white/5 flex items-center justify-between shrink-0">
+                                    <div className="flex items-center gap-2">
+                                        <Terminal size={18} className="text-primary" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest">Bot Execution Log</h2>
+                                    </div>
+                                    <button onClick={clearLogs} className="text-[9px] font-black text-muted-foreground hover:text-white transition-colors uppercase tracking-widest bg-white/5 px-2 py-1 rounded">Clear</button>
+                                </div>
+                                <div className="flex-1 p-4 font-mono text-[11px] overflow-y-auto space-y-1 bg-black/40">
                                     {logs.map((log, i) => (
-                                        <div key={i} className="flex gap-2 break-words">
-                                            <span className="opacity-40 shrink-0 select-none">[{log.timestamp.split('T')[1].split('.')[0]}]</span>
-                                            <span className={`flex-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'warning' ? 'text-yellow-400' : log.type === 'success' ? 'text-emerald-400' : 'text-primary/90'}`}>
+                                        <div key={i} className={`flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300 py-0.5 border-b border-white/[0.02] last:border-0`}>
+                                            <span className="text-muted-foreground/30 shrink-0 font-bold select-none">[{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]</span>
+                                            <span className={`break-words leading-relaxed ${log.type === 'error' ? 'text-red-400 font-bold' : log.type === 'success' ? 'text-primary font-bold' : log.type === 'warning' ? 'text-amber-400 italic' : 'text-zinc-300'}`}>
                                                 {formatMessage(log.message)}
                                             </span>
                                         </div>
                                     ))}
-                                    {running && (
-                                        <div className="w-2 h-4 bg-primary/60 cursor-blink inline-block ml-1 align-middle"></div>
-                                    )}
                                     <div ref={logsEndRef} />
-                                </motion.div>
-                            ) : (
-                                <motion.div
-                                    key="chart"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                    className="h-full w-full"
-                                >
-                                    <iframe
-                                        src="https://dexscreener.com/solana/44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV?embed=1&theme=dark"
-                                        className="w-full h-full border-none"
-                                        title="LPPP Chart"
-                                    />
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-                    </div>
-                </div>
-
-                {/* Bottom Section: Active Snipes (Bot-Created Only) */}
-                <div className="lg:col-span-3">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 px-2">
-                        <div className="flex items-center gap-3">
-                            <Zap size={18} className="text-primary" />
-                            <h2 className="text-sm font-black tracking-widest uppercase text-primary">Active Snipes</h2>
-                            <span className="bg-primary/10 text-primary/80 text-[10px] px-2 py-0.5 rounded-full border border-primary/20 font-bold">
-                                {(() => {
-                                    const PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
-                                    return pools.filter(p => {
-                                        if (!p.isBotCreated) return false;
-                                        if (activePoolTab === 'STOPPED') return !!p.stopLossDone;
-                                        if (p.exited || p.stopLossDone) return false;
-                                        const token = p.baseToken || "LPPP";
-                                        const isNew = p.created ? new Date(p.created).getTime() >= PATCH_DATE : false;
-                                        if (activePoolTab === 'NEW') return isNew;
-                                        if (activePoolTab === 'LEGACY') return !isNew;
-                                        if (activePoolTab === 'LPPP') return token === 'LPPP';
-                                        if (activePoolTab === 'HTP') return token === 'HTP';
-                                        return true;
-                                    }).length;
-                                })()}
-                            </span>
+                                </div>
+                            </div>
                         </div>
-
-                        {/* Tab Navigation */}
-                        <div className="flex items-center gap-1 bg-black/40 p-1.5 rounded-full border border-white/5 overflow-x-auto w-full sm:w-auto">
-                            {['NEW', 'LEGACY', 'STOPPED', 'LPPP', 'HTP'].map(tab => (
+                    </div>
+                ) : (
+                    <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h1 className="text-2xl font-black text-white uppercase tracking-widest">Bot Configuration</h1>
+                                <p className="text-muted-foreground text-sm mt-1">Manage parameters, forensic guard, and safety thresholds.</p>
+                            </div>
+                            <div className="flex gap-3">
                                 <button
-                                    key={tab}
-                                    onClick={() => setActivePoolTab(tab as any)}
-                                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${activePoolTab === tab
-                                        ? tab === 'STOPPED'
-                                            ? 'bg-red-500 text-white shadow-[0_0_15px_rgba(239,68,68,0.3)]'
-                                            : 'bg-primary text-black shadow-[0_0_15px_rgba(205,255,0,0.3)]'
-                                        : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                                    onClick={saveSettings}
+                                    className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl border border-white/10 font-black text-[11px] uppercase tracking-widest transition-all flex items-center gap-2"
                                 >
-                                    {tab}
+                                    <Settings2 size={16} /> Save Settings
                                 </button>
-                            ))}
+                                <button
+                                    onClick={toggleBot}
+                                    className={`px-6 py-3 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all flex items-center gap-2 shadow-lg ${running ? 'bg-red-500/20 text-red-500 border border-red-500/30' : 'bg-primary text-black'}`}
+                                >
+                                    <Power size={16} /> {running ? 'Stop Scanner' : 'Launch Bot'}
+                                </button>
+                            </div>
                         </div>
-                    </div>
 
-                    {Object.keys(baseTokenPrices).length > 0 ? (
-                        <div className="flex flex-col gap-8">
-                            {Object.keys(baseTokenPrices).map(token => {
-                                const PATCH_DATE = new Date("2026-02-21T19:00:00Z").getTime();
-                                const tokenPools = pools.filter(p => {
-                                    if (!p.isBotCreated) return false;
-                                    const pToken = p.baseToken || "LPPP";
-                                    if (pToken !== token) return false;
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {/* Trading Parameters */}
+                            <div className="space-y-6">
+                                <div className="glass-card p-6 space-y-6">
+                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                        <Zap size={18} className="text-primary" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest">Trading Parameters</h2>
+                                    </div>
 
-                                    if (activePoolTab === 'STOPPED') return !!p.stopLossDone;
-                                    if (p.exited || p.stopLossDone) return false;
-                                    const isNew = p.created ? new Date(p.created).getTime() >= PATCH_DATE : false;
-                                    if (activePoolTab === 'NEW') return isNew;
-                                    if (activePoolTab === 'LEGACY') return !isNew;
-                                    if (activePoolTab === 'LPPP') return token === 'LPPP';
-                                    if (activePoolTab === 'HTP') return token === 'HTP';
-                                    return true;
-                                });
-
-                                if (tokenPools.length === 0) return null;
-
-                                return (
-                                    <div key={token} className="glass-card p-6 relative overflow-hidden">
-                                        <div className="flex items-center gap-3 pb-4 mb-4 border-b border-white/5">
-                                            <h3 className="text-lg font-black tracking-widest uppercase glow-text text-white">
-                                                {token} PAIRS
-                                            </h3>
-                                            <span className="bg-primary/20 text-primary text-[10px] px-2 py-0.5 rounded font-bold border border-primary/20">
-                                                {tokenPools.length}
-                                            </span>
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Base Asset</label>
+                                            <select
+                                                value={selectedBaseToken}
+                                                onChange={(e) => setSelectedBaseToken(e.target.value)}
+                                                className="bg-zinc-900 text-primary font-bold border border-primary/20 rounded px-2 py-1 text-[10px] outline-none"
+                                                disabled={running}
+                                            >
+                                                {Object.keys(baseTokenPrices).length > 0 ? Object.keys(baseTokenPrices).map(t => (
+                                                    <option key={t} value={t}>{t}</option>
+                                                )) : <option value="LPPP">LPPP</option>}
+                                            </select>
                                         </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                                            {tokenPools.map(pool => (
-                                                <PoolCard
-                                                    key={pool.poolId}
-                                                    pool={pool}
-                                                    isBot={true}
-                                                    claimFees={claimFees}
-                                                    increaseLiquidity={increaseLiquidity}
-                                                    withdrawLiquidity={withdrawLiquidity}
-                                                    refreshPool={refreshPool}
-                                                    basePrice={baseTokenPrices[token]}
-                                                />
-                                            ))}
+
+                                        <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <span className="text-[10px] font-bold text-primary/80 uppercase">Position Size</span>
+                                                <button onClick={toggleBuyUnit} className="text-[9px] font-black text-muted-foreground hover:text-white transition-colors uppercase tracking-tighter">Swap to {isBuyUsd ? 'SOL' : 'USD'}</button>
+                                            </div>
+                                            <SettingInput
+                                                label={`Buy Size (${isBuyUsd ? 'USD' : 'SOL'})`}
+                                                value={buyAmount}
+                                                onChange={setBuyAmount}
+                                                disabled={running}
+                                                prefix={isBuyUsd ? "$" : ""}
+                                                unit={isBuyUsd ? "USD" : "SOL"}
+                                                subtext={!isBuyUsd && solPrice ? `≈ $${(buyAmount * solPrice).toFixed(2)}` : (isBuyUsd && solPrice ? `≈ ${(buyAmount / solPrice).toFixed(4)} SOL` : undefined)}
+                                            />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="Slippage" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
+                                            <SettingInput label="Max Pools" value={maxPools} onChange={setMaxPools} disabled={running} unit="LMT" />
                                         </div>
                                     </div>
-                                );
-                            })}
-                        </div>
-                    ) : (
-                        <div className="col-span-full py-16 text-center bg-primary/[0.02] border border-dashed border-primary/10 rounded-2xl flex flex-col items-center gap-3">
-                            <Zap size={40} className="opacity-15 text-primary" />
-                            <p className="text-sm font-medium text-muted-foreground/50">Fetching Base Tokens...</p>
-                        </div>
-                    )}
+                                </div>
 
-                    {pools.filter(p => !p.exited && p.isBotCreated).length === 0 && Object.keys(baseTokenPrices).length > 0 && (
-                        <div className="col-span-full py-16 text-center bg-primary/[0.02] border border-dashed border-primary/10 rounded-2xl flex flex-col items-center gap-3 mt-4">
-                            <Zap size={40} className="opacity-15 text-primary" />
-                            <p className="text-sm font-medium text-muted-foreground/50">Waiting for bot to snipe...</p>
-                            <p className="text-[10px] text-muted-foreground/30">Pools will appear here when the bot creates them</p>
+                                <div className="glass-card p-6 space-y-6">
+                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                        <Search size={18} className="text-primary" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest">Discovery Filters</h2>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="5m Vol Min ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
+                                            <SettingInput label="5m Vol Max ($)" value={maxVolume5m} onChange={setMaxVolume5m} disabled={running} prefix="$" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="Liquidity Min ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
+                                            <SettingInput label="Liquidity Max ($)" value={maxLiquidity} onChange={setMaxLiquidity} disabled={running} prefix="$" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="Mcap Min ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
+                                            <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" />
+                                        </div>
+                                        <SettingInput label="Max Pair Age (Minutes)" value={maxAgeMinutes} onChange={setMaxAgeMinutes} disabled={running} unit="MIN" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Risk & Security */}
+                            <div className="space-y-6">
+                                <div className="glass-card p-6 space-y-6 border-primary/20 bg-primary/[0.02]">
+                                    <div className="flex items-center gap-2 pb-4 border-b border-primary/10">
+                                        <ShieldAlert size={18} className="text-primary" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest text-primary">Forensic Guard & Risk</h2>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
+                                        <div className="h-px bg-white/5 my-2"></div>
+                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
+                                            <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} />
+                                            {enableReputation && (
+                                                <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    <SettingInput label="Min Dev TXs" value={minDevTxCount} onChange={setMinDevTxCount} disabled={running} subtext="Rejects fresh/burner wallets" />
+                                                </div>
+                                            )}
+                                            <Toggle label="Live Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} />
+                                            <Toggle label="Market Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} />
+                                            <Toggle label="Sell-Ability Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="glass-card p-6 space-y-6">
+                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                        <Wallet size={18} className="text-muted-foreground" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest">System & API</h2>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="flex flex-col gap-1.5">
+                                            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Access Secret Key</label>
+                                            <div className="relative">
+                                                <input
+                                                    type={isSecretVisible ? "text" : "password"}
+                                                    value={apiSecret}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setApiSecret(val);
+                                                        localStorage.setItem('API_SECRET', val);
+                                                    }}
+                                                    className="w-full bg-input border border-border text-foreground px-3 py-2 rounded-xl font-mono text-[12px] pr-10"
+                                                />
+                                                <button onClick={() => setIsSecretVisible(!isSecretVisible)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
+                                                    <Activity size={14} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={updatePrivateKey}
+                                            className="w-full py-3 bg-secondary hover:bg-white/5 text-muted-foreground hover:text-white rounded-xl border border-white/5 font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <RefreshCw size={14} /> Update Bot Hot-Wallet
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
             </main>
 
             <Modal
