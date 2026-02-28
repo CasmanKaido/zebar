@@ -109,9 +109,9 @@ export class HeliusWebhookService {
             if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
             if (tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")) dexId = "pumpfun";
 
-            // Pass graduation flag when a Pump.fun token creates a Raydium/Meteora pool
+            // Pass graduation flag and creator (feePayer) to triggerFlashScout
             const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
-            botManager.triggerFlashScout(mint, "", dexId, isGraduation).catch(err => {
+            botManager.triggerFlashScout(mint, "", dexId, isGraduation, tx.feePayer).catch(err => {
                 console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
             });
         }

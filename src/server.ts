@@ -11,6 +11,7 @@ import { GeckoService } from "./gecko-service";
 import { SOL_MINT, BASE_TOKENS } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { HeliusWebhookService } from "./helius-webhook-service";
+import { dbService } from "./db-service";
 
 const app = express();
 app.use(cors());
@@ -78,6 +79,17 @@ app.post("/api/start", async (req, res) => {
         res.json({ success: true, running: true });
     } catch (error: any) {
         console.error("[API] Start failed:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post("/api/settings", async (req, res) => {
+    try {
+        await dbService.saveSettings(req.body);
+        await botManager.loadSettings(); // Reload in-memory settings
+        res.json({ success: true });
+    } catch (error: any) {
+        console.error("[API] Settings update failed:", error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

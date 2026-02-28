@@ -27,6 +27,29 @@ export interface PoolData {
     currentMcap?: number;        // Real-time market cap value for UI passing
 }
 
+export interface BotSettings {
+    buyAmount: number; // in SOL
+    lpppAmount: number; // in units (fallback only)
+    meteoraFeeBps: number; // in Basis Points (e.g. 200 = 2%)
+    maxPools: number; // Max pools to create before auto-stop
+    slippage: number; // in % (e.g. 10)
+    volume5m: { min: number; max: number };
+    volume1h: { min: number; max: number };
+    volume24h: { min: number; max: number };
+    liquidity: { min: number; max: number };
+    mcap: { min: number; max: number };
+    mode: "SCOUT" | "ANALYST";
+    maxAgeMinutes: number;
+    baseToken: string;
+    // Forensic Settings
+    stopLossPct: number;
+    enableReputation: boolean;
+    enableBundle: boolean;
+    enableInvestment: boolean;
+    enableSimulation: boolean;
+    minDevTxCount: number;
+}
+
 export interface TradeHistory {
     id?: number;
     poolId: string;

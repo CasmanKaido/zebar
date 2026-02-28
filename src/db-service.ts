@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
-import { PoolData, TradeHistory } from "./types";
+import { PoolData, TradeHistory, BotSettings } from "./types";
 
 const DB_PATH = path.join(process.cwd(), "data", "zebar.db");
 
@@ -50,9 +50,6 @@ export class DatabaseService {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- Migration: Add isBotCreated if it doesn't exist
-            PRAGMA table_info(pools);
-
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 poolId TEXT NOT NULL,
@@ -63,6 +60,37 @@ export class DatabaseService {
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (poolId) REFERENCES pools (poolId)
             );
+
+            CREATE TABLE IF NOT EXISTS global_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                buyAmount REAL NOT NULL DEFAULT 0.1,
+                lpppAmount REAL NOT NULL DEFAULT 0,
+                meteoraFeeBps INTEGER NOT NULL DEFAULT 200,
+                maxPools INTEGER NOT NULL DEFAULT 5,
+                slippage REAL NOT NULL DEFAULT 10,
+                minVolume5m REAL NOT NULL DEFAULT 2000,
+                maxVolume5m REAL NOT NULL DEFAULT 0,
+                minVolume1h REAL NOT NULL DEFAULT 25000,
+                maxVolume1h REAL NOT NULL DEFAULT 0,
+                minVolume24h REAL NOT NULL DEFAULT 100000,
+                maxVolume24h REAL NOT NULL DEFAULT 0,
+                minLiquidity REAL NOT NULL DEFAULT 10000,
+                maxLiquidity REAL NOT NULL DEFAULT 0,
+                minMcap REAL NOT NULL DEFAULT 100000,
+                maxMcap REAL NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT 'SCOUT',
+                maxAgeMinutes INTEGER NOT NULL DEFAULT 0,
+                baseToken TEXT NOT NULL DEFAULT 'LPPP',
+                stopLossPct REAL NOT NULL DEFAULT -2,
+                enableReputation INTEGER NOT NULL DEFAULT 1,
+                enableBundle INTEGER NOT NULL DEFAULT 1,
+                enableInvestment INTEGER NOT NULL DEFAULT 1,
+                enableSimulation INTEGER NOT NULL DEFAULT 0,
+                minDevTxCount INTEGER NOT NULL DEFAULT 50
+            );
+
+            -- Initial settings if not exists
+            INSERT OR IGNORE INTO global_settings (id) VALUES (1);
         `);
 
         // Migration helpers: Safely add columns if missing
@@ -110,9 +138,9 @@ export class DatabaseService {
     async savePool(pool: PoolData): Promise<void> {
         const stmt = this.db.prepare(`
             INSERT INTO pools (
-                poolId, token, mint, roi, created, initialPrice, 
-                initialTokenAmount, initialLpppAmount, exited, 
-                tp1Done, takeProfitDone, stopLossDone, positionId, 
+                poolId, token, mint, roi, created, initialPrice,
+                initialTokenAmount, initialLpppAmount, exited,
+                tp1Done, takeProfitDone, stopLossDone, positionId,
                 fee_sol, fee_token, fee_total_lppp, withdrawalPending, priceReconstructed,
                 netRoi, initialSolValue, isBotCreated, entryUsdValue,
                 pos_base_lp, pos_token_lp, pos_total_lppp, baseToken,
@@ -240,6 +268,93 @@ export class DatabaseService {
             txSignature: r.txSignature,
             timestamp: r.timestamp
         }));
+    }
+
+    // --- Settings Methods ---
+
+    async getSettings(): Promise<BotSettings | null> {
+        const row = this.db.prepare("SELECT * FROM global_settings WHERE id = 1").get() as any;
+        if (!row) return null;
+
+        return {
+            buyAmount: row.buyAmount,
+            lpppAmount: row.lpppAmount,
+            meteoraFeeBps: row.meteoraFeeBps,
+            maxPools: row.maxPools,
+            slippage: row.slippage,
+            volume5m: { min: row.minVolume5m, max: row.maxVolume5m },
+            volume1h: { min: row.minVolume1h, max: row.maxVolume1h },
+            volume24h: { min: row.minVolume24h, max: row.maxVolume24h },
+            liquidity: { min: row.minLiquidity, max: row.maxLiquidity },
+            mcap: { min: row.minMcap, max: row.maxMcap },
+            mode: row.mode,
+            maxAgeMinutes: row.maxAgeMinutes,
+            baseToken: row.baseToken,
+            stopLossPct: row.stopLossPct,
+            enableReputation: !!row.enableReputation,
+            enableBundle: !!row.enableBundle,
+            enableInvestment: !!row.enableInvestment,
+            enableSimulation: !!row.enableSimulation,
+            minDevTxCount: row.minDevTxCount
+        };
+    }
+
+    async saveSettings(settings: BotSettings): Promise<void> {
+        const stmt = this.db.prepare(`
+            UPDATE global_settings SET
+                buyAmount = @buyAmount,
+                lpppAmount = @lpppAmount,
+                meteoraFeeBps = @meteoraFeeBps,
+                maxPools = @maxPools,
+                slippage = @slippage,
+                minVolume5m = @minVolume5m,
+                maxVolume5m = @maxVolume5m,
+                minVolume1h = @minVolume1h,
+                maxVolume1h = @maxVolume1h,
+                minVolume24h = @minVolume24h,
+                maxVolume24h = @maxVolume24h,
+                minLiquidity = @minLiquidity,
+                maxLiquidity = @maxLiquidity,
+                minMcap = @minMcap,
+                maxMcap = @maxMcap,
+                mode = @mode,
+                maxAgeMinutes = @maxAgeMinutes,
+                baseToken = @baseToken,
+                stopLossPct = @stopLossPct,
+                enableReputation = @enableReputation,
+                enableBundle = @enableBundle,
+                enableInvestment = @enableInvestment,
+                enableSimulation = @enableSimulation,
+                minDevTxCount = @minDevTxCount
+            WHERE id = 1
+        `);
+
+        stmt.run({
+            buyAmount: settings.buyAmount,
+            lpppAmount: settings.lpppAmount,
+            meteoraFeeBps: settings.meteoraFeeBps,
+            maxPools: settings.maxPools,
+            slippage: settings.slippage,
+            minVolume5m: settings.volume5m.min,
+            maxVolume5m: settings.volume5m.max,
+            minVolume1h: settings.volume1h.min,
+            maxVolume1h: settings.volume1h.max,
+            minVolume24h: settings.volume24h.min,
+            maxVolume24h: settings.volume24h.max,
+            minLiquidity: settings.liquidity.min,
+            maxLiquidity: settings.liquidity.max,
+            minMcap: settings.mcap.min,
+            maxMcap: settings.mcap.max,
+            mode: settings.mode,
+            maxAgeMinutes: settings.maxAgeMinutes,
+            baseToken: settings.baseToken,
+            stopLossPct: settings.stopLossPct,
+            enableReputation: settings.enableReputation ? 1 : 0,
+            enableBundle: settings.enableBundle ? 1 : 0,
+            enableInvestment: settings.enableInvestment ? 1 : 0,
+            enableSimulation: settings.enableSimulation ? 1 : 0,
+            minDevTxCount: settings.minDevTxCount
+        });
     }
 
     // --- Helpers ---

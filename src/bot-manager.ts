@@ -10,7 +10,8 @@ import { GeckoService } from "./gecko-service";
 import axios from "axios";
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { dbService } from "./db-service";
-import { PoolData, TradeHistory } from "./types";
+import { PoolData, TradeHistory, BotSettings } from "./types";
+import { securityGuard } from "./security-guard";
 import { TokenMetadataService } from "./token-metadata-service";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { safeRpc } from "./rpc-utils";
@@ -19,21 +20,8 @@ import { BirdeyeService } from "./birdeye-service";
 
 
 
-export interface BotSettings {
-    buyAmount: number; // in SOL
-    lpppAmount: number; // in units (fallback only)
-    meteoraFeeBps: number; // in Basis Points (e.g. 200 = 2%)
-    maxPools: number; // Max pools to create before auto-stop
-    slippage: number; // in % (e.g. 10)
-    volume5m: { min: number; max: number };
-    volume1h: { min: number; max: number };
-    volume24h: { min: number; max: number };
-    liquidity: { min: number; max: number };
-    mcap: { min: number; max: number };
-    mode?: "SCOUT" | "ANALYST";
-    maxAgeMinutes?: number;
-    baseToken: string;
-}
+
+// Removed local BotSettings interface — now imported from types.ts
 
 export class BotManager {
     public isRunning: boolean = false;
@@ -54,9 +42,9 @@ export class BotManager {
     private isProcessingQueue: boolean = false;
     private settings: BotSettings = {
         buyAmount: 0.1,
-        lpppAmount: 1000,
-        meteoraFeeBps: 200, // Default 2%
-        maxPools: 5, // Default 5 pools
+        lpppAmount: 0,
+        meteoraFeeBps: 200,
+        maxPools: 5,
         slippage: 10,
         volume5m: { min: 2000, max: 0 },
         volume1h: { min: 25000, max: 0 },
@@ -65,7 +53,13 @@ export class BotManager {
         mcap: { min: 100000, max: 0 },
         mode: "SCOUT",
         maxAgeMinutes: 0,
-        baseToken: "LPPP"
+        baseToken: "LPPP",
+        stopLossPct: -2,
+        enableReputation: true,
+        enableBundle: true,
+        enableInvestment: true,
+        enableSimulation: false,
+        minDevTxCount: 50
     };
 
     constructor() {
@@ -77,8 +71,19 @@ export class BotManager {
         return this.settings;
     }
 
+    public async loadSettings() {
+        const saved = await dbService.getSettings();
+        if (saved) {
+            this.settings = saved;
+            console.log("[BOT] Loaded persistent settings from DB.");
+        }
+    }
+
     private async initialize() {
-        // 1. Migrate if needed
+        // 1. Load Persistent Settings
+        await this.loadSettings();
+
+        // 2. Migrate if needed
         await this.migrateFromJsonToSqlite();
 
         // 2. Recovery scan DISABLED — bot only tracks its own created pools.
@@ -408,13 +413,18 @@ export class BotManager {
         if (!process.env.BIRDEYE_API_KEY || process.env.BIRDEYE_API_KEY === "your_birdeye_api_key_here") {
             SocketManager.emitLog("[CRITICAL] BIRDEYE_API_KEY is missing or using placeholder! Discovery limited.", "warning");
         }
+        // Apply settings if provided, otherwise use defaults
         if (config) {
             this.settings = { ...this.settings, ...config };
+            await dbService.saveSettings(this.settings);
+            console.log("[BOT] Using and persisting provided settings:", this.settings);
+        } else {
+            console.log("[BOT] Using current settings:", this.settings);
+        }
 
-            // Validation: Log Warning if 0 Buy Amount, but do not override
-            if (this.settings.buyAmount <= 0) {
-                SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
-            }
+        // Validation: Log Warning if 0 Buy Amount, but do not override
+        if (this.settings.buyAmount <= 0) {
+            SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
         }
 
         // Orphan check DISABLED — focused on bot-created pools only.
@@ -713,7 +723,7 @@ export class BotManager {
 
                 // ── THE TRUE FIX: BASE TOKENS & EXECUTION PRICE ──
                 // Previously, this used `buyAmount` directly, assuming buyAmount was in `activeBaseMint` units.
-                // However, `buyAmount` is the amount spent in Native SOL. 
+                // However, `buyAmount` is the amount spent in Native SOL.
                 // We must convert the SOL spent into the exactly equivalent amount of the explicitly selected Base Token!
                 const usdValueSpent = this.settings.buyAmount * solPrice;
                 const equivalentBaseTokenAmount = usdValueSpent / basePrice;
@@ -1053,7 +1063,7 @@ export class BotManager {
                             let roiVal = (normalizedPrice - pool.initialPrice) / pool.initialPrice * 100;
 
                             // ═══ AUTO-RECALIBRATION ═══
-                            // Legacy upside-down price calibration removed. The createMeteoraPool logic is now mathematically 
+                            // Legacy upside-down price calibration removed. The createMeteoraPool logic is now mathematically
                             // accurate and synced to Jupiter execution prices. If a pool drops 99%, it is a real crash, not a math error.
 
                             const cappedRoi = isFinite(roiVal) ? roiVal : 99999;
@@ -1509,7 +1519,7 @@ export class BotManager {
      * SCOUT UPGRADE: Flash Evaluation for real-time webhooks.
      * Resolves token and enqueues for immediate safety check.
      */
-    async triggerFlashScout(mint: string, pairAddress: string, dexId: string, isGraduation: boolean = false) {
+    async triggerFlashScout(mint: string, pairAddress: string, dexId: string, isGraduation: boolean = false, creator?: string) {
         if (!this.isRunning) return;
 
         // 1. Quick Guard
@@ -1525,6 +1535,18 @@ export class BotManager {
 
         const cached = this.rejectedTokens.get(mint);
         if (cached && cached.expiry > Date.now()) return;
+
+        // 2. Forensic Audit
+        // Skip for graduations for now as they already passed the Pump.fun curve (investment proven)
+        if (creator && !isGraduation) {
+            const audit = await securityGuard.runForensicAudit(mint, creator, this.settings);
+            if (!audit.passed) {
+                const reason = audit.report.join(", ");
+                this.rejectedTokens.set(mint, { reason, expiry: Date.now() + 10 * 60 * 1000 }); // Reject for 10 mins
+                SocketManager.emitLog(`[SECURITY] 🛡️ Token ${mint.slice(0, 8)}... rejected: ${reason}`, "warning");
+                return;
+            }
+        }
 
         try {
             let result: ScanResult | null = null;

@@ -129,6 +129,24 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
     );
 };
 
+const Toggle = ({ label, enabled, onChange, disabled }: { label: string; enabled: boolean; onChange: (val: boolean) => void; disabled?: boolean }) => (
+    <div className="flex items-center justify-between py-2 mb-1 last:mb-0">
+        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+        <button
+            onClick={() => !disabled && onChange(!enabled)}
+            disabled={disabled}
+            className={`w-9 h-5 rounded-full transition-all relative ${enabled ? 'bg-primary shadow-[0_0_10px_rgba(205,255,0,0.3)]' : 'bg-zinc-800 border border-white/5'} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+            <motion.div
+                animate={{ x: enabled ? 18 : 2 }}
+                initial={false}
+                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                className={`absolute top-1 w-3 h-3 rounded-full ${enabled ? 'bg-black' : 'bg-zinc-500'}`}
+            />
+        </button>
+    </div>
+);
+
 const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, refreshPool, basePrice }: {
     pool: Pool;
     isBot: boolean;
@@ -318,6 +336,14 @@ function App() {
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
     const [discoveryMode, setDiscoveryMode] = useState<'SCOUT' | 'ANALYST'>('SCOUT');
 
+    // Forensic & Risk Guard
+    const [stopLossPct, setStopLossPct] = useState(-2);
+    const [enableReputation, setEnableReputation] = useState(true);
+    const [enableBundle, setEnableBundle] = useState(true);
+    const [enableInvestment, setEnableInvestment] = useState(true);
+    const [enableSimulation, setEnableSimulation] = useState(false);
+    const [minDevTxCount, setMinDevTxCount] = useState(50);
+
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
     const [isSecretVisible, setIsSecretVisible] = useState(false);
@@ -451,6 +477,48 @@ function App() {
         return () => clearInterval(interval);
     }, [running]); // Re-run effect when 'running' state changes
 
+    // Fetch Initial Settings from SQLite on Mount
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                const res = await axios.get(`${BACKEND_URL}/api/settings`, {
+                    headers: { 'x-api-key': apiSecret }
+                });
+                if (res.data) {
+                    const s = res.data;
+                    if (s.buyAmount !== undefined) setBuyAmount(s.buyAmount);
+                    if (s.meteoraFeeBps !== undefined) setMeteoraFeeBps(s.meteoraFeeBps);
+                    if (s.maxPools !== undefined) setMaxPools(s.maxPools);
+                    if (s.slippage !== undefined) setSlippage(s.slippage);
+                    if (s.volume5m?.min !== undefined) setMinVolume5m(s.volume5m.min);
+                    if (s.volume5m?.max !== undefined) setMaxVolume5m(s.volume5m.max);
+                    if (s.volume1h?.min !== undefined) setMinVolume(s.volume1h.min);
+                    if (s.volume1h?.max !== undefined) setMaxVolume(s.volume1h.max);
+                    if (s.volume24h?.min !== undefined) setMinVolume24h(s.volume24h.min);
+                    if (s.volume24h?.max !== undefined) setMaxVolume24h(s.volume24h.max);
+                    if (s.liquidity?.min !== undefined) setMinLiquidity(s.liquidity.min);
+                    if (s.liquidity?.max !== undefined) setMaxLiquidity(s.liquidity.max);
+                    if (s.mcap?.min !== undefined) setMinMcap(s.mcap.min);
+                    if (s.mcap?.max !== undefined) setMaxMcap(s.mcap.max);
+                    if (s.mode !== undefined) setDiscoveryMode(s.mode);
+                    if (s.maxAgeMinutes !== undefined) setMaxAgeMinutes(s.maxAgeMinutes);
+                    if (s.baseToken !== undefined) setSelectedBaseToken(s.baseToken);
+
+                    // Forensic Settings
+                    if (s.stopLossPct !== undefined) setStopLossPct(s.stopLossPct);
+                    if (s.enableReputation !== undefined) setEnableReputation(s.enableReputation);
+                    if (s.enableBundle !== undefined) setEnableBundle(s.enableBundle);
+                    if (s.enableInvestment !== undefined) setEnableInvestment(s.enableInvestment);
+                    if (s.enableSimulation !== undefined) setEnableSimulation(s.enableSimulation);
+                    if (s.minDevTxCount !== undefined) setMinDevTxCount(s.minDevTxCount);
+                }
+            } catch (e) {
+                console.warn("Failed to fetch settings from DB, using defaults.");
+            }
+        };
+        fetchSettings();
+    }, [apiSecret]);
+
     // Fetch Portfolio (Duplicate removed, use refreshBalance)
     useEffect(() => {
         refreshBalance();
@@ -480,7 +548,13 @@ function App() {
                     mcap: { min: minMcap, max: maxMcap },
                     mode: discoveryMode,
                     maxAgeMinutes,
-                    baseToken: selectedBaseToken
+                    baseToken: selectedBaseToken,
+                    stopLossPct,
+                    enableReputation,
+                    enableBundle,
+                    enableInvestment,
+                    enableSimulation,
+                    minDevTxCount
                 })
             });
 
@@ -498,6 +572,50 @@ function App() {
             }
         } catch (e) {
             console.error("Bot toggle error:", e);
+        }
+    };
+
+    const saveSettings = async () => {
+        const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/settings`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiSecret
+                },
+                body: JSON.stringify({
+                    buyAmount: finalBuy,
+                    lpppAmount: 0,
+                    meteoraFeeBps,
+                    maxPools,
+                    slippage,
+                    volume5m: { min: minVolume5m, max: maxVolume5m },
+                    volume1h: { min: minVolume, max: maxVolume },
+                    volume24h: { min: minVolume24h, max: maxVolume24h },
+                    liquidity: { min: minLiquidity, max: maxLiquidity },
+                    mcap: { min: minMcap, max: maxMcap },
+                    mode: discoveryMode,
+                    maxAgeMinutes,
+                    baseToken: selectedBaseToken,
+                    stopLossPct,
+                    enableReputation,
+                    enableBundle,
+                    enableInvestment,
+                    enableSimulation,
+                    minDevTxCount
+                })
+            });
+
+            if (res.ok) {
+                showModal({
+                    title: "Settings Saved",
+                    message: "Bot configuration has been persisted to the database.",
+                    type: 'success',
+                });
+            }
+        } catch (e) {
+            console.error("Save settings error:", e);
         }
     };
 
@@ -866,6 +984,20 @@ function App() {
                                     <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" subtext="0 = No limit" />
                                 </div>
 
+                                <div className="space-y-4 pt-4 border-t border-border mt-4">
+                                    <h4 className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-4 bg-primary/5 p-2 rounded border-l-2 border-primary">Forensic Guard & Risk</h4>
+                                    <div className="bg-zinc-950/40 p-3 rounded-2xl border border-white/5 space-y-3">
+                                        <SettingInput label="Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="e.g. -2 for 2% drop" />
+                                        <div className="h-px bg-white/5 my-2"></div>
+                                        <Toggle label="Dev Reputation" enabled={enableReputation} onChange={setEnableReputation} disabled={running} />
+                                        {enableReputation && (
+                                            <SettingInput label="Min Dev TXs" value={minDevTxCount} onChange={setMinDevTxCount} disabled={running} subtext="Rejects low-activity wallets" />
+                                        )}
+                                        <Toggle label="Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} />
+                                        <Toggle label="Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} />
+                                        <Toggle label="Sell Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} />
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -957,17 +1089,26 @@ function App() {
                                 {running ? "LPPP BOT Is Active" : "Ready to initialize"}
                             </span>
                         </div>
-                        <button
-                            onClick={toggleBot}
-                            className={`w-full py-4 rounded-full font-bold flex items-center justify-center gap-2 transition-all text-sm shadow-[0_4px_20px_-5px_rgba(196,240,0,0.5)]
-                                ${running
-                                    ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/30'
-                                    : 'bg-primary text-primary-foreground hover:opacity-90'
-                                }`}
-                        >
-                            <Power size={16} />
-                            {running ? 'STOP SCANNER' : 'LAUNCH LPPP BOT'}
-                        </button>
+                        <div className="flex gap-3 w-full mt-4 items-center">
+                            <button
+                                onClick={saveSettings}
+                                className="w-10 h-10 bg-zinc-950/60 border border-white/5 rounded-full flex items-center justify-center text-zinc-500 hover:text-primary hover:border-primary/40 transition-all shrink-0 active:scale-90"
+                                title="SAVE CONFIG TO SQLITE"
+                            >
+                                <Settings2 size={16} />
+                            </button>
+                            <button
+                                onClick={toggleBot}
+                                className={`flex-1 py-3.5 rounded-full font-black flex items-center justify-center gap-2 transition-all text-[11px] tracking-[0.2em] shadow-lg active:scale-95
+                                    ${running
+                                        ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/30'
+                                        : 'bg-primary text-black hover:opacity-90'
+                                    }`}
+                            >
+                                <Power size={16} className={running ? 'animate-pulse' : ''} />
+                                {running ? 'STOP SCANNER' : 'LAUNCH LPPP BOT'}
+                            </button>
+                        </div>
                     </div>
 
                 </div>
