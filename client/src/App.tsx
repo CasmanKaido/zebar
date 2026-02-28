@@ -822,44 +822,35 @@ function App() {
 
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col font-sans">
-            {/* Header */}
-            <header className="p-6 border-b border-white/5 bg-grid relative overflow-hidden bg-black/20 backdrop-blur-md">
-                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40 pointer-events-none"></div>
-                <div className="max-w-[1440px] mx-auto flex items-center justify-between relative z-10">
-                    <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 flex items-center justify-center bg-primary/20 rounded-2xl border border-white/10 overflow-hidden shadow-[0_0_20px_rgba(196,240,0,0.15)] relative group">
-                            <img
-                                src="/logo.png"
-                                alt="Logo"
-                                className="w-full h-full object-cover transform transition-transform duration-500 group-hover:scale-110 opacity-90"
-                                onError={(e) => {
-                                    (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=BOT&background=c4f000&color=000';
-                                }}
-                            />
+            <header className="sticky top-0 z-50 bg-black/80 backdrop-blur-xl border-b border-white/5 py-4">
+                <div className="max-w-[1440px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 flex items-center justify-center text-primary shadow-[0_0_20px_rgba(205,255,0,0.1)] shrink-0">
+                            <Activity size={28} />
                         </div>
                         <div>
-                            <h1 className="text-2xl font-black tracking-widest text-primary drop-shadow-[0_0_10px_rgba(196,240,0,0.3)]">LPPP BOT</h1>
+                            <h1 className="text-lg font-black tracking-widest text-white leading-none">ZEBAR <span className="text-primary italic">LPPP</span></h1>
                             <span className="text-[11px] font-medium text-muted-foreground block mt-0.5 tracking-wider uppercase">Finance Revolution Execution</span>
                         </div>
                     </div>
-                    <div className="flex items-center gap-6">
-                        <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 mr-4">
+                    <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 w-full sm:w-auto">
+                        <nav className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10 w-full sm:w-auto">
                             <button
                                 onClick={() => setActiveView('dashboard')}
-                                className={`px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${activeView === 'dashboard' ? 'bg-primary text-black shadow-[0_0_15px_rgba(196,240,0,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}
+                                className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${activeView === 'dashboard' ? 'bg-primary text-black shadow-[0_0_15px_rgba(196,240,0,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}
                             >
                                 Dashboard
                             </button>
                             <button
                                 onClick={() => setActiveView('settings')}
-                                className={`px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${activeView === 'settings' ? 'bg-primary text-black shadow-[0_0_15px_rgba(196,240,0,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}
+                                className={`flex-1 sm:flex-none px-4 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${activeView === 'settings' ? 'bg-primary text-black shadow-[0_0_15px_rgba(196,240,0,0.3)]' : 'text-muted-foreground hover:text-foreground hover:bg-white/5'}`}
                             >
                                 Settings
                             </button>
                         </nav>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 bg-white/5 sm:bg-transparent px-4 py-2 sm:p-0 rounded-xl border border-white/10 sm:border-none w-full sm:w-auto justify-center">
                             <span className={`w-2 h-2 rounded-full ${running ? 'bg-primary shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 'bg-muted-foreground'}`}></span>
-                            <span className="text-sm font-medium text-muted-foreground">
+                            <span className="text-sm font-medium text-muted-foreground uppercase tracking-tighter">
                                 {running ? 'Scanner Active' : 'System Offline'}
                             </span>
                         </div>
