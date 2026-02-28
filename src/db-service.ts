@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
-import { PoolData, TradeHistory, BotSettings } from "./types";
+import { PoolData, TradeHistory, BotSettings, PrebondPosition } from "./types";
 
 const DB_PATH = path.join(process.cwd(), "data", "zebar.db");
 
@@ -126,6 +126,36 @@ export class DatabaseService {
         try {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN enableStopLoss INTEGER NOT NULL DEFAULT 1");
             console.log("[DB] Migrated: Added enableStopLoss column to global_settings table.");
+        } catch (e) { }
+
+        // Prebond positions table
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS prebond_positions (
+                mint TEXT PRIMARY KEY,
+                symbol TEXT,
+                buyTxId TEXT,
+                buyPrice REAL,
+                buyAmountSol REAL,
+                buyAmountTokens TEXT,
+                creator TEXT,
+                strategy TEXT DEFAULT 'FLIP',
+                status TEXT DEFAULT 'ACTIVE',
+                created TEXT DEFAULT (datetime('now')),
+                soldTxId TEXT,
+                soldAmountSol REAL,
+                pnl REAL
+            )
+        `);
+
+        // Prebond settings migrations
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN enablePrebond INTEGER NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondBuyAmount REAL NOT NULL DEFAULT 0.05");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondStrategy TEXT NOT NULL DEFAULT 'FLIP'");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondFlipTarget REAL NOT NULL DEFAULT 50");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondStopLoss REAL NOT NULL DEFAULT -30");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxHoldings INTEGER NOT NULL DEFAULT 3");
+            console.log("[DB] Migrated: Added prebond columns to global_settings table.");
         } catch (e) { }
 
         // Advanced Safety migrations
@@ -319,7 +349,13 @@ export class DatabaseService {
             enableScoring: row.enableScoring !== undefined ? !!row.enableScoring : false,
             maxTop5HolderPct: row.maxTop5HolderPct ?? 50,
             minSafetyScore: row.minSafetyScore ?? 0.3,
-            minTokenScore: row.minTokenScore ?? 60
+            minTokenScore: row.minTokenScore ?? 60,
+            enablePrebond: row.enablePrebond !== undefined ? !!row.enablePrebond : false,
+            prebondBuyAmount: row.prebondBuyAmount ?? 0.05,
+            prebondStrategy: row.prebondStrategy || "FLIP",
+            prebondFlipTarget: row.prebondFlipTarget ?? 50,
+            prebondStopLoss: row.prebondStopLoss ?? -30,
+            prebondMaxHoldings: row.prebondMaxHoldings ?? 3
         };
     }
 
@@ -356,7 +392,13 @@ export class DatabaseService {
                 enableScoring = @enableScoring,
                 maxTop5HolderPct = @maxTop5HolderPct,
                 minSafetyScore = @minSafetyScore,
-                minTokenScore = @minTokenScore
+                minTokenScore = @minTokenScore,
+                enablePrebond = @enablePrebond,
+                prebondBuyAmount = @prebondBuyAmount,
+                prebondStrategy = @prebondStrategy,
+                prebondFlipTarget = @prebondFlipTarget,
+                prebondStopLoss = @prebondStopLoss,
+                prebondMaxHoldings = @prebondMaxHoldings
             WHERE id = 1
         `);
 
@@ -391,8 +433,85 @@ export class DatabaseService {
             enableScoring: settings.enableScoring ? 1 : 0,
             maxTop5HolderPct: settings.maxTop5HolderPct,
             minSafetyScore: settings.minSafetyScore,
-            minTokenScore: settings.minTokenScore
+            minTokenScore: settings.minTokenScore,
+            enablePrebond: settings.enablePrebond ? 1 : 0,
+            prebondBuyAmount: settings.prebondBuyAmount,
+            prebondStrategy: settings.prebondStrategy,
+            prebondFlipTarget: settings.prebondFlipTarget,
+            prebondStopLoss: settings.prebondStopLoss,
+            prebondMaxHoldings: settings.prebondMaxHoldings
         });
+    }
+
+    // --- Prebond Methods ---
+
+    async getActivePrebondPositions(): Promise<PrebondPosition[]> {
+        const rows = this.db.prepare("SELECT * FROM prebond_positions WHERE status = 'ACTIVE'").all() as any[];
+        return rows.map(r => this.mapRowToPrebond(r));
+    }
+
+    async getAllPrebondPositions(): Promise<PrebondPosition[]> {
+        const rows = this.db.prepare("SELECT * FROM prebond_positions ORDER BY created DESC").all() as any[];
+        return rows.map(r => this.mapRowToPrebond(r));
+    }
+
+    async getPrebondPosition(mint: string): Promise<PrebondPosition | null> {
+        const row = this.db.prepare("SELECT * FROM prebond_positions WHERE mint = ?").get(mint) as any;
+        return row ? this.mapRowToPrebond(row) : null;
+    }
+
+    async savePrebondPosition(pos: PrebondPosition): Promise<void> {
+        this.db.prepare(`
+            INSERT OR REPLACE INTO prebond_positions (
+                mint, symbol, buyTxId, buyPrice, buyAmountSol, buyAmountTokens,
+                creator, strategy, status, created
+            ) VALUES (
+                @mint, @symbol, @buyTxId, @buyPrice, @buyAmountSol, @buyAmountTokens,
+                @creator, @strategy, @status, @created
+            )
+        `).run({
+            mint: pos.mint,
+            symbol: pos.symbol,
+            buyTxId: pos.buyTxId,
+            buyPrice: pos.buyPrice,
+            buyAmountSol: pos.buyAmountSol,
+            buyAmountTokens: pos.buyAmountTokens,
+            creator: pos.creator,
+            strategy: pos.strategy,
+            status: pos.status,
+            created: pos.created
+        });
+    }
+
+    async updatePrebondPosition(mint: string, updates: Partial<PrebondPosition>): Promise<void> {
+        const fields: string[] = [];
+        const values: any = { mint };
+        for (const [key, val] of Object.entries(updates)) {
+            if (key !== "mint" && val !== undefined) {
+                fields.push(`${key} = @${key}`);
+                values[key] = val;
+            }
+        }
+        if (fields.length === 0) return;
+        this.db.prepare(`UPDATE prebond_positions SET ${fields.join(", ")} WHERE mint = @mint`).run(values);
+    }
+
+    private mapRowToPrebond(row: any): PrebondPosition {
+        return {
+            mint: row.mint,
+            symbol: row.symbol || "",
+            buyTxId: row.buyTxId || "",
+            buyPrice: row.buyPrice || 0,
+            buyAmountSol: row.buyAmountSol || 0,
+            buyAmountTokens: row.buyAmountTokens || "0",
+            creator: row.creator || "",
+            strategy: row.strategy || "FLIP",
+            status: row.status || "ACTIVE",
+            created: row.created || "",
+            soldTxId: row.soldTxId,
+            soldAmountSol: row.soldAmountSol,
+            pnl: row.pnl
+        };
     }
 
     // --- Helpers ---

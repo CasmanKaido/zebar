@@ -360,6 +360,13 @@ function App() {
     const [maxTop5HolderPct, setMaxTop5HolderPct] = useState(50);
     const [minSafetyScore, setMinSafetyScore] = useState(0.3);
     const [minTokenScore, setMinTokenScore] = useState(60);
+    // Prebond Sniping
+    const [enablePrebond, setEnablePrebond] = useState(false);
+    const [prebondBuyAmount, setPrebondBuyAmount] = useState(0.05);
+    const [prebondStrategy, setPrebondStrategy] = useState<"FLIP" | "GRADUATION">("FLIP");
+    const [prebondFlipTarget, setPrebondFlipTarget] = useState(50);
+    const [prebondStopLoss, setPrebondStopLoss] = useState(-30);
+    const [prebondMaxHoldings, setPrebondMaxHoldings] = useState(3);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -535,6 +542,13 @@ function App() {
                     if (s.maxTop5HolderPct !== undefined) setMaxTop5HolderPct(s.maxTop5HolderPct);
                     if (s.minSafetyScore !== undefined) setMinSafetyScore(s.minSafetyScore);
                     if (s.minTokenScore !== undefined) setMinTokenScore(s.minTokenScore);
+                    // Prebond
+                    if (s.enablePrebond !== undefined) setEnablePrebond(s.enablePrebond);
+                    if (s.prebondBuyAmount !== undefined) setPrebondBuyAmount(s.prebondBuyAmount);
+                    if (s.prebondStrategy !== undefined) setPrebondStrategy(s.prebondStrategy);
+                    if (s.prebondFlipTarget !== undefined) setPrebondFlipTarget(s.prebondFlipTarget);
+                    if (s.prebondStopLoss !== undefined) setPrebondStopLoss(s.prebondStopLoss);
+                    if (s.prebondMaxHoldings !== undefined) setPrebondMaxHoldings(s.prebondMaxHoldings);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -585,7 +599,8 @@ function App() {
                     enableScoring,
                     maxTop5HolderPct,
                     minSafetyScore,
-                    minTokenScore
+                    minTokenScore,
+                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings
                 })
             });
 
@@ -641,7 +656,8 @@ function App() {
                     enableScoring,
                     maxTop5HolderPct,
                     minSafetyScore,
-                    minTokenScore
+                    minTokenScore,
+                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings
                 })
             });
 
@@ -1232,6 +1248,39 @@ function App() {
                                                 </div>
                                             )}
                                         </div>
+                                    </div>
+                                </div>
+
+                                {/* Prebond Sniping */}
+                                <div className="glass-card p-6 space-y-6">
+                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                        <Zap size={18} className="text-muted-foreground" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest">Prebond Sniping</h2>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <Toggle label="Enable Prebond" enabled={enablePrebond} onChange={setEnablePrebond} disabled={running} onInfo={() => showModal({ title: 'Prebond Sniping', message: 'Buy tokens directly on the Pump.fun bonding curve BEFORE graduation. The bot detects new Pump.fun token mints via Helius and buys immediately through Jupiter (which routes through the bonding curve). Tokens are filtered by creator wallet reputation and bundle detection. Choose FLIP to auto-sell at a target gain, or GRADUATION to hold until the token graduates to a DEX pool.', type: 'info' })} />
+                                        {enablePrebond && (
+                                            <div className="pt-2 space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                                                <SettingInput label="Buy Amount" value={prebondBuyAmount} onChange={setPrebondBuyAmount} disabled={running} unit="SOL" subtext="SOL per prebond buy" />
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Strategy</label>
+                                                        <button onClick={() => showModal({ title: 'Prebond Strategy', message: 'FLIP: Auto-sell on the bonding curve when the target gain % is reached. Quick in-and-out trades.\n\nGRADUATION: Hold tokens until they graduate to a DEX (Raydium/PumpSwap), then transition into the normal Meteora LP flow. Longer hold but potentially bigger gains.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
+                                                    </div>
+                                                    <select value={prebondStrategy} onChange={(e) => setPrebondStrategy(e.target.value as "FLIP" | "GRADUATION")} className="bg-zinc-900 text-primary font-bold border border-primary/20 rounded px-2 py-1 text-[10px] outline-none" disabled={running}>
+                                                        <option value="FLIP">FLIP</option>
+                                                        <option value="GRADUATION">GRADUATION</option>
+                                                    </select>
+                                                </div>
+                                                {prebondStrategy === "FLIP" && (
+                                                    <div className="animate-in fade-in zoom-in-95 duration-200">
+                                                        <SettingInput label="Flip Target" value={prebondFlipTarget} onChange={setPrebondFlipTarget} disabled={running} unit="%" subtext="Sell when gain reaches this %" />
+                                                    </div>
+                                                )}
+                                                <SettingInput label="Stop Loss" value={prebondStopLoss} onChange={setPrebondStopLoss} disabled={running} unit="%" subtext="Emergency sell threshold" />
+                                                <SettingInput label="Max Holdings" value={prebondMaxHoldings} onChange={setPrebondMaxHoldings} disabled={running} subtext="Max simultaneous prebond positions" />
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
 

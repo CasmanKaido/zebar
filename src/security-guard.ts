@@ -33,15 +33,53 @@ export class SecurityGuard {
 
     /**
      * Detects if the launch was "Bundled" (supply cornered in slot 0).
+     * Fetches the earliest transactions for the mint and checks if multiple
+     * buy transactions landed in the same slot as pool creation — a sign
+     * that a Jito bundle was used to corner supply before anyone else.
      */
-    async detectBundle(mint: string): Promise<{ bundled: boolean; holders?: number }> {
+    async detectBundle(mint: string): Promise<{ bundled: boolean; slot0Buyers?: number; reason?: string }> {
         try {
-            // Simplified: Check the first few blocks for large buy transactions in the same slot as pool creation
-            // In a real implementation, we'd query the block content or use a specialized API.
-            // For now, we'll mark as "Not Bundled" but provide a placeholder for actual logic.
-            return { bundled: false };
+            const mintPubkey = new PublicKey(mint);
+
+            // Fetch the oldest transactions for this mint (earliest first)
+            const signatures = await this.connection.getSignaturesForAddress(mintPubkey, { limit: 30 });
+            if (signatures.length === 0) {
+                return { bundled: false };
+            }
+
+            // Sort by slot ascending to find the creation slot
+            const sorted = [...signatures].sort((a, b) => a.slot - b.slot);
+            const creationSlot = sorted[0].slot;
+
+            // Count unique signers that transacted in the creation slot
+            // Multiple transactions in the same slot = bundled launch
+            const slot0Txs = sorted.filter(s => s.slot === creationSlot);
+
+            // If 3+ transactions landed in the exact same slot as creation,
+            // it's almost certainly a Jito bundle snipe
+            if (slot0Txs.length >= 3) {
+                // Verify by checking the next 1-2 slots as well (bundles sometimes span 2 slots)
+                const nearSlotTxs = sorted.filter(s => s.slot <= creationSlot + 1);
+
+                if (nearSlotTxs.length >= 4) {
+                    return {
+                        bundled: true,
+                        slot0Buyers: nearSlotTxs.length,
+                        reason: `${nearSlotTxs.length} transactions in creation slot (${creationSlot}) — likely Jito bundle snipe`
+                    };
+                }
+
+                return {
+                    bundled: true,
+                    slot0Buyers: slot0Txs.length,
+                    reason: `${slot0Txs.length} transactions in creation slot (${creationSlot}) — likely bundled launch`
+                };
+            }
+
+            return { bundled: false, slot0Buyers: slot0Txs.length };
         } catch (error) {
-            return { bundled: false };
+            console.warn(`[SECURITY] Bundle detection failed for ${mint.slice(0, 8)}:`, error);
+            return { bundled: false }; // Fail open
         }
     }
 
@@ -105,7 +143,7 @@ export class SecurityGuard {
             const bundle = await this.detectBundle(mint);
             if (bundle.bundled) {
                 passed = false;
-                report.push(`[BUNDLE] Detected supply cornering in slot 0`);
+                report.push(`[BUNDLE] ${bundle.reason || `Detected supply cornering (${bundle.slot0Buyers} txs in creation slot)`}`);
             }
         }
 

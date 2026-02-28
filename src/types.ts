@@ -56,6 +56,30 @@ export interface BotSettings {
     maxTop5HolderPct: number;         // Max combined % for top 5 holders
     minSafetyScore: number;           // Min RugCheck score 0-1 to pass
     minTokenScore: number;            // Min confidence score 0-100 to buy
+    // Prebond Sniping
+    enablePrebond: boolean;           // Master toggle for prebond sniping
+    prebondBuyAmount: number;         // SOL to spend per prebond buy
+    prebondStrategy: "FLIP" | "GRADUATION"; // FLIP = sell on curve, GRADUATION = hold → LP
+    prebondFlipTarget: number;        // % gain to trigger sell in FLIP mode (e.g. 50 = 1.5x)
+    prebondStopLoss: number;          // % loss to trigger sell (e.g. -30)
+    prebondMaxHoldings: number;       // Max simultaneous prebond positions
+}
+
+export interface PrebondPosition {
+    mint: string;
+    symbol: string;
+    buyTxId: string;
+    buyPrice: number;           // SOL per token at purchase
+    buyAmountSol: number;       // SOL spent
+    buyAmountTokens: string;    // Raw token units (bigint as string)
+    creator: string;            // Creator wallet
+    strategy: "FLIP" | "GRADUATION";
+    status: "ACTIVE" | "SOLD" | "GRADUATED" | "FAILED";
+    created: string;
+    soldTxId?: string;
+    soldAmountSol?: number;
+    pnl?: number;
+    currentPrice?: number;      // Runtime only — not persisted
 }
 
 export interface TradeHistory {

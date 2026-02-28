@@ -169,6 +169,44 @@ export class StrategyManager {
 
 
     /**
+     * Gets the current price of a token via Jupiter Quote API (read-only, no tx).
+     * Used by prebond monitor to check current value of bonding curve tokens.
+     */
+    async getPrebondPrice(mint: string): Promise<{ pricePerToken: number; success: boolean }> {
+        try {
+            const headers: Record<string, string> = {};
+            if (JUPITER_API_KEY) headers["x-api-key"] = JUPITER_API_KEY;
+
+            // Quote a small SOL amount to get the exchange rate
+            const testLamports = Math.floor(0.001 * LAMPORTS_PER_SOL); // 0.001 SOL
+            const res = await axios.get("https://api.jup.ag/quote/v1", {
+                params: {
+                    inputMint: SOL_MINT.toBase58(),
+                    outputMint: mint,
+                    amount: testLamports.toString(),
+                    slippageBps: 1000,
+                },
+                headers,
+                timeout: 5000,
+            });
+
+            if (res.data && res.data.outAmount) {
+                const solIn = testLamports / LAMPORTS_PER_SOL; // 0.001
+                const tokensOut = Number(res.data.outAmount);
+                if (tokensOut > 0) {
+                    // Price = SOL per token
+                    const pricePerToken = solIn / tokensOut;
+                    return { pricePerToken, success: true };
+                }
+            }
+            return { pricePerToken: 0, success: false };
+        } catch (err: any) {
+            console.warn(`[STRATEGY] getPrebondPrice failed for ${mint.slice(0, 8)}: ${err.message}`);
+            return { pricePerToken: 0, success: false };
+        }
+    }
+
+    /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; uiAmount: number; error?: string }> {
@@ -354,7 +392,11 @@ export class StrategyManager {
             transaction.sign([this.wallet]);
 
             if (skipExecution) {
-                return { success: true, amountSol: 0, transaction };
+                // Extract estimated SOL output from Jupiter order response
+                const estimatedSol = orderResponse.outAmount
+                    ? Number(orderResponse.outAmount) / LAMPORTS_PER_SOL
+                    : 0;
+                return { success: true, amountSol: estimatedSol, transaction };
             }
 
             // Helper to calculate SOL received
@@ -1316,7 +1358,7 @@ export class StrategyManager {
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
-    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesSol: number; feesToken: number; feesSolRaw: bigint; feesTokenRaw: bigint; mint: string; spotPrice: number; userBaseInLp: number; userTokenInLp: number; userTokenRaw: bigint; success: boolean }> {
+    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesBase: number; feesToken: number; feesBaseRaw: bigint; feesTokenRaw: bigint; mint: string; baseMint: string; spotPrice: number; userBaseInLp: number; userTokenInLp: number; userTokenRaw: bigint; success: boolean }> {
         try {
             const conn = connectionOverride || this.connection;
             const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
@@ -1431,7 +1473,7 @@ export class StrategyManager {
                 const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
                 if (userPositions.length === 0) {
                     // console.warn(`[STRATEGY] No position found for pool ${poolPubkey.toBase58()}. Marking as fetch failure.`);
-                    return { totalSol: 0, feesSol: 0, feesToken: 0, feesSolRaw: 0n, feesTokenRaw: 0n, mint: "", spotPrice, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
+                    return { totalSol: 0, feesBase: 0, feesToken: 0, feesBaseRaw: 0n, feesTokenRaw: 0n, mint: "", baseMint: "", spotPrice, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
                 }
                 pos = userPositions[0];
             }
@@ -1603,11 +1645,12 @@ export class StrategyManager {
 
             return {
                 totalSol,
-                feesSol: feesBase,
+                feesBase: feesBase,
                 feesToken: feesToken,
-                feesSolRaw: baseIsA ? BigInt(pos.positionState.feeAPending.toString()) : BigInt(pos.positionState.feeBPending.toString()),
+                feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending.toString()) : BigInt(pos.positionState.feeBPending.toString()),
                 feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending.toString()) : BigInt(pos.positionState.feeAPending.toString()),
                 mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
+                baseMint: baseIsA ? mintA.toBase58() : mintB.toBase58(),
                 spotPrice,
                 userBaseInLp: netBaseInLp,   // Now strictly Principal
                 userTokenInLp: netTokenInLp, // Now strictly Principal
@@ -1616,7 +1659,7 @@ export class StrategyManager {
             };
         } catch (error) {
             console.error(`[STRATEGY] getPositionValue Failed:`, error);
-            return { totalSol: 0, feesSol: 0, feesToken: 0, feesSolRaw: 0n, feesTokenRaw: 0n, mint: "", spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
+            return { totalSol: 0, feesBase: 0, feesToken: 0, feesBaseRaw: 0n, feesTokenRaw: 0n, mint: "", baseMint: "", spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
         }
     }
 
@@ -1795,20 +1838,33 @@ export class StrategyManager {
             }
 
             const allTxs: (Transaction | VersionedTransaction)[] = [claimRes.transaction];
+            let estimatedTotalSolOutput = 0;
 
-            // 3. Prepare Swap (if Token fees > 0)
+            // 3a. Prepare Swap for TARGET token fees → SOL (if Token fees > 0)
             if (posValue.feesTokenRaw > 0n) {
                 const swapRes = await this.sellToken(new PublicKey(posValue.mint), posValue.feesTokenRaw, 10, true);
                 if (swapRes.success && swapRes.transaction) {
                     allTxs.push(swapRes.transaction);
+                    estimatedTotalSolOutput += swapRes.amountSol;
                 }
             }
 
-            // 4. Calculate total SOL to transfer
-            // Total Harvested = feesSolRaw + (Estimated Swap Output)
-            // We use the raw values for better precision in the transfer
-            const estimatedSwapSolRaw = BigInt(Math.floor(posValue.feesToken * (1 / posValue.spotPrice) * LAMPORTS_PER_SOL));
-            const totalSolToDistributeRaw = posValue.feesSolRaw + estimatedSwapSolRaw;
+            // 3b. Prepare Swap for BASE token fees → SOL (if base is NOT SOL)
+            const isBaseSol = posValue.baseMint === SOL_MINT.toBase58();
+            if (isBaseSol) {
+                // Base IS SOL — fees are already in lamports, add directly
+                estimatedTotalSolOutput += Number(posValue.feesBaseRaw) / LAMPORTS_PER_SOL;
+            } else if (posValue.feesBaseRaw > 0n) {
+                // Base is LPPP/HTP — need to swap base token → SOL
+                const swapBaseRes = await this.sellToken(new PublicKey(posValue.baseMint), posValue.feesBaseRaw, 10, true);
+                if (swapBaseRes.success && swapBaseRes.transaction) {
+                    allTxs.push(swapBaseRes.transaction);
+                    estimatedTotalSolOutput += swapBaseRes.amountSol;
+                }
+            }
+
+            // 4. Calculate total SOL to transfer (from Jupiter-estimated swap outputs)
+            const totalSolToDistributeRaw = BigInt(Math.floor(estimatedTotalSolOutput * LAMPORTS_PER_SOL));
 
             // We subtract a buffer for tips and gas (0.005 SOL is safe)
             const BUFFER_LAMPORTS = BigInt(Math.floor(0.005 * LAMPORTS_PER_SOL));

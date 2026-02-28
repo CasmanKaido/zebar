@@ -99,6 +99,16 @@ app.post("/api/stop", (req, res) => {
     res.json({ success: true, running: false });
 });
 
+// Prebond Positions API
+app.get("/api/prebond-positions", async (req, res) => {
+    try {
+        const positions = await dbService.getAllPrebondPositions();
+        res.json(positions);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)
 // Price cache to prevent rate limiting (15s TTL)
 let priceCache: { sol: number; baseTokens: Record<string, number> } | null = null;
