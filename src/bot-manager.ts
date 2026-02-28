@@ -29,6 +29,7 @@ export class BotManager {
     private strategy: StrategyManager;
     private sessionPoolCount: number = 0;
     private monitorInterval: NodeJS.Timeout | null = null;
+    private _runMonitor: (() => Promise<void>) | null = null; // Stored reference for immediate sweep triggers
     private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
     private activeTpSlActions: Set<string> = new Set(); // Guards against double TP/SL
     private rejectedTokens: Map<string, { reason: string, expiry: number }> = new Map(); // Fix 5: Cache rejected tokens
@@ -775,6 +776,7 @@ export class BotManager {
                     await this.savePools(fullPoolData);
                     SocketManager.emitPool(fullPoolData);
                     this.sessionPoolCount++;
+                    this.triggerImmediateSweep(); // First SL/TP check ASAP
 
                     if (this.sessionPoolCount >= this.settings.maxPools) {
                         SocketManager.emitLog(`[SESSION] Limit reached. Stopping scanner.`, "warning");
@@ -916,6 +918,7 @@ export class BotManager {
         // Monitor loop
         let sweepCount = 0;
         const runMonitor = async () => {
+            this._runMonitor = runMonitor; // Store reference for immediate sweep triggers
             this.lastMonitorHeartbeat = Date.now(); // Watchdog: I'm alive!
 
             let pools: PoolData[] = [];
@@ -962,8 +965,8 @@ export class BotManager {
                     if (p.stopLossDone) return false;
                     if (p.tp1Done && p.takeProfitDone) return false;
 
-                    // Tier 4: TP1 done, watching for TP2 — check every 3 sweeps (~45s)
-                    if (p.tp1Done) return sweepCount % 3 === 0;
+                    // Tier 4: TP1 done, watching for TP2 — check every 2 sweeps (~16s)
+                    if (p.tp1Done) return sweepCount % 2 === 0;
 
                     // Tier 5: Age-based backoff for active pools
                     const ageMs = now - (p.created ? new Date(p.created).getTime() : 0);
@@ -978,7 +981,7 @@ export class BotManager {
                 // ── BATCHED RPC FETCHING (CRITICAL FIX FOR 429 LIMITS) ──
                 // Replaces unbounded Promise.all which crashed the RPC with 1000s of requests at once.
                 const posValueResults: any[] = [];
-                const BATCH_SIZE = 5;
+                const BATCH_SIZE = 10;
                 for (let i = 0; i < eligiblePools.length; i += BATCH_SIZE) {
                     const batch = eligiblePools.slice(i, i + BATCH_SIZE);
                     const batchResults = await Promise.all(
@@ -989,7 +992,7 @@ export class BotManager {
                     );
                     posValueResults.push(...batchResults);
                     if (i + BATCH_SIZE < eligiblePools.length) {
-                        await new Promise(r => setTimeout(r, 800)); // 800ms buffer between batches
+                        await new Promise(r => setTimeout(r, 200)); // 200ms buffer between batches
                     }
                 }
 
@@ -1294,7 +1297,7 @@ export class BotManager {
                 // so the monitor self-terminates once all active positions are closed.
                 if (this.isRunning || activePools.length > 0) {
                     const monitorableCount = activePools.filter(p => !p.stopLossDone && !(p.tp1Done && p.takeProfitDone)).length;
-                    const nextInterval = monitorableCount > 50 ? 30000 : 15000;
+                    const nextInterval = monitorableCount > 50 ? 15000 : 8000;
                     this.monitorInterval = setTimeout(runMonitor, nextInterval);
                 } else {
                     this.monitorInterval = null; // Nothing left to watch — stop the loop
@@ -1304,6 +1307,18 @@ export class BotManager {
 
         // Kick off first run
         await runMonitor();
+    }
+
+    /** Cancel pending sweep timer and run monitor immediately (e.g. after new pool creation) */
+    triggerImmediateSweep() {
+        if (this._runMonitor) {
+            if (this.monitorInterval) {
+                clearTimeout(this.monitorInterval);
+                this.monitorInterval = null;
+            }
+            SocketManager.emitLog(`[MONITOR] Immediate sweep triggered for new pool.`, "info");
+            this._runMonitor();
+        }
     }
 
     async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {
