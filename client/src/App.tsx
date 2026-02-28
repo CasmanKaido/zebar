@@ -1096,6 +1096,24 @@ function App() {
                                             </select>
                                         </div>
 
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Discovery Mode</label>
+                                                <button onClick={() => showModal({ title: 'Discovery Mode', message: 'SCOUT: Real-time token detection via Helius webhooks. Catches new launches instantly with momentum-based filters and lenient MCAP thresholds. Best for sniping fresh tokens.\n\nANALYST: Periodic market sweeps via DexScreener/Birdeye. Scans established tokens with stricter volume and liquidity requirements. Better for finding proven tokens with sustained trading activity.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more">
+                                                    <Info size={12} />
+                                                </button>
+                                            </div>
+                                            <select
+                                                value={discoveryMode}
+                                                onChange={(e) => setDiscoveryMode(e.target.value as 'SCOUT' | 'ANALYST')}
+                                                className="bg-zinc-900 text-primary font-bold border border-primary/20 rounded px-2 py-1 text-[10px] outline-none"
+                                                disabled={running}
+                                            >
+                                                <option value="SCOUT">SCOUT</option>
+                                                <option value="ANALYST">ANALYST</option>
+                                            </select>
+                                        </div>
+
                                         <div className="p-4 bg-primary/5 rounded-2xl border border-primary/10">
                                             <div className="flex items-center justify-between mb-3">
                                                 <span className="text-[10px] font-bold text-primary/80 uppercase">Position Size</span>
