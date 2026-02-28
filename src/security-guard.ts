@@ -1,6 +1,9 @@
-import { Connection, PublicKey, Transaction, TransactionInstruction } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 import { BotSettings } from "./types";
-import { RPC_URL } from "./config";
+import { RPC_URL, JUPITER_API_KEY } from "./config";
+import axios from "axios";
+
+const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 export class SecurityGuard {
     private connection: Connection;
@@ -43,33 +46,43 @@ export class SecurityGuard {
     }
 
     /**
-     * Verifies if the OpenBook market creation was a "Custom" (expensive) market or a "Cheap" (0.02 SOL) one.
+     * Simulates a SELL via Jupiter Quote API to detect honeypots.
+     * This is a read-only API call — no transaction is sent.
+     * If Jupiter can't find a route to sell the token → likely a honeypot.
      */
-    async verifyMarketCost(marketId: string): Promise<{ investmentGrade: boolean; costSol?: number }> {
+    async simulateExecution(mint: string): Promise<{ success: boolean; error?: string }> {
         try {
-            // Expensive markets (2.8+ SOL) are generally safer than 0.02 SOL markets.
-            // We can check the account size or creation tx.
-            const accountInfo = await this.connection.getAccountInfo(new PublicKey(marketId));
-            if (accountInfo && accountInfo.data.length > 1000) {
-                return { investmentGrade: true };
-            }
-            return { investmentGrade: false };
-        } catch (error) {
-            return { investmentGrade: true };
-        }
-    }
+            // Use a small amount (1,000,000 raw units ≈ tiny amount for most tokens)
+            const testAmount = 1000000;
+            const headers: Record<string, string> = {};
+            if (JUPITER_API_KEY) headers["x-api-key"] = JUPITER_API_KEY;
 
-    /**
-     * Simulates a SELL transaction to ensure the token isn't a honey-pot.
-     */
-    async simulateExecution(mint: string, wallet: PublicKey): Promise<{ success: boolean; error?: string }> {
-        try {
-            // This is a complex simulation that usually requires a real UI/Wallet context or 
-            // a custom instruction set to simulate a swap on Jupiter/Raydium.
-            // Placeholder for implementation.
+            const res = await axios.get("https://api.jup.ag/quote/v1", {
+                params: {
+                    inputMint: mint,
+                    outputMint: SOL_MINT,
+                    amount: testAmount,
+                    slippageBps: 1000, // 10% slippage for quote check
+                },
+                headers,
+                timeout: 5000,
+            });
+
+            // Check if Jupiter found any route
+            if (res.data && res.data.routePlan && res.data.routePlan.length > 0) {
+                return { success: true };
+            }
+
+            // No routes found — token likely cannot be sold
+            return { success: false, error: "No sell routes found on Jupiter — possible honeypot" };
+        } catch (err: any) {
+            // 400 = no route found, which means honeypot
+            if (err.response?.status === 400) {
+                return { success: false, error: "Jupiter rejected sell quote — possible honeypot" };
+            }
+            // Network/timeout errors — fail open (don't block on API issues)
+            console.warn(`[SECURITY] Sell simulation failed: ${err.message}`);
             return { success: true };
-        } catch (error) {
-            return { success: false, error: "Simulation failed" };
         }
     }
 
@@ -96,7 +109,13 @@ export class SecurityGuard {
             }
         }
 
-        // Add more checks as they are fully implemented
+        if (settings.enableSimulation) {
+            const sim = await this.simulateExecution(mint);
+            if (!sim.success) {
+                passed = false;
+                report.push(`[HONEYPOT] ${sim.error}`);
+            }
+        }
 
         return { passed, report };
     }

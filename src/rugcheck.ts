@@ -1,6 +1,7 @@
 import { Connection } from "@solana/web3.js";
 import { SocketManager } from "./socket";
 import { IGNORED_MINTS } from "./config";
+import { BotSettings } from "./types";
 import axios from "axios";
 
 /**
@@ -53,7 +54,8 @@ export class SafetyService {
     static async checkToken(
         _connection: Connection,
         mintAddress: string,
-        _pairAddress?: string
+        _pairAddress?: string,
+        settings?: BotSettings
     ): Promise<SafetyResult> {
         // Skip ignored mints
         if (IGNORED_MINTS.includes(mintAddress)) {
@@ -67,7 +69,7 @@ export class SafetyService {
 
         // Attempt 1: RugCheck API
         try {
-            const result = await this.checkViaRugCheck(mintAddress);
+            const result = await this.checkViaRugCheck(mintAddress, settings);
             if (result) return result;
         } catch (err: any) {
             console.warn(`[SAFETY] RugCheck attempt 1 failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
@@ -76,7 +78,7 @@ export class SafetyService {
         // Attempt 2: Retry after short delay (transient failures / rate limits)
         await new Promise(r => setTimeout(r, RUGCHECK_RETRY_DELAY));
         try {
-            const result = await this.checkViaRugCheck(mintAddress);
+            const result = await this.checkViaRugCheck(mintAddress, settings);
             if (result) return result;
         } catch (err: any) {
             console.warn(`[SAFETY] RugCheck attempt 2 failed for ${mintAddress.slice(0, 8)}...: ${err.message}`);
@@ -95,7 +97,7 @@ export class SafetyService {
     // ═══════════════════════════════════════════════════════════════════
     // TIER 1: RugCheck API (includes bundle % check for Helius)
     // ═══════════════════════════════════════════════════════════════════
-    private static async checkViaRugCheck(mintAddress: string): Promise<SafetyResult | null> {
+    private static async checkViaRugCheck(mintAddress: string, settings?: BotSettings): Promise<SafetyResult | null> {
         // Need full report to get topHolders for bundle % check
         const reportRes = await axios.get<RugCheckReport>(
             `https://api.rugcheck.xyz/v1/tokens/${mintAddress}/report`,
@@ -108,54 +110,85 @@ export class SafetyService {
         const score = report.score_normalised;
         const tag = mintAddress.slice(0, 8);
 
+        // Resolve authority status from report (used in checks + returned in result)
+        const mintAuthStatus: "enabled" | "disabled" = report.mintAuthority ? "enabled" : "disabled";
+        const freezeAuthStatus: "enabled" | "disabled" = report.freezeAuthority ? "enabled" : "disabled";
+
+        // Helper to build a rejection result
+        const reject = (reason: string, risks: string[], liquidityLocked: "locked" | "unlocked" | "unknown" = "unknown"): SafetyResult => {
+            SocketManager.emitLog(`[SAFETY] ❌ ${tag}... ${reason}`, "error");
+            return {
+                safe: false, reason, source: "rugcheck", score,
+                risks,
+                checks: { mintAuthority: mintAuthStatus, freezeAuthority: freezeAuthStatus, liquidityLocked }
+            };
+        };
+
         // Check 1: Bundle % (top holder concentration)
         const topHolder = report.topHolders?.[0];
         const bundlePct = topHolder?.percent || 0;
         if (bundlePct > MAX_BUNDLE_PCT) {
-            SocketManager.emitLog(
-                `[SAFETY] ❌ ${tag}... Bundle too concentrated: ${bundlePct.toFixed(1)}% in top holder (max ${MAX_BUNDLE_PCT}%)`,
-                "error"
+            return reject(
+                `Bundle too concentrated: ${bundlePct.toFixed(1)}% in top holder (max ${MAX_BUNDLE_PCT}%)`,
+                [`Top holder owns ${bundlePct.toFixed(1)}%`]
             );
-            return {
-                safe: false,
-                reason: `Bundle concentration too high: ${bundlePct.toFixed(1)}% (max ${MAX_BUNDLE_PCT}%)`,
-                source: "rugcheck",
-                score,
-                lpLockedPct: bundlePct,
-                risks: [`Top holder owns ${bundlePct.toFixed(1)}%`],
-                checks: { mintAuthority: "unknown", freezeAuthority: "unknown", liquidityLocked: "unknown" }
-            };
         }
 
         // Check 2: Locked Liquidity (from lockers array)
         const hasLockedLP = report.lockers && report.lockers.length > 0;
-
-        // Meteora/Pump.fun: Only bypass locker requirement if LP is actually locked (>90%)
         const isSafeCurve = report.markets?.some((m: any) =>
             (m.marketType === "pump_fun_amm" && m.lp?.lpLockedPct > 90) ||
             (m.marketType === "meteora" && m.lp?.lpLockedPct > 90)
         );
 
         if (!hasLockedLP && !isSafeCurve) {
-            SocketManager.emitLog(
-                `[SAFETY] ❌ ${tag}... LP not locked (no lockers detected)`,
-                "error"
-            );
-            return {
-                safe: false,
-                reason: `Liquidity is not locked - dev can withdraw anytime`,
-                source: "rugcheck",
-                score,
-                lpLockedPct: 0,
-                risks: [`LP not locked`],
-                checks: { mintAuthority: "unknown", freezeAuthority: "unknown", liquidityLocked: "unlocked" }
-            };
+            return reject(`LP not locked (no lockers detected)`, [`LP not locked`], "unlocked");
         }
 
-        // ── PASS: Bundle % OK + LP Locked ──
+        // Check 3: Mint Authority (toggleable)
+        if (settings?.enableAuthorityCheck && report.mintAuthority) {
+            return reject(
+                `Mint authority enabled — dev can inflate supply`,
+                [`Mint authority: ${report.mintAuthority.slice(0, 8)}...`]
+            );
+        }
+
+        // Check 4: Freeze Authority (toggleable)
+        if (settings?.enableAuthorityCheck && report.freezeAuthority) {
+            return reject(
+                `Freeze authority enabled — tokens can be frozen`,
+                [`Freeze authority: ${report.freezeAuthority.slice(0, 8)}...`]
+            );
+        }
+
+        // Check 5: Top 5 Holder Concentration (toggleable)
+        if (settings?.enableHolderAnalysis && report.topHolders?.length > 1) {
+            const maxTop5 = settings.maxTop5HolderPct || 50;
+            const top5 = report.topHolders.slice(0, 5);
+            const top5Pct = top5.reduce((sum, h) => sum + (h.percent || 0), 0);
+            if (top5Pct > maxTop5) {
+                return reject(
+                    `Top 5 holders own ${top5Pct.toFixed(1)}% (max ${maxTop5}%)`,
+                    top5.map(h => `${h.address.slice(0, 6)}... owns ${h.percent.toFixed(1)}%`)
+                );
+            }
+        }
+
+        // Check 6: RugCheck Score Threshold (toggleable)
+        if (settings?.enableScoring) {
+            const minScore = settings.minSafetyScore || 0.3;
+            if (score < minScore) {
+                return reject(
+                    `RugCheck safety score too low: ${score.toFixed(2)} (min ${minScore})`,
+                    report.risks?.map(r => `${r.level}: ${r.name}`) || []
+                );
+            }
+        }
+
+        // ── PASS: All checks passed ──
         const lpReason = isSafeCurve && !hasLockedLP ? 'Curve/Meteora Locked' : 'Locked';
         SocketManager.emitLog(
-            `[SAFETY] ✅ ${tag}... Safety PASS (Bundle: ${bundlePct.toFixed(1)}%, LP: ${lpReason})`,
+            `[SAFETY] ✅ ${tag}... Safety PASS (Bundle: ${bundlePct.toFixed(1)}%, LP: ${lpReason}, Auth: ${mintAuthStatus}/${freezeAuthStatus}, Score: ${score.toFixed(2)})`,
             "success"
         );
 
@@ -166,7 +199,7 @@ export class SafetyService {
             score,
             lpLockedPct: bundlePct,
             risks: [],
-            checks: { mintAuthority: "unknown", freezeAuthority: "unknown", liquidityLocked: "locked" }
+            checks: { mintAuthority: mintAuthStatus, freezeAuthority: freezeAuthStatus, liquidityLocked: "locked" }
         };
     }
 

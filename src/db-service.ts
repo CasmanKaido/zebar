@@ -127,6 +127,17 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN enableStopLoss INTEGER NOT NULL DEFAULT 1");
             console.log("[DB] Migrated: Added enableStopLoss column to global_settings table.");
         } catch (e) { }
+
+        // Advanced Safety migrations
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableAuthorityCheck INTEGER NOT NULL DEFAULT 1");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableHolderAnalysis INTEGER NOT NULL DEFAULT 1");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableScoring INTEGER NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN maxTop5HolderPct REAL NOT NULL DEFAULT 50");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN minSafetyScore REAL NOT NULL DEFAULT 0.3");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN minTokenScore REAL NOT NULL DEFAULT 60");
+            console.log("[DB] Migrated: Added advanced safety columns to global_settings table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -302,7 +313,13 @@ export class DatabaseService {
             enableInvestment: !!row.enableInvestment,
             enableSimulation: !!row.enableSimulation,
             enableStopLoss: !!row.enableStopLoss,
-            minDevTxCount: row.minDevTxCount
+            minDevTxCount: row.minDevTxCount,
+            enableAuthorityCheck: row.enableAuthorityCheck !== undefined ? !!row.enableAuthorityCheck : true,
+            enableHolderAnalysis: row.enableHolderAnalysis !== undefined ? !!row.enableHolderAnalysis : true,
+            enableScoring: row.enableScoring !== undefined ? !!row.enableScoring : false,
+            maxTop5HolderPct: row.maxTop5HolderPct ?? 50,
+            minSafetyScore: row.minSafetyScore ?? 0.3,
+            minTokenScore: row.minTokenScore ?? 60
         };
     }
 
@@ -333,7 +350,13 @@ export class DatabaseService {
                 enableInvestment = @enableInvestment,
                 enableSimulation = @enableSimulation,
                 enableStopLoss = @enableStopLoss,
-                minDevTxCount = @minDevTxCount
+                minDevTxCount = @minDevTxCount,
+                enableAuthorityCheck = @enableAuthorityCheck,
+                enableHolderAnalysis = @enableHolderAnalysis,
+                enableScoring = @enableScoring,
+                maxTop5HolderPct = @maxTop5HolderPct,
+                minSafetyScore = @minSafetyScore,
+                minTokenScore = @minTokenScore
             WHERE id = 1
         `);
 
@@ -362,7 +385,13 @@ export class DatabaseService {
             enableInvestment: settings.enableInvestment ? 1 : 0,
             enableSimulation: settings.enableSimulation ? 1 : 0,
             enableStopLoss: settings.enableStopLoss ? 1 : 0,
-            minDevTxCount: settings.minDevTxCount
+            minDevTxCount: settings.minDevTxCount,
+            enableAuthorityCheck: settings.enableAuthorityCheck ? 1 : 0,
+            enableHolderAnalysis: settings.enableHolderAnalysis ? 1 : 0,
+            enableScoring: settings.enableScoring ? 1 : 0,
+            maxTop5HolderPct: settings.maxTop5HolderPct,
+            minSafetyScore: settings.minSafetyScore,
+            minTokenScore: settings.minTokenScore
         });
     }
 

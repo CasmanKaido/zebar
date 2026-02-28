@@ -49,6 +49,13 @@ export interface BotSettings {
     enableInvestment: boolean;
     enableSimulation: boolean;
     minDevTxCount: number;
+    // Advanced Safety
+    enableAuthorityCheck: boolean;    // Reject tokens with mint/freeze authority enabled
+    enableHolderAnalysis: boolean;    // Check top 5 holder concentration
+    enableScoring: boolean;           // Token confidence scoring system
+    maxTop5HolderPct: number;         // Max combined % for top 5 holders
+    minSafetyScore: number;           // Min RugCheck score 0-1 to pass
+    minTokenScore: number;            // Min confidence score 0-100 to buy
 }
 
 export interface TradeHistory {

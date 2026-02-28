@@ -61,7 +61,13 @@ export class BotManager {
         enableBundle: true,
         enableInvestment: true,
         enableSimulation: false,
-        minDevTxCount: 50
+        minDevTxCount: 50,
+        enableAuthorityCheck: true,
+        enableHolderAnalysis: true,
+        enableScoring: false,
+        maxTop5HolderPct: 50,
+        minSafetyScore: 0.3,
+        minTokenScore: 60
     };
 
     constructor() {
@@ -663,11 +669,26 @@ export class BotManager {
             SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
             // 1. Safety Check (Now very fast since pairAddress is pre-resolved)
-            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress);
+            const safety = await OnChainSafetyChecker.checkToken(connection, mintAddress, result.pairAddress, this.settings);
             if (!safety.safe) {
                 SocketManager.emitLog(`[SAFETY] ❌ ${result.symbol}: ${safety.reason}`, "error");
                 this.rejectedTokens.set(mintAddress, { reason: safety.reason, expiry: Date.now() + 30 * 60 * 1000 });
                 return;
+            }
+
+            // 1b. Token Scoring (if enabled)
+            if (this.settings.enableScoring) {
+                const { score, breakdown } = this.scoreToken(safety, {
+                    liquidity: result.liquidity,
+                    pairCreatedAt: result.pairCreatedAt,
+                    volume5m: (result as any).volume5m,
+                    volume1h: (result as any).volume1h,
+                });
+                SocketManager.emitLog(`[SCORE] ${result.symbol}: ${score}/100 [${breakdown.join(', ')}]`, score >= this.settings.minTokenScore ? "info" : "warning");
+                if (score < this.settings.minTokenScore) {
+                    this.rejectedTokens.set(mintAddress, { reason: `Low confidence score: ${score}/100 (min: ${this.settings.minTokenScore})`, expiry: Date.now() + 5 * 60 * 1000 });
+                    return;
+                }
             }
 
             // 2. Pool Check (Avoid duplicate pools)
@@ -1319,6 +1340,77 @@ export class BotManager {
             SocketManager.emitLog(`[MONITOR] Immediate sweep triggered for new pool.`, "info");
             this._runMonitor();
         }
+    }
+
+    /**
+     * Token confidence scoring — rates a token 0-100 based on multiple safety signals.
+     * Only runs when enableScoring is on. Returns score + breakdown.
+     */
+    private scoreToken(
+        safetyResult: { score?: number; checks: { mintAuthority: string; freezeAuthority: string; liquidityLocked: string } },
+        scanResult: { liquidity: number; pairCreatedAt?: number; volume5m?: number; volume1h?: number },
+    ): { score: number; breakdown: string[] } {
+        let score = 0;
+        const breakdown: string[] = [];
+
+        // 1. RugCheck score (0-15 pts) — higher is safer
+        const rugScore = safetyResult.score ?? 0;
+        const rugPts = Math.min(15, Math.round(rugScore * 15));
+        score += rugPts;
+        breakdown.push(`RugCheck: ${rugPts}/15`);
+
+        // 2. LP lock verified (0 or 15 pts)
+        const lpPts = safetyResult.checks.liquidityLocked === "locked" ? 15 : 0;
+        score += lpPts;
+        breakdown.push(`LP Lock: ${lpPts}/15`);
+
+        // 3. Authority checks (0-10 pts)
+        let authPts = 0;
+        if (safetyResult.checks.mintAuthority === "disabled") authPts += 5;
+        if (safetyResult.checks.freezeAuthority === "disabled") authPts += 5;
+        score += authPts;
+        breakdown.push(`Authority: ${authPts}/10`);
+
+        // 4. Liquidity depth (0-15 pts) — more liquidity = safer
+        const liq = scanResult.liquidity || 0;
+        let liqPts = 0;
+        if (liq >= 100000) liqPts = 15;
+        else if (liq >= 50000) liqPts = 12;
+        else if (liq >= 20000) liqPts = 9;
+        else if (liq >= 10000) liqPts = 6;
+        else if (liq >= 5000) liqPts = 3;
+        score += liqPts;
+        breakdown.push(`Liquidity: ${liqPts}/15`);
+
+        // 5. Volume authenticity (0-10 pts) — healthy 5m/1h ratio suggests organic trading
+        const v5m = (scanResult as any).volume5m || 0;
+        const v1h = (scanResult as any).volume1h || 0;
+        let volPts = 0;
+        if (v1h > 0 && v5m > 0) {
+            const ratio = v5m / v1h;
+            // A healthy ratio is 0.05-0.3 (5m is a fraction of 1h)
+            // Ratios near 1.0 or > 1 suggest wash trading (all volume in last 5 min)
+            if (ratio >= 0.03 && ratio <= 0.4) volPts = 10;
+            else if (ratio > 0.4 && ratio <= 0.7) volPts = 6;
+            else volPts = 2; // Suspicious ratio
+        }
+        score += volPts;
+        breakdown.push(`Volume Auth: ${volPts}/10`);
+
+        // 6. Token age (0-10 pts) — very new tokens are riskier
+        const agePts = (() => {
+            if (!scanResult.pairCreatedAt) return 5; // Unknown age — neutral
+            const ageMin = (Date.now() - scanResult.pairCreatedAt) / 60000;
+            if (ageMin >= 60) return 10;    // > 1hr old, survived
+            if (ageMin >= 30) return 8;
+            if (ageMin >= 10) return 6;
+            if (ageMin >= 5) return 4;
+            return 2;                        // < 5min old, very risky
+        })();
+        score += agePts;
+        breakdown.push(`Age: ${agePts}/10`);
+
+        return { score, breakdown };
     }
 
     async withdrawLiquidity(poolId: string, percent: number = 80, source: string = "MANUAL") {

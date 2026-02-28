@@ -346,6 +346,12 @@ function App() {
     const [enableInvestment, setEnableInvestment] = useState(true);
     const [enableSimulation, setEnableSimulation] = useState(false);
     const [minDevTxCount, setMinDevTxCount] = useState(50);
+    const [enableAuthorityCheck, setEnableAuthorityCheck] = useState(true);
+    const [enableHolderAnalysis, setEnableHolderAnalysis] = useState(true);
+    const [enableScoring, setEnableScoring] = useState(false);
+    const [maxTop5HolderPct, setMaxTop5HolderPct] = useState(50);
+    const [minSafetyScore, setMinSafetyScore] = useState(0.3);
+    const [minTokenScore, setMinTokenScore] = useState(60);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -515,6 +521,12 @@ function App() {
                     if (s.enableInvestment !== undefined) setEnableInvestment(s.enableInvestment);
                     if (s.enableSimulation !== undefined) setEnableSimulation(s.enableSimulation);
                     if (s.minDevTxCount !== undefined) setMinDevTxCount(s.minDevTxCount);
+                    if (s.enableAuthorityCheck !== undefined) setEnableAuthorityCheck(s.enableAuthorityCheck);
+                    if (s.enableHolderAnalysis !== undefined) setEnableHolderAnalysis(s.enableHolderAnalysis);
+                    if (s.enableScoring !== undefined) setEnableScoring(s.enableScoring);
+                    if (s.maxTop5HolderPct !== undefined) setMaxTop5HolderPct(s.maxTop5HolderPct);
+                    if (s.minSafetyScore !== undefined) setMinSafetyScore(s.minSafetyScore);
+                    if (s.minTokenScore !== undefined) setMinTokenScore(s.minTokenScore);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -559,7 +571,13 @@ function App() {
                     enableBundle,
                     enableInvestment,
                     enableSimulation,
-                    minDevTxCount
+                    minDevTxCount,
+                    enableAuthorityCheck,
+                    enableHolderAnalysis,
+                    enableScoring,
+                    maxTop5HolderPct,
+                    minSafetyScore,
+                    minTokenScore
                 })
             });
 
@@ -609,7 +627,13 @@ function App() {
                     enableBundle,
                     enableInvestment,
                     enableSimulation,
-                    minDevTxCount
+                    minDevTxCount,
+                    enableAuthorityCheck,
+                    enableHolderAnalysis,
+                    enableScoring,
+                    maxTop5HolderPct,
+                    minSafetyScore,
+                    minTokenScore
                 })
             });
 
@@ -1135,6 +1159,23 @@ function App() {
                                             <Toggle label="Live Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} />
                                             <Toggle label="Market Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} />
                                             <Toggle label="Sell-Ability Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} />
+                                        </div>
+                                        <div className="h-px bg-white/5 my-2"></div>
+                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
+                                            <Toggle label="Authority Check" enabled={enableAuthorityCheck} onChange={setEnableAuthorityCheck} disabled={running} />
+                                            <Toggle label="Holder Distribution" enabled={enableHolderAnalysis} onChange={setEnableHolderAnalysis} disabled={running} />
+                                            {enableHolderAnalysis && (
+                                                <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    <SettingInput label="Max Top 5 Holders (%)" value={maxTop5HolderPct} onChange={setMaxTop5HolderPct} disabled={running} unit="%" subtext="Rejects if top 5 wallets own more" />
+                                                </div>
+                                            )}
+                                            <Toggle label="Token Scoring" enabled={enableScoring} onChange={setEnableScoring} disabled={running} />
+                                            {enableScoring && (
+                                                <div className="pt-2 space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    <SettingInput label="Min Safety Score" value={minSafetyScore} onChange={setMinSafetyScore} disabled={running} subtext="RugCheck score 0-1 threshold" />
+                                                    <SettingInput label="Min Token Score" value={minTokenScore} onChange={setMinTokenScore} disabled={running} subtext="Confidence score 0-100 to buy" />
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
