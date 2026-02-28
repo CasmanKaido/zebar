@@ -872,7 +872,10 @@ function App() {
                                         </div>
                                         <div>
                                             <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">SOL Balance</p>
-                                            <p className="text-lg font-black font-mono">{portfolio.sol.toFixed(3)}</p>
+                                            <p className="text-lg font-black font-mono leading-none">{portfolio.sol.toFixed(3)}</p>
+                                            {solPrice && (
+                                                <p className="text-[10px] font-medium text-muted-foreground/60 mt-0.5">≈ ${(portfolio.sol * solPrice).toFixed(2)}</p>
+                                            )}
                                         </div>
                                     </div>
                                     <button onClick={refreshBalance} className="text-muted-foreground hover:text-primary transition-colors">
@@ -885,7 +888,10 @@ function App() {
                                     </div>
                                     <div>
                                         <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{selectedBaseToken} Portfolio</p>
-                                        <p className="text-lg font-black font-mono">{(portfolio.baseTokens[selectedBaseToken] || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</p>
+                                        <p className="text-lg font-black font-mono leading-none">{(portfolio.baseTokens[selectedBaseToken] || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</p>
+                                        {baseTokenPrices[selectedBaseToken] && (
+                                            <p className="text-[10px] font-medium text-muted-foreground/60 mt-0.5">≈ ${((portfolio.baseTokens[selectedBaseToken] || 0) * baseTokenPrices[selectedBaseToken]).toFixed(2)}</p>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="glass-card p-4 flex items-center justify-between">
