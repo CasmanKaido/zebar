@@ -825,8 +825,15 @@ function App() {
             <header className="sticky top-0 z-50 bg-black/80 backdrop-blur-xl border-b border-white/5 py-4">
                 <div className="max-w-[1440px] mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-4 w-full sm:w-auto">
-                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 flex items-center justify-center text-primary shadow-[0_0_20px_rgba(205,255,0,0.1)] shrink-0">
-                            <Activity size={28} />
+                        <div className="w-12 h-12 flex items-center justify-center bg-primary/20 rounded-2xl border border-white/10 overflow-hidden shadow-[0_0_20px_rgba(196,240,0,0.15)] relative group shrink-0">
+                            <img
+                                src="/logo.png"
+                                alt="Logo"
+                                className="w-full h-full object-cover transform transition-transform duration-500 group-hover:scale-110 opacity-90"
+                                onError={(e) => {
+                                    (e.target as HTMLImageElement).src = 'https://ui-avatars.com/api/?name=BOT&background=c4f000&color=000';
+                                }}
+                            />
                         </div>
                         <div>
                             <h1 className="text-lg font-black tracking-widest text-white leading-none">ZEBAR <span className="text-primary italic">LPPP</span></h1>
