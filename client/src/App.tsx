@@ -96,17 +96,18 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
                     value={displayValue}
                     onChange={(e) => {
                         const val = e.target.value;
-                        // Allow only numbers and decimals
-                        if (val === "" || /^[0-9]*\.?[0-9]*$/.test(val)) {
+                        // Allow only numbers, decimals and optional leading dash
+                        if (val === "" || /^-?[0-9]*\.?[0-9]*$/.test(val)) {
                             setDisplayValue(val);
-                            if (val !== "" && val !== ".") {
+                            // Avoid NaNs for partial inputs like "-" or "."
+                            if (val !== "" && val !== "." && val !== "-") {
                                 onChange(Number(val));
                             }
                         }
                     }}
                     onBlur={() => {
-                        // Reset to 0 if empty on blur
-                        if (displayValue === "" || displayValue === ".") {
+                        // Reset if empty or partial on blur
+                        if (displayValue === "" || displayValue === "." || displayValue === "-") {
                             setDisplayValue("0");
                             onChange(0);
                         }
