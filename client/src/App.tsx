@@ -1169,6 +1169,14 @@ function App() {
                                             <SettingInput label="5m Vol Max ($)" value={maxVolume5m} onChange={setMaxVolume5m} disabled={running} prefix="$" />
                                         </div>
                                         <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="1h Vol Min ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
+                                            <SettingInput label="1h Vol Max ($)" value={maxVolume} onChange={setMaxVolume} disabled={running} prefix="$" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="24h Vol Min ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
+                                            <SettingInput label="24h Vol Max ($)" value={maxVolume24h} onChange={setMaxVolume24h} disabled={running} prefix="$" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
                                             <SettingInput label="Liquidity Min ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
                                             <SettingInput label="Liquidity Max ($)" value={maxLiquidity} onChange={setMaxLiquidity} disabled={running} prefix="$" />
                                         </div>
