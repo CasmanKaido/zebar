@@ -1134,6 +1134,27 @@ function App() {
                                             <SettingInput label="Slippage" value={slippage} onChange={setSlippage} disabled={running} unit="%" />
                                             <SettingInput label="Max Pools" value={maxPools} onChange={setMaxPools} disabled={running} unit="LMT" />
                                         </div>
+
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Meteora Fee Tier</label>
+                                                <button onClick={() => showModal({ title: 'Meteora Fee Tier', message: 'The trading fee charged on every swap in your Meteora liquidity pool. Higher fees earn more per trade but may reduce trading volume. Lower fees attract more traders but earn less per swap.\n\nCommon tiers:\n- 0.15% (15 bps): High volume, low fee\n- 0.20% (20 bps): Default balanced tier\n- 0.50% (50 bps): Medium fee\n- 1.00% (100 bps): Higher fee\n- 2.00% (200 bps): Maximum fee, best for volatile/low-cap tokens', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more">
+                                                    <Info size={12} />
+                                                </button>
+                                            </div>
+                                            <select
+                                                value={meteoraFeeBps}
+                                                onChange={(e) => setMeteoraFeeBps(Number(e.target.value))}
+                                                className="bg-zinc-900 text-primary font-bold border border-primary/20 rounded px-2 py-1 text-[10px] outline-none"
+                                                disabled={running}
+                                            >
+                                                <option value={15}>0.15%</option>
+                                                <option value={20}>0.20%</option>
+                                                <option value={50}>0.50%</option>
+                                                <option value={100}>1.00%</option>
+                                                <option value={200}>2.00%</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
 
