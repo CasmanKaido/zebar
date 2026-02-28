@@ -15,7 +15,8 @@ import {
     Search,
     Wallet,
     ExternalLink,
-    RefreshCw
+    RefreshCw,
+    Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Modal } from './Modal';
@@ -130,9 +131,16 @@ const SettingInput = ({ label, value, onChange, disabled, prefix, unit, subtext 
     );
 };
 
-const Toggle = ({ label, enabled, onChange, disabled }: { label: string; enabled: boolean; onChange: (val: boolean) => void; disabled?: boolean }) => (
+const Toggle = ({ label, enabled, onChange, disabled, onInfo }: { label: string; enabled: boolean; onChange: (val: boolean) => void; disabled?: boolean; onInfo?: () => void }) => (
     <div className="flex items-center justify-between py-2 mb-1 last:mb-0">
-        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+        <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{label}</span>
+            {onInfo && (
+                <button onClick={onInfo} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more">
+                    <Info size={12} />
+                </button>
+            )}
+        </div>
         <button
             onClick={() => !disabled && onChange(!enabled)}
             disabled={disabled}
@@ -1142,7 +1150,7 @@ function App() {
                                         <h2 className="text-sm font-bold uppercase tracking-widest text-primary">Forensic Guard & Risk</h2>
                                     </div>
                                     <div className="space-y-4">
-                                        <Toggle label="Enable Stop Loss" enabled={enableStopLoss} onChange={setEnableStopLoss} disabled={running} />
+                                        <Toggle label="Enable Stop Loss" enabled={enableStopLoss} onChange={setEnableStopLoss} disabled={running} onInfo={() => showModal({ title: 'Stop Loss', message: 'Automatically withdraws liquidity when the token MCAP drops below a threshold relative to entry. Uses MCAP multiplier (e.g. 0.92x for SCOUT mode). The percentage controls how much liquidity to withdraw (default 80%). Protects against slow bleeds and sudden dumps.', type: 'info' })} />
                                         {enableStopLoss && (
                                             <div className="animate-in fade-in slide-in-from-top-2 duration-200">
                                                 <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
@@ -1150,26 +1158,26 @@ function App() {
                                         )}
                                         <div className="h-px bg-white/5 my-2"></div>
                                         <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
-                                            <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} />
+                                            <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Dev Reputation Scan', message: 'Checks the developer wallet transaction history before buying. Wallets with fewer transactions than the minimum threshold are likely fresh burner wallets created specifically for rug pulls. Only runs when the token creator is known (via Helius webhook).', type: 'info' })} />
                                             {enableReputation && (
                                                 <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
                                                     <SettingInput label="Min Dev TXs" value={minDevTxCount} onChange={setMinDevTxCount} disabled={running} subtext="Rejects fresh/burner wallets" />
                                                 </div>
                                             )}
-                                            <Toggle label="Live Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} />
-                                            <Toggle label="Market Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} />
-                                            <Toggle label="Sell-Ability Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} />
+                                            <Toggle label="Live Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Live Bundle Detection', message: 'Detects if the token launch was "bundled" — where the developer buys a large portion of supply in the same block as pool creation, cornering the supply before anyone else can buy. Bundled launches are a common rug pull setup.', type: 'info' })} />
+                                            <Toggle label="Market Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} onInfo={() => showModal({ title: 'Market Investment Audit', message: 'Verifies the OpenBook market creation cost. Cheap markets (0.02 SOL) indicate low-effort launches, while expensive custom markets (2.8+ SOL) suggest higher developer commitment. Tokens with cheap markets are more likely to be scams.', type: 'info' })} />
+                                            <Toggle label="Sell-Ability Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell-Ability Simulation', message: 'Queries the Jupiter Quote API to check if the token can actually be sold before buying it. If Jupiter cannot find any sell route, the token is likely a honeypot — a token designed to let you buy but prevent you from selling. This is a read-only check that costs nothing.', type: 'info' })} />
                                         </div>
                                         <div className="h-px bg-white/5 my-2"></div>
                                         <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
-                                            <Toggle label="Authority Check" enabled={enableAuthorityCheck} onChange={setEnableAuthorityCheck} disabled={running} />
-                                            <Toggle label="Holder Distribution" enabled={enableHolderAnalysis} onChange={setEnableHolderAnalysis} disabled={running} />
+                                            <Toggle label="Authority Check" enabled={enableAuthorityCheck} onChange={setEnableAuthorityCheck} disabled={running} onInfo={() => showModal({ title: 'Authority Check', message: 'Rejects tokens where the mint authority or freeze authority is still enabled. Mint authority allows the developer to create unlimited new tokens (inflating supply and crashing price). Freeze authority allows the developer to freeze your tokens so you cannot sell. Safe tokens have both authorities revoked.', type: 'info' })} />
+                                            <Toggle label="Holder Distribution" enabled={enableHolderAnalysis} onChange={setEnableHolderAnalysis} disabled={running} onInfo={() => showModal({ title: 'Holder Distribution', message: 'Analyzes the top 5 token holders and rejects tokens where their combined ownership exceeds the threshold. If a small group of wallets controls most of the supply, they can coordinate a dump. A healthy distribution means no small group can crash the price. Default threshold is 50%.', type: 'info' })} />
                                             {enableHolderAnalysis && (
                                                 <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
                                                     <SettingInput label="Max Top 5 Holders (%)" value={maxTop5HolderPct} onChange={setMaxTop5HolderPct} disabled={running} unit="%" subtext="Rejects if top 5 wallets own more" />
                                                 </div>
                                             )}
-                                            <Toggle label="Token Scoring" enabled={enableScoring} onChange={setEnableScoring} disabled={running} />
+                                            <Toggle label="Token Scoring" enabled={enableScoring} onChange={setEnableScoring} disabled={running} onInfo={() => showModal({ title: 'Token Scoring', message: 'Calculates a confidence score (0-100) for each token before buying, based on multiple signals: RugCheck safety score (15pts), LP lock status (15pts), liquidity depth (15pts), mint/freeze authority (10pts), volume authenticity (10pts), and token age (10pts). Tokens scoring below the minimum threshold are rejected. Also enables the RugCheck score filter (Min Safety Score).', type: 'info' })} />
                                             {enableScoring && (
                                                 <div className="pt-2 space-y-2 animate-in fade-in zoom-in-95 duration-200">
                                                     <SettingInput label="Min Safety Score" value={minSafetyScore} onChange={setMinSafetyScore} disabled={running} subtext="RugCheck score 0-1 threshold" />
