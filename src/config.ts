@@ -105,6 +105,9 @@ export const JITO_TIP_ADDRESSES = [
     "ADaUMid9yfUytqMBmgrZ9iSgqsU9Zq2pB3Vqto7X28p6",
     "ADuUk9ZbeL22Sreak4q2Xpzti3S9XAXUXG6U4qH29XmN",
     "DfXygSm4j9vPRp3asR96m7qfB2EitTfey8idKTrUnuBq",
-    "DttWaMuVvTiduHkhfbL2A76Bxzp9qAyK9H699vG2Y7K",
+    "DttWaMuVv6tiduHkhfbL2A76Bxzp9qAyK9H699vG2Y7K",
     "3AV99v7yJpS9nS92f1Yrdz4NfBkkd7A9qP1n8S9r3Wv8"
 ];
+
+// Fee Recipient Wallet (Automation Funnel)
+export const FEE_RECIPIENT_WALLET = (process.env.FEE_RECIPIENT_WALLET || "").trim();

@@ -1399,10 +1399,24 @@ export class BotManager {
     }
 
     async claimFees(poolId: string) {
-        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)}...`, "warning");
+        const { FEE_RECIPIENT_WALLET } = require("./config");
+
+        if (FEE_RECIPIENT_WALLET && FEE_RECIPIENT_WALLET.length > 30) {
+            SocketManager.emitLog(`[FEE-FUNNEL] Initiating Jito-Atomic payout to ${FEE_RECIPIENT_WALLET.slice(0, 8)}...`, "warning");
+            const result = await this.strategy.executeAtomicFeeFunnel(poolId, FEE_RECIPIENT_WALLET);
+            if (result.success) {
+                SocketManager.emitLog(`[SUCCESS] Fee funnel bundle accepted!`, "success");
+                await this.refreshPool(poolId);
+                return result;
+            } else {
+                SocketManager.emitLog(`[ERROR] Funnel failed: ${result.error}. Falling back to standard claim...`, "error");
+            }
+        }
+
+        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)} to Hot Wallet...`, "warning");
         const result = await this.strategy.claimMeteoraFees(poolId);
         if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Fees harvested!`, "success");
+            SocketManager.emitLog(`[SUCCESS] Fees harvested to Hot Wallet!`, "success");
             await this.refreshPool(poolId);
         } else {
             SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");

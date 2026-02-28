@@ -1316,7 +1316,7 @@ export class StrategyManager {
      * Calculates the total value of a Meteora position in SOL (Net Position Value).
      * SUM(TokenValueInSOL + SolValue + FeesInSol)
      */
-    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesSol: number; feesToken: number; spotPrice: number; userBaseInLp: number; userTokenInLp: number; userTokenRaw: bigint; success: boolean }> {
+    async getPositionValue(poolAddress: string, tokenMint: string, positionId?: string, connectionOverride?: Connection): Promise<{ totalSol: number; feesSol: number; feesToken: number; feesSolRaw: bigint; feesTokenRaw: bigint; mint: string; spotPrice: number; userBaseInLp: number; userTokenInLp: number; userTokenRaw: bigint; success: boolean }> {
         try {
             const conn = connectionOverride || this.connection;
             const { CpAmm, deriveTokenVaultAddress } = require("@meteora-ag/cp-amm-sdk");
@@ -1605,6 +1605,9 @@ export class StrategyManager {
                 totalSol,
                 feesSol: feesBase,
                 feesToken: feesToken,
+                feesSolRaw: baseIsA ? BigInt(pos.positionState.feeAPending.toString()) : BigInt(pos.positionState.feeBPending.toString()),
+                feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending.toString()) : BigInt(pos.positionState.feeAPending.toString()),
+                mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
                 spotPrice,
                 userBaseInLp: netBaseInLp,   // Now strictly Principal
                 userTokenInLp: netTokenInLp, // Now strictly Principal
@@ -1613,7 +1616,7 @@ export class StrategyManager {
             };
         } catch (error) {
             console.error(`[STRATEGY] getPositionValue Failed:`, error);
-            return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
+            return { totalSol: 0, feesSol: 0, feesToken: 0, feesSolRaw: 0n, feesTokenRaw: 0n, mint: "", spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
         }
     }
 
@@ -1709,11 +1712,16 @@ export class StrategyManager {
     /**
      * Claims accumulated fees from a Meteora position.
      */
-    async claimMeteoraFees(poolAddress: string): Promise<{ success: boolean; txSig?: string; error?: string }> {
+    /**
+     * Claims accumulated fees from a Meteora position.
+     * @param poolAddress The pool address.
+     * @param bundleMode If true, returns the transaction instead of sending it.
+     */
+    async claimMeteoraFees(poolAddress: string, bundleMode: boolean = false): Promise<{ success: boolean; txSig?: string; transaction?: Transaction; error?: string }> {
         const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const { PublicKey, sendAndConfirmTransaction } = require("@solana/web3.js");
 
-        console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}`);
+        console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}${bundleMode ? " (BUNDLE MODE)" : ""}`);
         try {
             const cpAmm = new CpAmm(this.connection);
             const poolPubkey = new PublicKey(poolAddress);
@@ -1746,6 +1754,10 @@ export class StrategyManager {
                 tokenBProgram: getTokenProgram(poolState.tokenBFlag)
             });
 
+            if (bundleMode) {
+                return { success: true, transaction: tx };
+            }
+
             const priorityFee = await this.getPriorityFee();
             tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
@@ -1758,6 +1770,73 @@ export class StrategyManager {
 
         } catch (error: any) {
             console.error(`[METEORA] Claim Fees Error:`, error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Executes an Atomic Fee Funnel by bundling [Claim] + [Swap] + [Transfer] into a single Jito Bundle.
+     */
+    async executeAtomicFeeFunnel(poolAddress: string, recipient: string): Promise<{ success: boolean; bundleId?: string; signatures?: string[]; error?: string }> {
+        console.log(`[FEE-FUNNEL] Initiating atomic harvest for ${poolAddress.slice(0, 8)}...`);
+        try {
+            const recipientPubkey = new PublicKey(recipient);
+
+            // 1. Prepare Claim Transaction
+            const claimRes = await this.claimMeteoraFees(poolAddress, true);
+            if (!claimRes.success || !claimRes.transaction) {
+                return { success: false, error: `Claim prep failed: ${claimRes.error}` };
+            }
+
+            // 2. Estimate fees to determine swap/transfer amounts
+            const posValue = await this.getPositionValue(poolAddress, "", undefined);
+            if (!posValue.success) {
+                return { success: false, error: "Could not fetch position value for bundling." };
+            }
+
+            const allTxs: (Transaction | VersionedTransaction)[] = [claimRes.transaction];
+
+            // 3. Prepare Swap (if Token fees > 0)
+            if (posValue.feesTokenRaw > 0n) {
+                const swapRes = await this.sellToken(new PublicKey(posValue.mint), posValue.feesTokenRaw, 10, true);
+                if (swapRes.success && swapRes.transaction) {
+                    allTxs.push(swapRes.transaction);
+                }
+            }
+
+            // 4. Calculate total SOL to transfer
+            // Total Harvested = feesSolRaw + (Estimated Swap Output)
+            // We use the raw values for better precision in the transfer
+            const estimatedSwapSolRaw = BigInt(Math.floor(posValue.feesToken * (1 / posValue.spotPrice) * LAMPORTS_PER_SOL));
+            const totalSolToDistributeRaw = posValue.feesSolRaw + estimatedSwapSolRaw;
+
+            // We subtract a buffer for tips and gas (0.005 SOL is safe)
+            const BUFFER_LAMPORTS = BigInt(Math.floor(0.005 * LAMPORTS_PER_SOL));
+            const transferAmountLamports = totalSolToDistributeRaw > BUFFER_LAMPORTS ? totalSolToDistributeRaw - BUFFER_LAMPORTS : 0n;
+
+            if (transferAmountLamports > BigInt(Math.floor(0.001 * LAMPORTS_PER_SOL))) {
+                const transferTx = new Transaction().add(
+                    SystemProgram.transfer({
+                        fromPubkey: this.wallet.publicKey,
+                        toPubkey: recipientPubkey,
+                        lamports: transferAmountLamports
+                    })
+                );
+                allTxs.push(transferTx);
+            }
+
+            // 5. Send Bundle
+            const bundleRes = await this.sendJitoBundle(allTxs);
+            if (bundleRes.success) {
+                const solValue = Number(transferAmountLamports) / Number(LAMPORTS_PER_SOL);
+                SocketManager.emitLog(`[FEE-FUNNEL] Bundle accepted. Payout: ~${solValue.toFixed(4)} SOL`, "success");
+                return bundleRes;
+            } else {
+                return { success: false, error: bundleRes.error };
+            }
+
+        } catch (error: any) {
+            console.error(`[FEE-FUNNEL] Execution Failed:`, error.message);
             return { success: false, error: error.message };
         }
     }
