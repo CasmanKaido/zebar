@@ -55,6 +55,7 @@ export class BotManager {
         maxAgeMinutes: 0,
         baseToken: "LPPP",
         stopLossPct: -2,
+        enableStopLoss: true,
         enableReputation: true,
         enableBundle: true,
         enableInvestment: true,
@@ -1239,18 +1240,16 @@ export class BotManager {
                                 }
                             }
 
-                            // ── Stop Loss: Tight -2% SL for both modes ──
-                            // Both SCOUT and ANALYST: withdraw 80% at -2% MCAP drop
-                            // 1-minute cooldown: don't trigger SL in the exact launch minute due to violent volatility
+                            // ── Stop Loss: Dynamic threshold based on settings ──
                             const createdTs = pool.created ? new Date(pool.created).getTime() : 0;
                             const poolAgeMs = createdTs > 0 ? Date.now() - createdTs : Infinity;
                             const SL_COOLDOWN_MS = 60 * 1000;
-                            const slThreshold = 0.98;
+                            const slThreshold = 1 + (this.settings.stopLossPct / 100);
                             const slWithdrawPct = 100;
 
-                            if (mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
+                            if (this.settings.enableStopLoss && mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${slThreshold}x MCAP! Atomic exit via Jito...`, "error");
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${this.settings.stopLossPct}% threshold! Atomic exit via Jito...`, "error");
                                 const atomicResult = await this.strategy.executeAtomicStopLoss(pool.poolId, pool.mint, slWithdrawPct, pool.positionId);
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (atomicResult.success) {

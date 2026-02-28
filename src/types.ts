@@ -43,6 +43,7 @@ export interface BotSettings {
     baseToken: string;
     // Forensic Settings
     stopLossPct: number;
+    enableStopLoss: boolean;
     enableReputation: boolean;
     enableBundle: boolean;
     enableInvestment: boolean;

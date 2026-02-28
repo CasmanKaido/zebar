@@ -339,6 +339,7 @@ function App() {
 
     // Forensic & Risk Guard
     const [stopLossPct, setStopLossPct] = useState(-2);
+    const [enableStopLoss, setEnableStopLoss] = useState(true);
     const [enableReputation, setEnableReputation] = useState(true);
     const [enableBundle, setEnableBundle] = useState(true);
     const [enableInvestment, setEnableInvestment] = useState(true);
@@ -507,6 +508,7 @@ function App() {
 
                     // Forensic Settings
                     if (s.stopLossPct !== undefined) setStopLossPct(s.stopLossPct);
+                    if (s.enableStopLoss !== undefined) setEnableStopLoss(s.enableStopLoss);
                     if (s.enableReputation !== undefined) setEnableReputation(s.enableReputation);
                     if (s.enableBundle !== undefined) setEnableBundle(s.enableBundle);
                     if (s.enableInvestment !== undefined) setEnableInvestment(s.enableInvestment);
@@ -551,6 +553,7 @@ function App() {
                     maxAgeMinutes,
                     baseToken: selectedBaseToken,
                     stopLossPct,
+                    enableStopLoss,
                     enableReputation,
                     enableBundle,
                     enableInvestment,
@@ -600,6 +603,7 @@ function App() {
                     maxAgeMinutes,
                     baseToken: selectedBaseToken,
                     stopLossPct,
+                    enableStopLoss,
                     enableReputation,
                     enableBundle,
                     enableInvestment,
@@ -1113,7 +1117,12 @@ function App() {
                                         <h2 className="text-sm font-bold uppercase tracking-widest text-primary">Forensic Guard & Risk</h2>
                                     </div>
                                     <div className="space-y-4">
-                                        <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
+                                        <Toggle label="Enable Stop Loss" enabled={enableStopLoss} onChange={setEnableStopLoss} disabled={running} />
+                                        {enableStopLoss && (
+                                            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                                <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
+                                            </div>
+                                        )}
                                         <div className="h-px bg-white/5 my-2"></div>
                                         <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
                                             <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} />

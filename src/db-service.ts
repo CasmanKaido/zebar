@@ -86,6 +86,7 @@ export class DatabaseService {
                 enableBundle INTEGER NOT NULL DEFAULT 1,
                 enableInvestment INTEGER NOT NULL DEFAULT 1,
                 enableSimulation INTEGER NOT NULL DEFAULT 0,
+                enableStopLoss INTEGER NOT NULL DEFAULT 1,
                 minDevTxCount INTEGER NOT NULL DEFAULT 50
             );
 
@@ -120,6 +121,11 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE pools ADD COLUMN totalSupply REAL");
             this.db.exec("ALTER TABLE pools ADD COLUMN initialMcap REAL");
             console.log("[DB] Migrated: Added totalSupply and initialMcap columns to pools table.");
+        } catch (e) { }
+
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableStopLoss INTEGER NOT NULL DEFAULT 1");
+            console.log("[DB] Migrated: Added enableStopLoss column to global_settings table.");
         } catch (e) { }
     }
 
@@ -295,6 +301,7 @@ export class DatabaseService {
             enableBundle: !!row.enableBundle,
             enableInvestment: !!row.enableInvestment,
             enableSimulation: !!row.enableSimulation,
+            enableStopLoss: !!row.enableStopLoss,
             minDevTxCount: row.minDevTxCount
         };
     }
@@ -325,6 +332,7 @@ export class DatabaseService {
                 enableBundle = @enableBundle,
                 enableInvestment = @enableInvestment,
                 enableSimulation = @enableSimulation,
+                enableStopLoss = @enableStopLoss,
                 minDevTxCount = @minDevTxCount
             WHERE id = 1
         `);
@@ -353,6 +361,7 @@ export class DatabaseService {
             enableBundle: settings.enableBundle ? 1 : 0,
             enableInvestment: settings.enableInvestment ? 1 : 0,
             enableSimulation: settings.enableSimulation ? 1 : 0,
+            enableStopLoss: settings.enableStopLoss ? 1 : 0,
             minDevTxCount: settings.minDevTxCount
         });
     }
