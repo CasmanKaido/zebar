@@ -1431,7 +1431,7 @@ export class StrategyManager {
                 const userPositions = await cpAmm.getUserPositionByPool(poolPubkey, this.wallet.publicKey);
                 if (userPositions.length === 0) {
                     // console.warn(`[STRATEGY] No position found for pool ${poolPubkey.toBase58()}. Marking as fetch failure.`);
-                    return { totalSol: 0, feesSol: 0, feesToken: 0, spotPrice, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
+                    return { totalSol: 0, feesSol: 0, feesToken: 0, feesSolRaw: 0n, feesTokenRaw: 0n, mint: "", spotPrice, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
                 }
                 pos = userPositions[0];
             }
