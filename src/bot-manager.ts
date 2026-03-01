@@ -80,7 +80,8 @@ export class BotManager {
         prebondMaxMcap: 0,
         prebondMinHolders: 0,
         prebondMinOrganicScore: 0,
-        prebondMaxTopHolderPct: 0
+        prebondMaxTopHolderPct: 0,
+        prebondMaxAgeMinutes: 0
     };
 
     constructor() {
@@ -1997,7 +1998,8 @@ export class BotManager {
                                this.settings.prebondMaxMcap > 0 ||
                                this.settings.prebondMinHolders > 0 ||
                                this.settings.prebondMinOrganicScore > 0 ||
-                               this.settings.prebondMaxTopHolderPct > 0;
+                               this.settings.prebondMaxTopHolderPct > 0 ||
+                               this.settings.prebondMaxAgeMinutes > 0;
 
             if (hasFilters) {
                 const tokenData = await this.fetchJupiterTokenData(mint);
@@ -2026,6 +2028,16 @@ export class BotManager {
                     if (this.settings.prebondMaxTopHolderPct > 0 && topHolderPct > this.settings.prebondMaxTopHolderPct) {
                         SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: top holders ${topHolderPct.toFixed(1)}% > max ${this.settings.prebondMaxTopHolderPct}%`, "warning");
                         return false;
+                    }
+
+                    // Age filter: reject tokens older than maxAgeMinutes
+                    if (this.settings.prebondMaxAgeMinutes > 0 && tokenData.createdAt) {
+                        const createdMs = new Date(tokenData.createdAt).getTime();
+                        const ageMinutes = (Date.now() - createdMs) / 60000;
+                        if (ageMinutes > this.settings.prebondMaxAgeMinutes) {
+                            SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: age ${ageMinutes.toFixed(1)}m > max ${this.settings.prebondMaxAgeMinutes}m`, "warning");
+                            return false;
+                        }
                     }
 
                     SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} passed filters (MCap:$${mcap.toLocaleString()} Holders:${holders} Score:${organicScore})`, "info");

@@ -194,6 +194,12 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxTopHolderPct REAL NOT NULL DEFAULT 0");
             console.log("[DB] Migrated: Added prebond discovery filter columns to global_settings table.");
         } catch (e) { }
+
+        // Prebond age filter migration
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxAgeMinutes INTEGER NOT NULL DEFAULT 0");
+            console.log("[DB] Migrated: Added prebondMaxAgeMinutes column to global_settings table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -390,7 +396,8 @@ export class DatabaseService {
             prebondMaxMcap: row.prebondMaxMcap ?? 0,
             prebondMinHolders: row.prebondMinHolders ?? 0,
             prebondMinOrganicScore: row.prebondMinOrganicScore ?? 0,
-            prebondMaxTopHolderPct: row.prebondMaxTopHolderPct ?? 0
+            prebondMaxTopHolderPct: row.prebondMaxTopHolderPct ?? 0,
+            prebondMaxAgeMinutes: row.prebondMaxAgeMinutes ?? 0
         };
     }
 
@@ -440,7 +447,8 @@ export class DatabaseService {
                 prebondMaxMcap = @prebondMaxMcap,
                 prebondMinHolders = @prebondMinHolders,
                 prebondMinOrganicScore = @prebondMinOrganicScore,
-                prebondMaxTopHolderPct = @prebondMaxTopHolderPct
+                prebondMaxTopHolderPct = @prebondMaxTopHolderPct,
+                prebondMaxAgeMinutes = @prebondMaxAgeMinutes
             WHERE id = 1
         `);
 
@@ -488,7 +496,8 @@ export class DatabaseService {
             prebondMaxMcap: settings.prebondMaxMcap,
             prebondMinHolders: settings.prebondMinHolders,
             prebondMinOrganicScore: settings.prebondMinOrganicScore,
-            prebondMaxTopHolderPct: settings.prebondMaxTopHolderPct
+            prebondMaxTopHolderPct: settings.prebondMaxTopHolderPct,
+            prebondMaxAgeMinutes: settings.prebondMaxAgeMinutes
         });
     }
 

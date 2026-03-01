@@ -376,6 +376,7 @@ function App() {
     const [prebondMinHolders, setPrebondMinHolders] = useState(0);
     const [prebondMinOrganicScore, setPrebondMinOrganicScore] = useState(0);
     const [prebondMaxTopHolderPct, setPrebondMaxTopHolderPct] = useState(0);
+    const [prebondMaxAgeMinutes, setPrebondMaxAgeMinutes] = useState(0);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -566,6 +567,7 @@ function App() {
                     if (s.prebondMinHolders !== undefined) setPrebondMinHolders(s.prebondMinHolders);
                     if (s.prebondMinOrganicScore !== undefined) setPrebondMinOrganicScore(s.prebondMinOrganicScore);
                     if (s.prebondMaxTopHolderPct !== undefined) setPrebondMaxTopHolderPct(s.prebondMaxTopHolderPct);
+                    if (s.prebondMaxAgeMinutes !== undefined) setPrebondMaxAgeMinutes(s.prebondMaxAgeMinutes);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -619,7 +621,7 @@ function App() {
                     minTokenScore,
                     enablePrebond, prebondBuyAmount, prebondMaxHoldings,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
-                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes
                 })
             });
 
@@ -678,7 +680,7 @@ function App() {
                     minTokenScore,
                     enablePrebond, prebondBuyAmount, prebondMaxHoldings,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
-                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes
                 })
             });
 
@@ -1317,6 +1319,7 @@ function App() {
                                         <SettingInput label="Min Holders" value={prebondMinHolders} onChange={setPrebondMinHolders} disabled={running} subtext="0 = disabled" />
                                         <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
                                         <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
+                                        <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
                                     </div>
                                 </div>
                                 )}
