@@ -11,6 +11,10 @@ import { SocketManager } from "./socket";
 import { safeRpc } from "./rpc-utils";
 import { JupiterPriceService } from "./jupiter-price-service";
 
+// ── Mint Metadata Cache (decimals + programId never change on-chain) ──
+interface MintMeta { decimals: number; programId: PublicKey }
+const mintMetaCache = new Map<string, MintMeta>();
+
 export class StrategyManager {
     private connection: Connection;
     private wallet: Keypair;
@@ -18,6 +22,24 @@ export class StrategyManager {
     constructor(connection: Connection, wallet: Keypair) {
         this.connection = connection;
         this.wallet = wallet;
+    }
+
+    /**
+     * Returns cached mint metadata (decimals + programId).
+     * Fetches from chain on first call, then serves from memory forever.
+     */
+    private async getCachedMintMeta(mint: PublicKey, conn: Connection): Promise<MintMeta> {
+        const key = mint.toBase58();
+        const cached = mintMetaCache.get(key);
+        if (cached) return cached;
+
+        const info = await safeRpc(() => conn.getAccountInfo(mint), "getMintInfo");
+        if (!info) throw new Error(`Mint not found: ${key}`);
+        const programId = info.owner;
+        const mintData = await safeRpc(() => getMint(conn, mint, "confirmed", programId), "getMintData");
+        const meta: MintMeta = { decimals: mintData.decimals, programId };
+        mintMetaCache.set(key, meta);
+        return meta;
     }
 
     /**
@@ -1370,17 +1392,10 @@ export class StrategyManager {
             const mintA = poolState.tokenAMint;
             const mintB = poolState.tokenBMint;
 
-            // 2. Fetch Reserves from Pool State (True reserves without unclaimed fees)
-            const getRobustMint = async (mint: PublicKey) => {
-                const info = await safeRpc(() => conn.getAccountInfo(mint), "getMintInfo");
-                if (!info) throw new Error(`Mint not found: ${mint.toBase58()}`);
-                const programId = info.owner;
-                return safeRpc(() => getMint(conn, mint, "confirmed", programId), "getMintData");
-            };
-
-            const [mintAInfo, mintBInfo] = await Promise.all([
-                getRobustMint(mintA),
-                getRobustMint(mintB)
+            // 2. Fetch mint metadata (cached — decimals/programId never change)
+            const [mintAMeta, mintBMeta] = await Promise.all([
+                this.getCachedMintMeta(mintA, conn),
+                this.getCachedMintMeta(mintB, conn)
             ]);
 
             // 2. Fetch Reserves from Pool State via Vaults (Fallback as tokenAAmount is missing)
@@ -1530,8 +1545,8 @@ export class StrategyManager {
             }
 
             // Convert to UI Amounts
-            const userAmountA = Number(amountA_red) / (10 ** mintAInfo.decimals);
-            const userAmountB = Number(amountB_red) / (10 ** mintBInfo.decimals);
+            const userAmountA = Number(amountA_red) / (10 ** mintAMeta.decimals);
+            const userAmountB = Number(amountB_red) / (10 ** mintBMeta.decimals);
 
             /* console.log(`[DEBUG-MATH] L_user: ${L_user}, sqrtPriceX64: ${sqrtPriceX64}, AmtA_raw: ${amountA_red}, AmtB_raw: ${amountB_red}`);
             console.log(`[DEBUG-MATH] UserAmtA: ${userAmountA}, UserAmtB: ${userAmountB}`); */
@@ -1661,6 +1676,298 @@ export class StrategyManager {
             console.error(`[STRATEGY] getPositionValue Failed:`, error);
             return { totalSol: 0, feesBase: 0, feesToken: 0, feesBaseRaw: 0n, feesTokenRaw: 0n, mint: "", baseMint: "", spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
         }
+    }
+
+    /**
+     * Batched version of getPositionValue — fetches ALL pools in 2-3 RPC calls
+     * instead of 7 per pool. Uses Meteora SDK's getMultiplePools + getMultiplePositions
+     * and batches vault balance reads via getMultipleAccountsInfo.
+     *
+     * Returns a Map<poolAddress, positionValueResult> in the same shape as getPositionValue.
+     */
+    async getPositionValuesBatch(
+        pools: { poolAddress: string; tokenMint: string; positionId?: string }[],
+        connectionOverride?: Connection
+    ): Promise<Map<string, { totalSol: number; feesBase: number; feesToken: number; feesBaseRaw: bigint; feesTokenRaw: bigint; mint: string; baseMint: string; spotPrice: number; userBaseInLp: number; userTokenInLp: number; userTokenRaw: bigint; success: boolean }>> {
+        const FAIL = { totalSol: 0, feesBase: 0, feesToken: 0, feesBaseRaw: 0n, feesTokenRaw: 0n, mint: "", baseMint: "", spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false };
+        const results = new Map<string, typeof FAIL>();
+        if (pools.length === 0) return results;
+
+        try {
+            const conn = connectionOverride || this.connection;
+            const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
+            const cpAmm = new CpAmm(conn);
+
+            const poolPubkeys = pools.map(p => new PublicKey(p.poolAddress));
+
+            // ── STEP 1: Batch fetch all pool states (1 RPC call) ──
+            let poolStates: any[];
+            try {
+                poolStates = await safeRpc(() => cpAmm.getMultiplePools(poolPubkeys), "getMultiplePools");
+            } catch (e) {
+                console.warn("[BATCH] getMultiplePools failed, falling back to individual fetches");
+                // Fallback: individual fetches (old behavior)
+                for (const p of pools) {
+                    const result = await this.getPositionValue(p.poolAddress, p.tokenMint, p.positionId, connectionOverride)
+                        .catch(() => FAIL);
+                    results.set(p.poolAddress, result);
+                }
+                return results;
+            }
+
+            // ── STEP 2: Collect all unique mints + vault addresses from pool states ──
+            const mintSet = new Set<string>();
+            const vaultAddresses: PublicKey[] = [];
+            const poolVaultMap: { vaultA: PublicKey; vaultB: PublicKey; mintA: PublicKey; mintB: PublicKey }[] = [];
+
+            for (let i = 0; i < poolStates.length; i++) {
+                const ps = poolStates[i];
+                if (!ps) {
+                    poolVaultMap.push({ vaultA: PublicKey.default, vaultB: PublicKey.default, mintA: PublicKey.default, mintB: PublicKey.default });
+                    continue;
+                }
+                const mintA = ps.tokenAMint;
+                const mintB = ps.tokenBMint;
+                const vaultA = ps.tokenAVault;
+                const vaultB = ps.tokenBVault;
+                mintSet.add(mintA.toBase58());
+                mintSet.add(mintB.toBase58());
+                vaultAddresses.push(vaultA, vaultB);
+                poolVaultMap.push({ vaultA, vaultB, mintA, mintB });
+            }
+
+            // ── STEP 3: Warm mint cache (only fetches unknown mints — usually 0 RPC after first run) ──
+            const uncachedMints = [...mintSet].filter(m => !mintMetaCache.has(m));
+            if (uncachedMints.length > 0) {
+                await Promise.all(uncachedMints.map(m => this.getCachedMintMeta(new PublicKey(m), conn)));
+            }
+
+            // ── STEP 4: Batch fetch all vault balances (1 RPC call) ──
+            const vaultInfos = await safeRpc(
+                () => conn.getMultipleAccountsInfo(vaultAddresses),
+                "getMultipleVaultBalances"
+            );
+
+            // ── STEP 5: Batch fetch positions ──
+            // Collect positionIds that we can batch-fetch
+            const positionPubkeys: (PublicKey | null)[] = pools.map(p =>
+                p.positionId ? new PublicKey(p.positionId) : null
+            );
+            const batchablePositionKeys = positionPubkeys.filter((p): p is PublicKey => p !== null);
+
+            let batchedPositionStates: any[] = [];
+            if (batchablePositionKeys.length > 0) {
+                try {
+                    batchedPositionStates = await safeRpc(
+                        () => cpAmm.getMultiplePositions(batchablePositionKeys),
+                        "getMultiplePositions"
+                    );
+                } catch {
+                    // Will fall back to individual fetches per pool below
+                }
+            }
+
+            // Build a map from positionId → positionState for quick lookup
+            const positionMap = new Map<string, any>();
+            let batchIdx = 0;
+            for (const pk of positionPubkeys) {
+                if (pk) {
+                    if (batchIdx < batchedPositionStates.length && batchedPositionStates[batchIdx]) {
+                        positionMap.set(pk.toBase58(), {
+                            position: pk,
+                            positionState: batchedPositionStates[batchIdx]
+                        });
+                    }
+                    batchIdx++;
+                }
+            }
+
+            // ── STEP 6: Process each pool using the pre-fetched data ──
+            const baseMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
+
+            for (let i = 0; i < pools.length; i++) {
+                const pool = pools[i];
+                const poolState = poolStates[i];
+                if (!poolState) {
+                    results.set(pool.poolAddress, FAIL);
+                    continue;
+                }
+
+                try {
+                    const { mintA, mintB, vaultA, vaultB } = poolVaultMap[i];
+                    const mintAMeta = mintMetaCache.get(mintA.toBase58())!;
+                    const mintBMeta = mintMetaCache.get(mintB.toBase58())!;
+
+                    // Parse vault balances from raw account data
+                    const vaultAIdx = i * 2;
+                    const vaultBIdx = i * 2 + 1;
+                    const vaultAInfo = vaultInfos[vaultAIdx];
+                    const vaultBInfo = vaultInfos[vaultBIdx];
+                    if (!vaultAInfo || !vaultBInfo) {
+                        results.set(pool.poolAddress, FAIL);
+                        continue;
+                    }
+
+                    // Parse SPL token account balance from raw data (offset 64, 8 bytes LE = amount)
+                    const vaultAmountA_BN = new BN(vaultAInfo.data.subarray(64, 72), undefined, "le");
+                    const vaultAmountB_BN = new BN(vaultBInfo.data.subarray(64, 72), undefined, "le");
+
+                    const protocolAFee = poolState.protocolAFee ? new BN(poolState.protocolAFee) : new BN(0);
+                    const partnerAFee = poolState.partnerAFee ? new BN(poolState.partnerAFee) : new BN(0);
+                    const protocolBFee = poolState.protocolBFee ? new BN(poolState.protocolBFee) : new BN(0);
+                    const partnerBFee = poolState.partnerBFee ? new BN(poolState.partnerBFee) : new BN(0);
+
+                    const effectiveReserveA_BN = vaultAmountA_BN.sub(protocolAFee).sub(partnerAFee);
+                    const effectiveReserveB_BN = vaultAmountB_BN.sub(protocolBFee).sub(partnerBFee);
+
+                    const decimalsA = mintAMeta.decimals;
+                    const decimalsB = mintBMeta.decimals;
+                    const amountA = Number(effectiveReserveA_BN.toString()) / (10 ** decimalsA);
+                    const amountB = Number(effectiveReserveB_BN.toString()) / (10 ** decimalsB);
+
+                    // Determine Base/Token side
+                    const isBaseA = baseMints.includes(mintA.toBase58());
+                    const baseIsA = isBaseA || !baseMints.includes(mintB.toBase58());
+
+                    const baseAmountTotal = baseIsA ? amountA : amountB;
+                    const tokenAmountTotal = baseIsA ? amountB : amountA;
+
+                    // Spot Price
+                    let spotPrice = 0;
+                    if (poolState.sqrtPrice) {
+                        const sqrtPriceX64 = BigInt(poolState.sqrtPrice.toString());
+                        const Q64 = BigInt(1) << BigInt(64);
+                        const scale = Number(sqrtPriceX64) / Number(Q64);
+                        const priceRatio = scale * scale;
+                        spotPrice = (1 / priceRatio) * (10 ** (decimalsB - decimalsA));
+                    }
+                    if (!spotPrice || isNaN(spotPrice)) {
+                        spotPrice = (tokenAmountTotal > 0) ? (baseAmountTotal / tokenAmountTotal) : 0;
+                    } else if (!baseIsA) {
+                        spotPrice = 1 / spotPrice;
+                    }
+
+                    // Position
+                    let pos: any = null;
+                    if (pool.positionId) {
+                        pos = positionMap.get(pool.positionId) || null;
+                        // Fallback: individual fetch if batch missed it
+                        if (!pos) {
+                            try {
+                                const posPubkey = new PublicKey(pool.positionId);
+                                const posState = await cpAmm.fetchPositionState(posPubkey);
+                                pos = { position: posPubkey, positionState: posState };
+                            } catch {}
+                        }
+                    }
+                    if (!pos) {
+                        const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(pool.poolAddress), this.wallet.publicKey);
+                        if (userPositions.length === 0) {
+                            results.set(pool.poolAddress, { ...FAIL, spotPrice });
+                            continue;
+                        }
+                        pos = userPositions[0];
+                    }
+
+                    // Liquidity + user amounts
+                    const userLiquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                        BigInt(pos.positionState.vestedLiquidity.toString()) +
+                        BigInt(pos.positionState.permanentLockedLiquidity.toString());
+
+                    const L_user = userLiquidity;
+                    const sqrtPriceX64 = BigInt(poolState.sqrtPrice.toString());
+
+                    let amountA_red: bigint, amountB_red: bigint;
+                    if (sqrtPriceX64 > 0n) {
+                        amountA_red = L_user / sqrtPriceX64;
+                        amountB_red = (L_user * sqrtPriceX64) >> 128n;
+                    } else {
+                        amountA_red = 0n;
+                        amountB_red = 0n;
+                    }
+
+                    const userAmountA = Number(amountA_red) / (10 ** decimalsA);
+                    const userAmountB = Number(amountB_red) / (10 ** decimalsB);
+
+                    const userBaseInLp = baseIsA ? userAmountA : userAmountB;
+                    const userTokenInLp = baseIsA ? userAmountB : userAmountA;
+                    const userTokenRaw = baseIsA ? amountB_red : amountA_red;
+
+                    // Fees (same logic as getPositionValue)
+                    const parseBigIntLE = (arr: number[]): bigint => {
+                        let res = 0n;
+                        for (let k = 0; k < arr.length; k++) {
+                            res += BigInt(arr[k]) << BigInt(k * 8);
+                        }
+                        return res;
+                    };
+
+                    const globalFeeA_Array = (poolState as any).feeAPerLiquidity || [];
+                    const globalFeeB_Array = (poolState as any).feeBPerLiquidity || [];
+                    const checkpointA_Array = (pos.positionState as any).feeAPerTokenCheckpoint || [];
+                    const checkpointB_Array = (pos.positionState as any).feeBPerTokenCheckpoint || [];
+
+                    let feeA = 0, feeB = 0;
+                    try {
+                        if (globalFeeA_Array.length > 0 && checkpointA_Array.length > 0) {
+                            const globalA = parseBigIntLE(globalFeeA_Array);
+                            const checkA = parseBigIntLE(checkpointA_Array);
+                            const deltaA = globalA > checkA ? globalA - checkA : 0n;
+                            const pendingA_Raw = (deltaA * L_user) >> 128n;
+                            feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                        }
+                        if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
+                            const globalB = parseBigIntLE(globalFeeB_Array);
+                            const checkB = parseBigIntLE(checkpointB_Array);
+                            const deltaB = globalB > checkB ? globalB - checkB : 0n;
+                            const pendingB_Raw = (deltaB * L_user) >> 128n;
+                            feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                        }
+                    } catch {}
+
+                    if (feeA === 0) {
+                        feeA = Number(pos.positionState.feeAPending?.toString() || pos.positionState.feeAAmount?.toString() || pos.positionState.feeA?.toString() || "0") / Math.pow(10, decimalsA);
+                    }
+                    if (feeB === 0) {
+                        feeB = Number(pos.positionState.feeBPending?.toString() || pos.positionState.feeBAmount?.toString() || pos.positionState.feeB?.toString() || "0") / Math.pow(10, decimalsB);
+                    }
+
+                    const feesBase = baseIsA ? feeA : feeB;
+                    const feesToken = baseIsA ? feeB : feeA;
+                    const totalSol = ((userTokenInLp + feesToken) * spotPrice) + userBaseInLp + feesBase;
+
+                    results.set(pool.poolAddress, {
+                        totalSol,
+                        feesBase,
+                        feesToken,
+                        feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending.toString()) : BigInt(pos.positionState.feeBPending.toString()),
+                        feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending.toString()) : BigInt(pos.positionState.feeAPending.toString()),
+                        mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
+                        baseMint: baseIsA ? mintA.toBase58() : mintB.toBase58(),
+                        spotPrice,
+                        userBaseInLp,
+                        userTokenInLp,
+                        userTokenRaw,
+                        success: true
+                    });
+                } catch (poolErr: any) {
+                    console.warn(`[BATCH] Pool ${pool.poolAddress.slice(0, 8)} processing error: ${poolErr.message}`);
+                    results.set(pool.poolAddress, FAIL);
+                }
+            }
+        } catch (error: any) {
+            console.error(`[BATCH] Batch fetch failed, falling back to individual:`, error.message);
+            // Full fallback
+            for (const p of pools) {
+                if (!results.has(p.poolAddress)) {
+                    const result = await this.getPositionValue(p.poolAddress, p.tokenMint, p.positionId, connectionOverride)
+                        .catch(() => ({ totalSol: 0, feesBase: 0, feesToken: 0, feesBaseRaw: 0n, feesTokenRaw: 0n, mint: "", baseMint: "", spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, userTokenRaw: 0n, success: false }));
+                    results.set(p.poolAddress, result);
+                }
+            }
+        }
+
+        return results;
     }
 
     /**

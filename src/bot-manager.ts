@@ -1025,28 +1025,20 @@ export class BotManager {
                     return true; // < 10 min old: every sweep (~15s)
                 });
 
-                // ── BATCHED RPC FETCHING (CRITICAL FIX FOR 429 LIMITS) ──
-                // Replaces unbounded Promise.all which crashed the RPC with 1000s of requests at once.
-                const posValueResults: any[] = [];
-                const BATCH_SIZE = 10;
-                for (let i = 0; i < eligiblePools.length; i += BATCH_SIZE) {
-                    const batch = eligiblePools.slice(i, i + BATCH_SIZE);
-                    const batchResults = await Promise.all(
-                        batch.map(pool =>
-                            this.strategy.getPositionValue(pool.poolId, pool.mint, pool.positionId, monitorConnection)
-                                .catch(() => ({ totalSol: 0, feesBase: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false }))
-                        )
-                    );
-                    posValueResults.push(...batchResults);
-                    if (i + BATCH_SIZE < eligiblePools.length) {
-                        await new Promise(r => setTimeout(r, 200)); // 200ms buffer between batches
-                    }
-                }
+                // ── BATCHED RPC FETCHING (2-3 RPC calls total instead of 7 per pool) ──
+                // Uses Meteora SDK's getMultiplePools + getMultiplePositions
+                // and getMultipleAccountsInfo for vault balances.
+                const batchInput = eligiblePools.map(pool => ({
+                    poolAddress: pool.poolId,
+                    tokenMint: pool.mint,
+                    positionId: pool.positionId
+                }));
+                const posValueMap = await this.strategy.getPositionValuesBatch(batchInput, monitorConnection);
 
                 for (let i = 0; i < eligiblePools.length; i++) {
                     const pool = eligiblePools[i];
                     try {
-                        const posValue = posValueResults[i];
+                        const posValue = posValueMap.get(pool.poolId) || { totalSol: 0, feesBase: 0, feesToken: 0, spotPrice: 0, userBaseInLp: 0, userTokenInLp: 0, success: false };
 
                         if (posValue.success && posValue.spotPrice > 0) {
                             // ── Dead pools with zero position value + SL done: skip this tick ──
