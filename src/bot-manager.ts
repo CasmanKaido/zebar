@@ -1699,9 +1699,10 @@ export class BotManager {
         const cached = this.rejectedTokens.get(mint);
         if (cached && cached.expiry > Date.now()) return;
 
-        // 2. Forensic Audit
-        // Skip for graduations for now as they already passed the Pump.fun curve (investment proven)
-        if (creator && !isGraduation) {
+        // 2. Forensic Audit (main safety settings — NOT for prebond, which has its own gates)
+        // Skip for graduations (already passed the Pump.fun curve) and prebond pumpfun tokens
+        const isPrebondPumpfun = dexId === "pumpfun" && this.settings.enablePrebond;
+        if (creator && !isGraduation && !isPrebondPumpfun) {
             const audit = await securityGuard.runForensicAudit(mint, creator, this.settings);
             if (!audit.passed) {
                 const reason = audit.report.join(", ");
@@ -1758,6 +1759,18 @@ export class BotManager {
                     (result as any).volume1h = birdeye.volume1h;
                     SocketManager.emitLog(`[HELIUS] Flash Scout via Birdeye fallback: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
                 }
+            }
+
+            // PREBOND path: If this is a Pump.fun token and prebond is enabled, go straight to buyPrebond
+            // regardless of whether DexScreener resolved it. Prebond buys on the bonding curve — it doesn't
+            // need scanner criteria (volume/liquidity/mcap filters are irrelevant for bonding curve tokens).
+            if (dexId === "pumpfun" && this.settings.enablePrebond) {
+                this._flashRetryCount.delete(mint);
+                const bought = await this.buyPrebond(mint, creator || "");
+                if (!bought) {
+                    this._pumpfunWatchlist.set(mint, Date.now());
+                }
+                return;
             }
 
             // If we resolved data from any source, run through scanner criteria filters
