@@ -38,7 +38,7 @@ export interface BotSettings {
     volume24h: { min: number; max: number };
     liquidity: { min: number; max: number };
     mcap: { min: number; max: number };
-    mode: "SCOUT" | "ANALYST";
+    mode: "SCOUT" | "ANALYST" | "PREBOND" | "ALL";
     maxAgeMinutes: number;
     baseToken: string;
     // Forensic Settings

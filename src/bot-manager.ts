@@ -462,26 +462,48 @@ export class BotManager {
 
         this.isRunning = true;
         SocketManager.emitStatus(true);
-        SocketManager.emitLog(`LPPP BOT Streamer Active (Vol5m: $${this.settings.volume5m.min}-$${this.settings.volume5m.max}, Vol1h: $${this.settings.volume1h.min}-$${this.settings.volume1h.max}, Vol24h: $${this.settings.volume24h.min}-$${this.settings.volume24h.max}, Liq: $${this.settings.liquidity.min}-$${this.settings.liquidity.max}, MCAP: $${this.settings.mcap.min}-$${this.settings.mcap.max})...`, "info");
 
-        const criteria: ScannerCriteria = {
-            volume5m: this.settings.volume5m,
-            volume1h: this.settings.volume1h,
-            volume24h: this.settings.volume24h,
-            liquidity: this.settings.liquidity,
-            mcap: this.settings.mcap,
-            mode: this.settings.mode,
-            maxAgeMinutes: this.settings.maxAgeMinutes
-        };
+        const mode = this.settings.mode;
+        const isPrebondOnly = mode === "PREBOND";
+        const includesPoolScanning = mode === "SCOUT" || mode === "ANALYST" || mode === "ALL";
+        const includesPrebond = mode === "PREBOND" || mode === "ALL";
 
-        this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
-            if (!this.isRunning) return;
-            this.enqueueToken(result);
-        }, connection);
+        if (isPrebondOnly) {
+            SocketManager.emitLog(`LPPP BOT [PREBOND MODE] — Sniping Pump.fun bonding curve tokens only (Buy: ${this.settings.prebondBuyAmount} SOL, Strategy: ${this.settings.prebondStrategy}, Max: ${this.settings.prebondMaxHoldings})`, "info");
+        } else {
+            SocketManager.emitLog(`LPPP BOT [${mode}] Active (Vol5m: $${this.settings.volume5m.min}-$${this.settings.volume5m.max}, Vol1h: $${this.settings.volume1h.min}-$${this.settings.volume1h.max}, Vol24h: $${this.settings.volume24h.min}-$${this.settings.volume24h.max}, Liq: $${this.settings.liquidity.min}-$${this.settings.liquidity.max}, MCAP: $${this.settings.mcap.min}-$${this.settings.mcap.max})...`, "info");
+        }
 
-        this.scanner.start();
+        if (includesPrebond) {
+            // Force enablePrebond ON when mode includes prebond
+            this.settings.enablePrebond = true;
+            SocketManager.emitLog(`[PREBOND] Bonding curve sniping active (${this.settings.prebondStrategy} strategy, ${this.settings.prebondBuyAmount} SOL/buy, max ${this.settings.prebondMaxHoldings} holdings)`, "info");
+        } else {
+            this.settings.enablePrebond = false;
+        }
 
-        // Start real-time WebSocket listeners for instant pool detection
+        // Start pool-based scanner (SCOUT, ANALYST, ALL — but NOT PREBOND-only)
+        if (includesPoolScanning) {
+            const scannerMode = mode === "ALL" ? "SCOUT" : mode as "SCOUT" | "ANALYST";
+            const criteria: ScannerCriteria = {
+                volume5m: this.settings.volume5m,
+                volume1h: this.settings.volume1h,
+                volume24h: this.settings.volume24h,
+                liquidity: this.settings.liquidity,
+                mcap: this.settings.mcap,
+                mode: scannerMode,
+                maxAgeMinutes: this.settings.maxAgeMinutes
+            };
+
+            this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
+                if (!this.isRunning) return;
+                this.enqueueToken(result);
+            }, connection);
+
+            this.scanner.start();
+        }
+
+        // Start real-time WebSocket listeners (Helius webhooks detect both pool events AND Pump.fun mints)
         this.startPoolWebSocket();
     }
 
