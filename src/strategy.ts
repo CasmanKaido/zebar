@@ -223,7 +223,10 @@ export class StrategyManager {
             }
             return { pricePerToken: 0, success: false };
         } catch (err: any) {
-            console.warn(`[STRATEGY] getPrebondPrice failed for ${mint.slice(0, 8)}: ${err.message}`);
+            // 404 = token graduated off bonding curve (expected), only log unexpected errors
+            if (err.response?.status !== 404) {
+                console.warn(`[STRATEGY] getPrebondPrice failed for ${mint.slice(0, 8)}: ${err.message}`);
+            }
             return { pricePerToken: 0, success: false };
         }
     }

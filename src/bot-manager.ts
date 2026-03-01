@@ -1789,6 +1789,17 @@ export class BotManager {
             }
         }
 
+        // PREBOND fast path: Skip DexScreener/Birdeye entirely for Pump.fun tokens.
+        // Bonding curve tokens don't need volume/liquidity/mcap data — go straight to buyPrebond.
+        if (dexId === "pumpfun" && this.settings.enablePrebond) {
+            this._flashRetryCount.delete(mint);
+            const bought = await this.buyPrebond(mint, creator || "");
+            if (!bought) {
+                this._pumpfunWatchlist.set(mint, Date.now());
+            }
+            return;
+        }
+
         try {
             let result: ScanResult | null = null;
 
@@ -1838,9 +1849,7 @@ export class BotManager {
                 }
             }
 
-            // PREBOND path: If this is a Pump.fun token and prebond is enabled, go straight to buyPrebond
-            // regardless of whether DexScreener resolved it. Prebond buys on the bonding curve — it doesn't
-            // need scanner criteria (volume/liquidity/mcap filters are irrelevant for bonding curve tokens).
+            // Legacy prebond path (should not be reached due to fast path above, but kept as safety net)
             if (dexId === "pumpfun" && this.settings.enablePrebond) {
                 this._flashRetryCount.delete(mint);
                 const bought = await this.buyPrebond(mint, creator || "");
@@ -2031,6 +2040,8 @@ export class BotManager {
      * Monitor active prebond positions for TP/SL.
      * Called periodically from the main monitor loop.
      */
+    private _prebondPriceFailures = new Map<string, number>(); // Track consecutive price fetch failures
+
     async monitorPrebondPositions(): Promise<void> {
         if (!this.settings.enablePrebond) return;
 
@@ -2042,7 +2053,21 @@ export class BotManager {
                 try {
                     // Get current price via Jupiter quote
                     const priceData = await this.strategy.getPrebondPrice(pos.mint);
-                    if (!priceData.success || priceData.pricePerToken <= 0) continue;
+                    if (!priceData.success || priceData.pricePerToken <= 0) {
+                        // Track consecutive failures — token likely graduated off bonding curve
+                        const failures = (this._prebondPriceFailures.get(pos.mint) || 0) + 1;
+                        this._prebondPriceFailures.set(pos.mint, failures);
+
+                        if (failures >= 5) {
+                            SocketManager.emitLog(`[PREBOND] ${pos.symbol || pos.mint.slice(0, 8)} — price unavailable after ${failures} checks. Marking as FAILED (likely graduated).`, "warning");
+                            await dbService.updatePrebondPosition(pos.mint, { status: "FAILED" });
+                            this._prebondPriceFailures.delete(pos.mint);
+                        }
+                        continue;
+                    }
+
+                    // Reset failure counter on success
+                    this._prebondPriceFailures.delete(pos.mint);
 
                     const currentPrice = priceData.pricePerToken;
                     const pnlPct = pos.buyPrice > 0 ? ((currentPrice - pos.buyPrice) / pos.buyPrice) * 100 : 0;
