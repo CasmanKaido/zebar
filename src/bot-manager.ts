@@ -595,6 +595,7 @@ export class BotManager {
      * Only fires on token CREATION events — not buys/sells on existing tokens.
      */
     private _pumpfunSeenMints = new Set<string>(); // Mint-level dedup (signatures differ per tx, mints repeat)
+    private _pendingPrebondCount = 0; // In-flight prebond buys not yet saved to DB (race condition guard)
 
     private startPrebondWebSocket() {
         const PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
@@ -1001,6 +1002,7 @@ export class BotManager {
         this._flashRetryCount.clear();
         this._pumpfunWatchlist.clear();
         this._pumpfunSeenMints.clear();
+        this._pendingPrebondCount = 0;
 
         // Unsubscribe WebSocket listeners
         for (const subId of this._wsSubscriptionIds) {
@@ -1934,10 +1936,15 @@ export class BotManager {
         if (this.pendingMints.has(mint)) return false;
         this.pendingMints.add(mint);
 
+        // Increment pending counter BEFORE any async work to prevent race condition
+        // where multiple concurrent calls all pass the holdings check
+        this._pendingPrebondCount++;
+
         try {
-            // Guard: check max holdings
+            // Guard: check max holdings (includes in-flight buys not yet saved to DB)
             const activePositions = await dbService.getActivePrebondPositions();
-            if (activePositions.length >= this.settings.prebondMaxHoldings) {
+            const effectiveCount = activePositions.length + this._pendingPrebondCount - 1; // -1 because we already incremented ourselves
+            if (effectiveCount >= this.settings.prebondMaxHoldings) {
                 SocketManager.emitLog(`[PREBOND] Max holdings (${this.settings.prebondMaxHoldings}) reached. Skipping ${mint.slice(0, 8)}...`, "info");
                 return false;
             }
@@ -2040,6 +2047,7 @@ export class BotManager {
             SocketManager.emitLog(`[PREBOND] Buy error: ${error.message}`, "error");
             return false;
         } finally {
+            this._pendingPrebondCount--;
             this.pendingMints.delete(mint);
         }
     }
