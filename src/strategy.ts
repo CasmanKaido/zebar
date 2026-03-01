@@ -1662,8 +1662,8 @@ export class StrategyManager {
                 totalSol,
                 feesBase: feesBase,
                 feesToken: feesToken,
-                feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending.toString()) : BigInt(pos.positionState.feeBPending.toString()),
-                feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending.toString()) : BigInt(pos.positionState.feeAPending.toString()),
+                feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending?.toString() || "0") : BigInt(pos.positionState.feeBPending?.toString() || "0"),
+                feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending?.toString() || "0") : BigInt(pos.positionState.feeAPending?.toString() || "0"),
                 mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
                 baseMint: baseIsA ? mintA.toBase58() : mintB.toBase58(),
                 spotPrice,
@@ -1794,16 +1794,20 @@ export class StrategyManager {
                 }
 
                 try {
-                    const { mintA, mintB, vaultA, vaultB } = poolVaultMap[i];
-                    const mintAMeta = mintMetaCache.get(mintA.toBase58())!;
-                    const mintBMeta = mintMetaCache.get(mintB.toBase58())!;
+                    const { mintA, mintB } = poolVaultMap[i];
+                    const mintAMeta = mintMetaCache.get(mintA.toBase58());
+                    const mintBMeta = mintMetaCache.get(mintB.toBase58());
+                    if (!mintAMeta || !mintBMeta) {
+                        results.set(pool.poolAddress, FAIL);
+                        continue;
+                    }
 
                     // Parse vault balances from raw account data
                     const vaultAIdx = i * 2;
                     const vaultBIdx = i * 2 + 1;
                     const vaultAInfo = vaultInfos[vaultAIdx];
                     const vaultBInfo = vaultInfos[vaultBIdx];
-                    if (!vaultAInfo || !vaultBInfo) {
+                    if (!vaultAInfo || !vaultBInfo || vaultAInfo.data.length < 72 || vaultBInfo.data.length < 72) {
                         results.set(pool.poolAddress, FAIL);
                         continue;
                     }
@@ -1923,7 +1927,9 @@ export class StrategyManager {
                             const pendingB_Raw = (deltaB * L_user) >> 128n;
                             feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
                         }
-                    } catch {}
+                    } catch (feeErr: any) {
+                        console.warn(`[BATCH] Fee calc error for ${pool.poolAddress.slice(0, 8)}: ${feeErr.message}`);
+                    }
 
                     if (feeA === 0) {
                         feeA = Number(pos.positionState.feeAPending?.toString() || pos.positionState.feeAAmount?.toString() || pos.positionState.feeA?.toString() || "0") / Math.pow(10, decimalsA);
@@ -1940,8 +1946,8 @@ export class StrategyManager {
                         totalSol,
                         feesBase,
                         feesToken,
-                        feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending.toString()) : BigInt(pos.positionState.feeBPending.toString()),
-                        feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending.toString()) : BigInt(pos.positionState.feeAPending.toString()),
+                        feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending?.toString() || "0") : BigInt(pos.positionState.feeBPending?.toString() || "0"),
+                        feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending?.toString() || "0") : BigInt(pos.positionState.feeAPending?.toString() || "0"),
                         mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
                         baseMint: baseIsA ? mintA.toBase58() : mintB.toBase58(),
                         spotPrice,
