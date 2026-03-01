@@ -375,6 +375,9 @@ function App() {
     const [prebondMinOrganicScore, setPrebondMinOrganicScore] = useState(0);
     const [prebondMaxTopHolderPct, setPrebondMaxTopHolderPct] = useState(0);
     const [prebondMaxAgeMinutes, setPrebondMaxAgeMinutes] = useState(0);
+    const [prebondMinVolume5m, setPrebondMinVolume5m] = useState(0);
+    const [prebondMinVolume1h, setPrebondMinVolume1h] = useState(0);
+    const [prebondMinVolume24h, setPrebondMinVolume24h] = useState(0);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -564,6 +567,9 @@ function App() {
                     if (s.prebondMinOrganicScore !== undefined) setPrebondMinOrganicScore(s.prebondMinOrganicScore);
                     if (s.prebondMaxTopHolderPct !== undefined) setPrebondMaxTopHolderPct(s.prebondMaxTopHolderPct);
                     if (s.prebondMaxAgeMinutes !== undefined) setPrebondMaxAgeMinutes(s.prebondMaxAgeMinutes);
+                    if (s.prebondMinVolume5m !== undefined) setPrebondMinVolume5m(s.prebondMinVolume5m);
+                    if (s.prebondMinVolume1h !== undefined) setPrebondMinVolume1h(s.prebondMinVolume1h);
+                    if (s.prebondMinVolume24h !== undefined) setPrebondMinVolume24h(s.prebondMinVolume24h);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -617,7 +623,8 @@ function App() {
                     minTokenScore,
                     enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
-                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
+                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h
                 })
             });
 
@@ -676,7 +683,8 @@ function App() {
                     minTokenScore,
                     enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
-                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
+                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h
                 })
             });
 
@@ -1314,6 +1322,9 @@ function App() {
                                         <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
                                         <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
                                         <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
+                                        <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
+                                        <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
+                                        <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
                                     </div>
                                 </div>
                                 )}

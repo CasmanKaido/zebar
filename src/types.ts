@@ -72,6 +72,9 @@ export interface BotSettings {
     prebondMinOrganicScore: number;    // Min Jupiter organic score 0-100 (0 = disabled)
     prebondMaxTopHolderPct: number;    // Max top holder % (0 = no max)
     prebondMaxAgeMinutes: number;      // Max token age in minutes (0 = no max)
+    prebondMinVolume5m: number;        // Min 5-minute volume in USD (0 = disabled)
+    prebondMinVolume1h: number;        // Min 1-hour volume in USD (0 = disabled)
+    prebondMinVolume24h: number;       // Min 24-hour volume in USD (0 = disabled)
 }
 
 /** @deprecated Legacy interface — prebond positions are now saved as PoolData with isPrebond=true */

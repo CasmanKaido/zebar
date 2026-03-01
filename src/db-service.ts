@@ -200,6 +200,14 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxAgeMinutes INTEGER NOT NULL DEFAULT 0");
             console.log("[DB] Migrated: Added prebondMaxAgeMinutes column to global_settings table.");
         } catch (e) { }
+
+        // Prebond volume filter migrations
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume5m REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume1h REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume24h REAL NOT NULL DEFAULT 0");
+            console.log("[DB] Migrated: Added prebond volume filter columns.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -395,7 +403,10 @@ export class DatabaseService {
             prebondMinHolders: row.prebondMinHolders ?? 0,
             prebondMinOrganicScore: row.prebondMinOrganicScore ?? 0,
             prebondMaxTopHolderPct: row.prebondMaxTopHolderPct ?? 0,
-            prebondMaxAgeMinutes: row.prebondMaxAgeMinutes ?? 0
+            prebondMaxAgeMinutes: row.prebondMaxAgeMinutes ?? 0,
+            prebondMinVolume5m: row.prebondMinVolume5m ?? 0,
+            prebondMinVolume1h: row.prebondMinVolume1h ?? 0,
+            prebondMinVolume24h: row.prebondMinVolume24h ?? 0
         };
     }
 
@@ -444,7 +455,10 @@ export class DatabaseService {
                 prebondMinHolders = @prebondMinHolders,
                 prebondMinOrganicScore = @prebondMinOrganicScore,
                 prebondMaxTopHolderPct = @prebondMaxTopHolderPct,
-                prebondMaxAgeMinutes = @prebondMaxAgeMinutes
+                prebondMaxAgeMinutes = @prebondMaxAgeMinutes,
+                prebondMinVolume5m = @prebondMinVolume5m,
+                prebondMinVolume1h = @prebondMinVolume1h,
+                prebondMinVolume24h = @prebondMinVolume24h
             WHERE id = 1
         `);
 
@@ -491,7 +505,10 @@ export class DatabaseService {
             prebondMinHolders: settings.prebondMinHolders,
             prebondMinOrganicScore: settings.prebondMinOrganicScore,
             prebondMaxTopHolderPct: settings.prebondMaxTopHolderPct,
-            prebondMaxAgeMinutes: settings.prebondMaxAgeMinutes
+            prebondMaxAgeMinutes: settings.prebondMaxAgeMinutes,
+            prebondMinVolume5m: settings.prebondMinVolume5m,
+            prebondMinVolume1h: settings.prebondMinVolume1h,
+            prebondMinVolume24h: settings.prebondMinVolume24h
         });
     }
 

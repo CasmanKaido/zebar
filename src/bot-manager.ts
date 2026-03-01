@@ -79,7 +79,10 @@ export class BotManager {
         prebondMinHolders: 0,
         prebondMinOrganicScore: 0,
         prebondMaxTopHolderPct: 0,
-        prebondMaxAgeMinutes: 0
+        prebondMaxAgeMinutes: 0,
+        prebondMinVolume5m: 0,
+        prebondMinVolume1h: 0,
+        prebondMinVolume24h: 0
     };
 
     constructor() {
@@ -596,7 +599,6 @@ export class BotManager {
      * Only fires on token CREATION events — not buys/sells on existing tokens.
      */
     private _pumpfunSeenMints = new Set<string>(); // Mint-level dedup (signatures differ per tx, mints repeat)
-    private _pendingPrebondCount = 0; // In-flight prebond buys not yet saved to DB (race condition guard)
 
     private startPrebondWebSocket() {
         const PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
@@ -677,15 +679,6 @@ export class BotManager {
                 if (mint && mint.length >= 40 && !stables.has(mint)) {
                     mints.add(mint);
                 }
-            }
-
-            // Early max-holdings gate for prebond: skip all mints silently if at capacity
-            if (dexId === "pumpfun" && this.settings.enablePrebond) {
-                try {
-                    const allPools = await dbService.getAllPools();
-                    const activePrebondPools = allPools.filter(p => !p.exited && p.isPrebond);
-                    if (activePrebondPools.length >= this.settings.maxPools) return;
-                } catch { /* proceed on error */ }
             }
 
             for (const mint of mints) {
@@ -1004,7 +997,6 @@ export class BotManager {
         this._flashRetryCount.clear();
         this._pumpfunWatchlist.clear();
         this._pumpfunSeenMints.clear();
-        this._pendingPrebondCount = 0;
 
         // Unsubscribe WebSocket listeners
         for (const subId of this._wsSubscriptionIds) {
@@ -1924,28 +1916,16 @@ export class BotManager {
         if (this.pendingMints.has(mint)) return false;
         this.pendingMints.add(mint);
 
-        // Increment pending counter BEFORE any async work to prevent race condition
-        // where multiple concurrent calls all pass the holdings check
-        this._pendingPrebondCount++;
-
         try {
-            // Guard: check max prebond holdings (includes in-flight buys not yet saved to DB)
-            const allPools = await dbService.getAllPools();
-            const activePrebondPools = allPools.filter(p => !p.exited && p.isPrebond);
-            const effectiveCount = activePrebondPools.length + this._pendingPrebondCount - 1;
-            if (effectiveCount >= this.settings.maxPools) {
-                SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "info");
+            // Guard: session max pools (same as SCOUT/ANALYST — per-session, resets on start)
+            if (this.sessionPoolCount >= this.settings.maxPools) {
+                SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "warning");
                 return false;
             }
 
             // Guard: already holding this token (check all pools, not just prebond)
+            const allPools = await dbService.getAllPools();
             if (allPools.some(p => p.mint === mint && !p.exited)) {
-                return false;
-            }
-
-            // Guard: overall max pools (SCOUT + prebond combined)
-            if (this.sessionPoolCount >= this.settings.maxPools) {
-                SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "warning");
                 return false;
             }
 
@@ -1997,7 +1977,10 @@ export class BotManager {
                                this.settings.prebondMinHolders > 0 ||
                                this.settings.prebondMinOrganicScore > 0 ||
                                this.settings.prebondMaxTopHolderPct > 0 ||
-                               this.settings.prebondMaxAgeMinutes > 0;
+                               this.settings.prebondMaxAgeMinutes > 0 ||
+                               this.settings.prebondMinVolume5m > 0 ||
+                               this.settings.prebondMinVolume1h > 0 ||
+                               this.settings.prebondMinVolume24h > 0;
 
             if (hasFilters) {
                 const tokenData = await this.fetchJupiterTokenData(mint);
@@ -2038,7 +2021,25 @@ export class BotManager {
                         }
                     }
 
-                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} passed filters (MCap:$${mcap.toLocaleString()} Holders:${holders} Score:${organicScore})`, "info");
+                    // Volume filters (Jupiter stats5m/stats1h/stats24h)
+                    const vol5m = tokenData.stats5m?.volume || 0;
+                    const vol1h = tokenData.stats1h?.volume || 0;
+                    const vol24h = tokenData.stats24h?.volume || 0;
+
+                    if (this.settings.prebondMinVolume5m > 0 && vol5m < this.settings.prebondMinVolume5m) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol5m $${vol5m.toLocaleString()} < min $${this.settings.prebondMinVolume5m.toLocaleString()}`, "warning");
+                        return false;
+                    }
+                    if (this.settings.prebondMinVolume1h > 0 && vol1h < this.settings.prebondMinVolume1h) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol1h $${vol1h.toLocaleString()} < min $${this.settings.prebondMinVolume1h.toLocaleString()}`, "warning");
+                        return false;
+                    }
+                    if (this.settings.prebondMinVolume24h > 0 && vol24h < this.settings.prebondMinVolume24h) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol24h $${vol24h.toLocaleString()} < min $${this.settings.prebondMinVolume24h.toLocaleString()}`, "warning");
+                        return false;
+                    }
+
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} passed filters (MCap:$${mcap.toLocaleString()} Holders:${holders} Score:${organicScore} Vol5m:$${vol5m.toLocaleString()})`, "info");
                 }
                 // If API fails (tokenData is null), skip filters — don't block the buy
             }
@@ -2163,7 +2164,6 @@ export class BotManager {
             SocketManager.emitLog(`[PREBOND] Error: ${error.message}`, "error");
             return false;
         } finally {
-            this._pendingPrebondCount--;
             this.pendingMints.delete(mint);
         }
     }
