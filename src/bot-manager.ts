@@ -677,6 +677,14 @@ export class BotManager {
                 }
             }
 
+            // Early max-holdings gate for prebond: skip all mints silently if at capacity
+            if (dexId === "pumpfun" && this.settings.enablePrebond) {
+                try {
+                    const active = await dbService.getActivePrebondPositions();
+                    if (active.length >= this.settings.prebondMaxHoldings) return;
+                } catch { /* proceed on error */ }
+            }
+
             for (const mint of mints) {
                 if (this.pendingMints.has(mint)) continue;
                 const cached = this.rejectedTokens.get(mint);
