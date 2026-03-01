@@ -1719,11 +1719,13 @@ export class StrategyManager {
             const mintSet = new Set<string>();
             const vaultAddresses: PublicKey[] = [];
             const poolVaultMap: { vaultA: PublicKey; vaultB: PublicKey; mintA: PublicKey; mintB: PublicKey }[] = [];
+            const poolToVaultIdx: number[] = []; // Maps pool index → starting index in vaultAddresses (-1 if null)
 
             for (let i = 0; i < poolStates.length; i++) {
                 const ps = poolStates[i];
                 if (!ps) {
                     poolVaultMap.push({ vaultA: PublicKey.default, vaultB: PublicKey.default, mintA: PublicKey.default, mintB: PublicKey.default });
+                    poolToVaultIdx.push(-1);
                     continue;
                 }
                 const mintA = ps.tokenAMint;
@@ -1732,6 +1734,7 @@ export class StrategyManager {
                 const vaultB = ps.tokenBVault;
                 mintSet.add(mintA.toBase58());
                 mintSet.add(mintB.toBase58());
+                poolToVaultIdx.push(vaultAddresses.length); // Record where this pool's vaults start
                 vaultAddresses.push(vaultA, vaultB);
                 poolVaultMap.push({ vaultA, vaultB, mintA, mintB });
             }
@@ -1803,10 +1806,13 @@ export class StrategyManager {
                     }
 
                     // Parse vault balances from raw account data
-                    const vaultAIdx = i * 2;
-                    const vaultBIdx = i * 2 + 1;
-                    const vaultAInfo = vaultInfos[vaultAIdx];
-                    const vaultBInfo = vaultInfos[vaultBIdx];
+                    const vaultStartIdx = poolToVaultIdx[i];
+                    if (vaultStartIdx === -1) {
+                        results.set(pool.poolAddress, FAIL);
+                        continue;
+                    }
+                    const vaultAInfo = vaultInfos[vaultStartIdx];
+                    const vaultBInfo = vaultInfos[vaultStartIdx + 1];
                     if (!vaultAInfo || !vaultBInfo || vaultAInfo.data.length < 72 || vaultBInfo.data.length < 72) {
                         results.set(pool.poolAddress, FAIL);
                         continue;
