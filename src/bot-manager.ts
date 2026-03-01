@@ -69,8 +69,6 @@ export class BotManager {
         minSafetyScore: 0.3,
         minTokenScore: 60,
         enablePrebond: false,
-        prebondBuyAmount: 0.05,
-        prebondMaxHoldings: 3,
         prebondEnableReputation: true,
         prebondEnableBundle: true,
         prebondEnableSimulation: false,
@@ -477,7 +475,7 @@ export class BotManager {
         const includesPrebond = mode === "PREBOND" || mode === "ALL";
 
         if (isPrebondOnly) {
-            SocketManager.emitLog(`LPPP BOT [PREBOND MODE] — Sniping Pump.fun bonding curve tokens → Meteora pool (Buy: ${this.settings.prebondBuyAmount} SOL, Max: ${this.settings.prebondMaxHoldings})`, "info");
+            SocketManager.emitLog(`LPPP BOT [PREBOND MODE] — Sniping Pump.fun bonding curve tokens → Meteora pool (Buy: ${this.settings.buyAmount} SOL, Max: ${this.settings.maxPools})`, "info");
         } else {
             SocketManager.emitLog(`LPPP BOT [${mode}] Active (Vol5m: $${this.settings.volume5m.min}-$${this.settings.volume5m.max}, Vol1h: $${this.settings.volume1h.min}-$${this.settings.volume1h.max}, Vol24h: $${this.settings.volume24h.min}-$${this.settings.volume24h.max}, Liq: $${this.settings.liquidity.min}-$${this.settings.liquidity.max}, MCAP: $${this.settings.mcap.min}-$${this.settings.mcap.max})...`, "info");
         }
@@ -485,7 +483,7 @@ export class BotManager {
         // Derive enablePrebond from mode — mode is the single source of truth
         this.settings.enablePrebond = includesPrebond;
         if (includesPrebond) {
-            SocketManager.emitLog(`[PREBOND] Bonding curve sniping active (${this.settings.prebondBuyAmount} SOL/buy → Meteora pool, max ${this.settings.prebondMaxHoldings} holdings)`, "info");
+            SocketManager.emitLog(`[PREBOND] Bonding curve sniping active (${this.settings.buyAmount} SOL/buy → Meteora pool, max ${this.settings.maxPools} pools)`, "info");
         }
 
         // Start pool-based scanner (SCOUT, ANALYST, ALL — but NOT PREBOND-only)
@@ -686,7 +684,7 @@ export class BotManager {
                 try {
                     const allPools = await dbService.getAllPools();
                     const activePrebondPools = allPools.filter(p => !p.exited && p.isPrebond);
-                    if (activePrebondPools.length >= this.settings.prebondMaxHoldings) return;
+                    if (activePrebondPools.length >= this.settings.maxPools) return;
                 } catch { /* proceed on error */ }
             }
 
@@ -1935,8 +1933,8 @@ export class BotManager {
             const allPools = await dbService.getAllPools();
             const activePrebondPools = allPools.filter(p => !p.exited && p.isPrebond);
             const effectiveCount = activePrebondPools.length + this._pendingPrebondCount - 1;
-            if (effectiveCount >= this.settings.prebondMaxHoldings) {
-                SocketManager.emitLog(`[PREBOND] Max holdings (${this.settings.prebondMaxHoldings}) reached. Skipping ${mint.slice(0, 8)}...`, "info");
+            if (effectiveCount >= this.settings.maxPools) {
+                SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "info");
                 return false;
             }
 
@@ -2046,12 +2044,12 @@ export class BotManager {
             }
 
             // --- Buy on bonding curve ---
-            SocketManager.emitLog(`[PREBOND] Buying ${mint.slice(0, 8)}... on bonding curve (${this.settings.prebondBuyAmount} SOL)`, "info");
+            SocketManager.emitLog(`[PREBOND] Buying ${mint.slice(0, 8)}... on bonding curve (${this.settings.buyAmount} SOL)`, "info");
 
             const mintPubkey = new PublicKey(mint);
             const { success, error } = await this.strategy.swapToken(
                 mintPubkey,
-                this.settings.prebondBuyAmount,
+                this.settings.buyAmount,
                 this.settings.slippage
             );
 
@@ -2090,7 +2088,7 @@ export class BotManager {
             }
 
             // Convert SOL spent to equivalent base token amount
-            const usdValueSpent = this.settings.prebondBuyAmount * solPrice;
+            const usdValueSpent = this.settings.buyAmount * solPrice;
             const equivalentBaseTokenAmount = usdValueSpent / basePrice;
             const targetBaseAmount = equivalentBaseTokenAmount * 0.99;
 

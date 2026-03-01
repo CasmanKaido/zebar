@@ -362,8 +362,6 @@ function App() {
     const [minTokenScore, setMinTokenScore] = useState(60);
     // Prebond Sniping
     const [enablePrebond, setEnablePrebond] = useState(false);
-    const [prebondBuyAmount, setPrebondBuyAmount] = useState(0.05);
-    const [prebondMaxHoldings, setPrebondMaxHoldings] = useState(3);
     // Prebond Safety (independent from main safety)
     const [prebondEnableReputation, setPrebondEnableReputation] = useState(true);
     const [prebondEnableBundle, setPrebondEnableBundle] = useState(true);
@@ -554,8 +552,6 @@ function App() {
                     if (s.minTokenScore !== undefined) setMinTokenScore(s.minTokenScore);
                     // Prebond
                     if (s.enablePrebond !== undefined) setEnablePrebond(s.enablePrebond);
-                    if (s.prebondBuyAmount !== undefined) setPrebondBuyAmount(s.prebondBuyAmount);
-                    if (s.prebondMaxHoldings !== undefined) setPrebondMaxHoldings(s.prebondMaxHoldings);
                     // Prebond Safety
                     if (s.prebondEnableReputation !== undefined) setPrebondEnableReputation(s.prebondEnableReputation);
                     if (s.prebondEnableBundle !== undefined) setPrebondEnableBundle(s.prebondEnableBundle);
@@ -619,7 +615,7 @@ function App() {
                     maxTop5HolderPct,
                     minSafetyScore,
                     minTokenScore,
-                    enablePrebond, prebondBuyAmount, prebondMaxHoldings,
+                    enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes
                 })
@@ -678,7 +674,7 @@ function App() {
                     maxTop5HolderPct,
                     minSafetyScore,
                     minTokenScore,
-                    enablePrebond, prebondBuyAmount, prebondMaxHoldings,
+                    enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes
                 })
@@ -1285,9 +1281,7 @@ function App() {
                                         <button onClick={() => showModal({ title: 'Prebond Sniping', message: 'Buy tokens directly on the Pump.fun bonding curve BEFORE graduation. The bot detects new Pump.fun token mints via Helius and buys immediately through Jupiter (which routes through the bonding curve). Tokens are filtered by creator wallet reputation and bundle detection. Choose FLIP to auto-sell at a target gain, or GRADUATION to hold until the token graduates to a DEX pool.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors ml-auto" title="Learn more"><Info size={12} /></button>
                                     </div>
                                     <div className="space-y-3">
-                                        <SettingInput label="Buy Amount" value={prebondBuyAmount} onChange={setPrebondBuyAmount} disabled={running} unit="SOL" subtext="SOL per prebond buy" />
-                                        <SettingInput label="Max Holdings" value={prebondMaxHoldings} onChange={setPrebondMaxHoldings} disabled={running} subtext="Max simultaneous prebond pools" />
-                                        <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. TP/SL uses main pool settings.</div>
+                                        <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. Uses main Buy Amount, Max Pools, and TP/SL settings.</div>
                                     </div>
 
                                     {/* Prebond Safety */}

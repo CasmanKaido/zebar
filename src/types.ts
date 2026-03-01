@@ -59,8 +59,6 @@ export interface BotSettings {
     minTokenScore: number;            // Min confidence score 0-100 to buy
     // Prebond Sniping
     enablePrebond: boolean;           // Master toggle for prebond sniping
-    prebondBuyAmount: number;         // SOL to spend per prebond buy
-    prebondMaxHoldings: number;       // Max simultaneous prebond pools
     // Prebond Safety (independent from main forensic settings)
     prebondEnableReputation: boolean;  // Check creator wallet tx history
     prebondEnableBundle: boolean;      // Detect slot-0 bundled launches
