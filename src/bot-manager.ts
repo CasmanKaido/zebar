@@ -10,7 +10,7 @@ import { GeckoService } from "./gecko-service";
 import axios from "axios";
 import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { dbService } from "./db-service";
-import { PoolData, TradeHistory, BotSettings, PrebondPosition } from "./types";
+import { PoolData, TradeHistory, BotSettings } from "./types";
 import { securityGuard } from "./security-guard";
 import { TokenMetadataService } from "./token-metadata-service";
 import { JupiterPriceService } from "./jupiter-price-service";
@@ -70,9 +70,6 @@ export class BotManager {
         minTokenScore: 60,
         enablePrebond: false,
         prebondBuyAmount: 0.05,
-        prebondStrategy: "FLIP",
-        prebondFlipTarget: 50,
-        prebondStopLoss: -30,
         prebondMaxHoldings: 3,
         prebondEnableReputation: true,
         prebondEnableBundle: true,
@@ -474,7 +471,7 @@ export class BotManager {
         const includesPrebond = mode === "PREBOND" || mode === "ALL";
 
         if (isPrebondOnly) {
-            SocketManager.emitLog(`LPPP BOT [PREBOND MODE] — Sniping Pump.fun bonding curve tokens only (Buy: ${this.settings.prebondBuyAmount} SOL, Strategy: ${this.settings.prebondStrategy}, Max: ${this.settings.prebondMaxHoldings})`, "info");
+            SocketManager.emitLog(`LPPP BOT [PREBOND MODE] — Sniping Pump.fun bonding curve tokens → Meteora pool (Buy: ${this.settings.prebondBuyAmount} SOL, Max: ${this.settings.prebondMaxHoldings})`, "info");
         } else {
             SocketManager.emitLog(`LPPP BOT [${mode}] Active (Vol5m: $${this.settings.volume5m.min}-$${this.settings.volume5m.max}, Vol1h: $${this.settings.volume1h.min}-$${this.settings.volume1h.max}, Vol24h: $${this.settings.volume24h.min}-$${this.settings.volume24h.max}, Liq: $${this.settings.liquidity.min}-$${this.settings.liquidity.max}, MCAP: $${this.settings.mcap.min}-$${this.settings.mcap.max})...`, "info");
         }
@@ -482,7 +479,7 @@ export class BotManager {
         // Derive enablePrebond from mode — mode is the single source of truth
         this.settings.enablePrebond = includesPrebond;
         if (includesPrebond) {
-            SocketManager.emitLog(`[PREBOND] Bonding curve sniping active (${this.settings.prebondStrategy} strategy, ${this.settings.prebondBuyAmount} SOL/buy, max ${this.settings.prebondMaxHoldings} holdings)`, "info");
+            SocketManager.emitLog(`[PREBOND] Bonding curve sniping active (${this.settings.prebondBuyAmount} SOL/buy → Meteora pool, max ${this.settings.prebondMaxHoldings} holdings)`, "info");
         }
 
         // Start pool-based scanner (SCOUT, ANALYST, ALL — but NOT PREBOND-only)
@@ -681,8 +678,9 @@ export class BotManager {
             // Early max-holdings gate for prebond: skip all mints silently if at capacity
             if (dexId === "pumpfun" && this.settings.enablePrebond) {
                 try {
-                    const active = await dbService.getActivePrebondPositions();
-                    if (active.length >= this.settings.prebondMaxHoldings) return;
+                    const allPools = await dbService.getAllPools();
+                    const activePrebondPools = allPools.filter(p => !p.exited && p.isPrebond);
+                    if (activePrebondPools.length >= this.settings.prebondMaxHoldings) return;
                 } catch { /* proceed on error */ }
             }
 
@@ -1428,9 +1426,6 @@ export class BotManager {
             } finally {
                 sweepCount++;
 
-                // Prebond position monitoring (every sweep — bonding curve prices move fast)
-                this.monitorPrebondPositions().catch(e => console.warn("[PREBOND] Monitor error:", e));
-
                 // Schedule next iteration (recursive timeout).
                 // Use activePools (non-exited, bot-created) not pools (all historical records),
                 // so the monitor self-terminates once all active positions are closed.
@@ -1771,18 +1766,6 @@ export class BotManager {
             SocketManager.emitLog(`[HELIUS] Pump.fun graduation detected for ${mint.slice(0, 8)}... Re-evaluating with pool data.`, "info");
         }
 
-        // Graduation hook: If we hold a GRADUATION-strategy prebond position, transition to LP
-        if (isGraduation) {
-            const prebondPos = await dbService.getPrebondPosition(mint);
-            if (prebondPos && prebondPos.status === "ACTIVE" && prebondPos.strategy === "GRADUATION") {
-                SocketManager.emitLog(`[PREBOND] ${prebondPos.symbol || mint.slice(0, 8)} graduated! Tokens already in wallet.`, "success");
-                await dbService.updatePrebondPosition(mint, { status: "GRADUATED" });
-                // Do NOT continue to the buy flow — tokens are already held from prebond.
-                // The existing tokens will be picked up by the next scanner sweep or manual LP creation.
-                return;
-            }
-        }
-
         const cached = this.rejectedTokens.get(mint);
         if (cached && cached.expiry > Date.now()) return;
 
@@ -1929,7 +1912,8 @@ export class BotManager {
     // ═══════════════════════════════════════════════
 
     /**
-     * Buy a token directly on the Pump.fun bonding curve via Jupiter.
+     * Buy a token on the Pump.fun bonding curve via Jupiter, then immediately create a Meteora pool.
+     * Flow mirrors SCOUT/ANALYST: swapToken → settle → createMeteoraPool → save as PoolData.
      */
     private async buyPrebond(mint: string, creator: string): Promise<boolean> {
         // Concurrent buy guard — prevents double buys from rapid webhook duplicates
@@ -1941,16 +1925,23 @@ export class BotManager {
         this._pendingPrebondCount++;
 
         try {
-            // Guard: check max holdings (includes in-flight buys not yet saved to DB)
-            const activePositions = await dbService.getActivePrebondPositions();
-            const effectiveCount = activePositions.length + this._pendingPrebondCount - 1; // -1 because we already incremented ourselves
+            // Guard: check max prebond holdings (includes in-flight buys not yet saved to DB)
+            const allPools = await dbService.getAllPools();
+            const activePrebondPools = allPools.filter(p => !p.exited && p.isPrebond);
+            const effectiveCount = activePrebondPools.length + this._pendingPrebondCount - 1;
             if (effectiveCount >= this.settings.prebondMaxHoldings) {
                 SocketManager.emitLog(`[PREBOND] Max holdings (${this.settings.prebondMaxHoldings}) reached. Skipping ${mint.slice(0, 8)}...`, "info");
                 return false;
             }
 
-            // Guard: already holding this token
-            if (activePositions.some(p => p.mint === mint)) {
+            // Guard: already holding this token (check all pools, not just prebond)
+            if (allPools.some(p => p.mint === mint && !p.exited)) {
+                return false;
+            }
+
+            // Guard: overall max pools (SCOUT + prebond combined)
+            if (this.sessionPoolCount >= this.settings.maxPools) {
+                SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "warning");
                 return false;
             }
 
@@ -1996,19 +1987,69 @@ export class BotManager {
                 }
             }
 
+            // --- Buy on bonding curve ---
             SocketManager.emitLog(`[PREBOND] Buying ${mint.slice(0, 8)}... on bonding curve (${this.settings.prebondBuyAmount} SOL)`, "info");
 
-            // Execute buy via Jupiter (routes through Pump.fun bonding curve)
-            const buyResult = await this.strategy.swapToken(
-                new PublicKey(mint),
+            const mintPubkey = new PublicKey(mint);
+            const { success, error } = await this.strategy.swapToken(
+                mintPubkey,
                 this.settings.prebondBuyAmount,
                 this.settings.slippage
             );
 
-            if (!buyResult.success) {
-                SocketManager.emitLog(`[PREBOND] Buy failed for ${mint.slice(0, 8)}: ${buyResult.error}`, "error");
+            if (!success) {
+                SocketManager.emitLog(`[PREBOND] Buy failed for ${mint.slice(0, 8)}: ${error}`, "error");
                 return false;
             }
+
+            SocketManager.emitLog(`[PREBOND] Buy Success! Creating Meteora pool...`, "success");
+            await new Promise(r => setTimeout(r, 2000)); // Wait for settlement
+
+            // --- Create Meteora Pool (same flow as SCOUT) ---
+            const tokenAccounts = await safeRpc(() => monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: mintPubkey }), "getPrebondPostSwapBalance");
+            const actualAmountRaw = tokenAccounts.value.reduce((acc: bigint, account: any) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+            const actualUiAmount = tokenAccounts.value.reduce((acc: number, account: any) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+
+            if (actualAmountRaw === 0n) {
+                SocketManager.emitLog(`[PREBOND] No token balance found after buy. Aborting pool creation.`, "error");
+                return false;
+            }
+
+            const tokenAmount = (actualAmountRaw * 99n) / 100n;
+            const tokenUiAmountChecked = (actualUiAmount * 99) / 100;
+
+            const activeBaseMint = BASE_TOKENS[this.settings.baseToken] || BASE_TOKENS["LPPP"];
+            const solPrice = await this.getBaseTokenPrice(SOL_MINT.toBase58());
+            if (solPrice <= 0) {
+                SocketManager.emitLog(`[PREBOND] SOL price error. Aborting pool creation.`, "error");
+                return false;
+            }
+
+            const basePrice = await this.getBaseTokenPrice(activeBaseMint.toBase58());
+            if (basePrice <= 0) {
+                SocketManager.emitLog(`[PREBOND] Base token price error. Aborting pool creation.`, "error");
+                return false;
+            }
+
+            // Convert SOL spent to equivalent base token amount
+            const usdValueSpent = this.settings.prebondBuyAmount * solPrice;
+            const equivalentBaseTokenAmount = usdValueSpent / basePrice;
+            const targetBaseAmount = equivalentBaseTokenAmount * 0.99;
+
+            // Get base token decimals
+            const baseMintAccountInfo = await safeRpc(() => monitorConnection.getParsedAccountInfo(activeBaseMint), "getPrebondBaseMintInfo");
+            const baseDecimals = (baseMintAccountInfo?.value?.data as any)?.parsed?.info?.decimals || 9;
+            const baseScale = Math.pow(10, baseDecimals);
+            const lpppAmountBase = BigInt(Math.floor(targetBaseAmount * baseScale));
+
+            const poolInfo = await this.strategy.createMeteoraPool(mintPubkey, tokenAmount, lpppAmountBase, activeBaseMint, this.settings.meteoraFeeBps);
+
+            if (!poolInfo.success) {
+                SocketManager.emitLog(`[PREBOND] Pool creation failed: ${poolInfo.error}`, "error");
+                return false;
+            }
+
+            SocketManager.emitLog(`[PREBOND] Pool Created: ${poolInfo.poolAddress}`, "success");
 
             // Get symbol from metadata service
             let symbol = mint.slice(0, 6);
@@ -2017,150 +2058,57 @@ export class BotManager {
                 if (resolved) symbol = resolved;
             } catch (_) { }
 
-            // Calculate buy price: SOL spent / tokens received
-            const tokensReceived = buyResult.uiAmount > 0 ? buyResult.uiAmount : Number(buyResult.amount);
-            const buyPrice = tokensReceived > 0 ? this.settings.prebondBuyAmount / tokensReceived : 0;
+            // Calculate initial price (base tokens per token)
+            const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / baseScale) / tokenUiAmountChecked : 0;
 
-            // Save position
-            const position: PrebondPosition = {
+            const supplyRes = await safeRpc(() => monitorConnection.getTokenSupply(mintPubkey), "getPrebondTokenSupply");
+            const totalSupply = supplyRes.value.uiAmount || 0;
+            const trueInitialUsdPrice = initialPrice * basePrice;
+            const initialMcap = totalSupply * (trueInitialUsdPrice > 0 ? trueInitialUsdPrice : 0);
+
+            // Save as PoolData — enters the standard monitor loop for TP/SL
+            const fullPoolData: PoolData = {
+                poolId: poolInfo.poolAddress || "",
+                token: symbol,
                 mint,
-                symbol,
-                buyTxId: "",
-                buyPrice,
-                buyAmountSol: this.settings.prebondBuyAmount,
-                buyAmountTokens: buyResult.amount.toString(),
-                creator,
-                strategy: this.settings.prebondStrategy,
-                status: "ACTIVE",
-                created: new Date().toISOString()
+                roi: "0%",
+                netRoi: "0%",
+                created: new Date().toISOString(),
+                initialPrice,
+                initialTokenAmount: tokenUiAmountChecked,
+                initialLpppAmount: Number(lpppAmountBase) / baseScale,
+                initialSolValue: (Number(lpppAmountBase) / baseScale),
+                exited: false,
+                positionId: poolInfo.positionAddress,
+                unclaimedFees: { sol: "0", token: "0" },
+                isBotCreated: true,
+                isPrebond: true,
+                entryUsdValue: 0,
+                baseToken: this.settings.baseToken,
+                totalSupply,
+                initialMcap
             };
 
-            await dbService.savePrebondPosition(position);
-            SocketManager.emitLog(`[PREBOND] Bought ${symbol} for ${this.settings.prebondBuyAmount} SOL (${tokensReceived.toFixed(2)} tokens)`, "success");
+            await this.savePools(fullPoolData);
+            SocketManager.emitPool(fullPoolData);
+            this.sessionPoolCount++;
+            this.triggerImmediateSweep();
 
-            // Emit to frontend
-            SocketManager.io?.emit("prebondUpdate", position);
+            SocketManager.emitLog(`[PREBOND] ${symbol} — Pool live! TP/SL handled by main monitor.`, "success");
+
+            if (this.sessionPoolCount >= this.settings.maxPools) {
+                SocketManager.emitLog(`[SESSION] Max pools limit reached (${this.settings.maxPools}). Stopping bot.`, "warning");
+                this.stop();
+            }
 
             return true;
         } catch (error: any) {
-            console.error(`[PREBOND] Buy error for ${mint}:`, error.message);
-            SocketManager.emitLog(`[PREBOND] Buy error: ${error.message}`, "error");
+            console.error(`[PREBOND] Buy+Pool error for ${mint}:`, error.message);
+            SocketManager.emitLog(`[PREBOND] Error: ${error.message}`, "error");
             return false;
         } finally {
             this._pendingPrebondCount--;
             this.pendingMints.delete(mint);
-        }
-    }
-
-    /**
-     * Monitor active prebond positions for TP/SL.
-     * Called periodically from the main monitor loop.
-     */
-    private _prebondPriceFailures = new Map<string, number>(); // Track consecutive price fetch failures
-
-    async monitorPrebondPositions(): Promise<void> {
-        if (!this.settings.enablePrebond) return;
-
-        try {
-            const positions = await dbService.getActivePrebondPositions();
-            if (positions.length === 0) return;
-
-            for (const pos of positions) {
-                try {
-                    // Get current price via Jupiter quote
-                    const priceData = await this.strategy.getPrebondPrice(pos.mint);
-                    if (!priceData.success || priceData.pricePerToken <= 0) {
-                        // Track consecutive failures — token likely graduated off bonding curve
-                        const failures = (this._prebondPriceFailures.get(pos.mint) || 0) + 1;
-                        this._prebondPriceFailures.set(pos.mint, failures);
-
-                        if (failures >= 5) {
-                            SocketManager.emitLog(`[PREBOND] ${pos.symbol || pos.mint.slice(0, 8)} — price unavailable after ${failures} checks. Marking as FAILED (likely graduated).`, "warning");
-                            await dbService.updatePrebondPosition(pos.mint, { status: "FAILED" });
-                            this._prebondPriceFailures.delete(pos.mint);
-                        }
-                        continue;
-                    }
-
-                    // Reset failure counter on success
-                    this._prebondPriceFailures.delete(pos.mint);
-
-                    const currentPrice = priceData.pricePerToken;
-                    const pnlPct = pos.buyPrice > 0 ? ((currentPrice - pos.buyPrice) / pos.buyPrice) * 100 : 0;
-
-                    // Emit live update to frontend
-                    SocketManager.io?.emit("prebondUpdate", { ...pos, currentPrice, pnl: pnlPct });
-
-                    // FLIP strategy: check TP and SL
-                    if (pos.strategy === "FLIP") {
-                        // Take profit
-                        if (pnlPct >= this.settings.prebondFlipTarget) {
-                            SocketManager.emitLog(`[PREBOND] ${pos.symbol} hit +${pnlPct.toFixed(1)}% (target: ${this.settings.prebondFlipTarget}%). Selling...`, "success");
-                            await this.sellPrebond(pos, "TP");
-                            continue;
-                        }
-
-                        // Stop loss
-                        if (pnlPct <= this.settings.prebondStopLoss) {
-                            SocketManager.emitLog(`[PREBOND] ${pos.symbol} hit ${pnlPct.toFixed(1)}% (SL: ${this.settings.prebondStopLoss}%). Selling...`, "error");
-                            await this.sellPrebond(pos, "SL");
-                            continue;
-                        }
-                    }
-
-                    // GRADUATION strategy: only SL (TP happens on graduation event)
-                    if (pos.strategy === "GRADUATION") {
-                        if (pnlPct <= this.settings.prebondStopLoss) {
-                            SocketManager.emitLog(`[PREBOND] ${pos.symbol} hit ${pnlPct.toFixed(1)}% (SL: ${this.settings.prebondStopLoss}%). Emergency sell...`, "error");
-                            await this.sellPrebond(pos, "SL");
-                        }
-                    }
-                } catch (posErr: any) {
-                    console.warn(`[PREBOND] Monitor error for ${pos.mint.slice(0, 8)}: ${posErr.message}`);
-                }
-            }
-        } catch (error: any) {
-            console.warn(`[PREBOND] Monitor loop error: ${error.message}`);
-        }
-    }
-
-    /**
-     * Sell a prebond position back via Jupiter.
-     */
-    private async sellPrebond(pos: PrebondPosition, reason: string): Promise<void> {
-        try {
-            // Fetch actual on-chain balance (not stored purchase amount — could differ due to transfer taxes, rounding, etc.)
-            let tokenBalance = 0n;
-            try {
-                const mintPubkey = new PublicKey(pos.mint);
-                const accounts = await monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: mintPubkey });
-                tokenBalance = accounts.value.reduce((acc, a) => acc + BigInt(a.account.data.parsed.info.tokenAmount.amount), 0n);
-            } catch (_) {
-                // Fallback to stored amount if RPC fails
-                tokenBalance = BigInt(pos.buyAmountTokens);
-            }
-
-            if (tokenBalance <= 0n) {
-                await dbService.updatePrebondPosition(pos.mint, { status: "FAILED" });
-                return;
-            }
-
-            const sellResult = await this.strategy.sellToken(new PublicKey(pos.mint), tokenBalance, 15);
-
-            if (sellResult.success) {
-                const pnl = sellResult.amountSol - pos.buyAmountSol;
-                await dbService.updatePrebondPosition(pos.mint, {
-                    status: "SOLD",
-                    soldAmountSol: sellResult.amountSol,
-                    pnl
-                });
-                SocketManager.emitLog(`[PREBOND] Sold ${pos.symbol} (${reason}) for ${sellResult.amountSol.toFixed(4)} SOL | PnL: ${pnl >= 0 ? "+" : ""}${pnl.toFixed(4)} SOL`, pnl >= 0 ? "success" : "error");
-                SocketManager.io?.emit("prebondUpdate", { ...pos, status: "SOLD", soldAmountSol: sellResult.amountSol, pnl });
-            } else {
-                SocketManager.emitLog(`[PREBOND] Sell failed for ${pos.symbol}: ${sellResult.error}. Will retry next tick.`, "warning");
-            }
-        } catch (error: any) {
-            console.error(`[PREBOND] Sell error for ${pos.mint}:`, error.message);
         }
     }
 

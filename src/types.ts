@@ -25,6 +25,7 @@ export interface PoolData {
     totalSupply?: number;        // Total supply of the token
     initialMcap?: number;        // Market Cap at the time of entry
     currentMcap?: number;        // Real-time market cap value for UI passing
+    isPrebond?: boolean;         // true if created from prebond sniping (Pump.fun bonding curve)
 }
 
 export interface BotSettings {
@@ -59,10 +60,7 @@ export interface BotSettings {
     // Prebond Sniping
     enablePrebond: boolean;           // Master toggle for prebond sniping
     prebondBuyAmount: number;         // SOL to spend per prebond buy
-    prebondStrategy: "FLIP" | "GRADUATION"; // FLIP = sell on curve, GRADUATION = hold → LP
-    prebondFlipTarget: number;        // % gain to trigger sell in FLIP mode (e.g. 50 = 1.5x)
-    prebondStopLoss: number;          // % loss to trigger sell (e.g. -30)
-    prebondMaxHoldings: number;       // Max simultaneous prebond positions
+    prebondMaxHoldings: number;       // Max simultaneous prebond pools
     // Prebond Safety (independent from main forensic settings)
     prebondEnableReputation: boolean;  // Check creator wallet tx history
     prebondEnableBundle: boolean;      // Detect slot-0 bundled launches
@@ -71,21 +69,22 @@ export interface BotSettings {
     prebondMinDevTxCount: number;      // Min creator wallet transactions
 }
 
+/** @deprecated Legacy interface — prebond positions are now saved as PoolData with isPrebond=true */
 export interface PrebondPosition {
     mint: string;
     symbol: string;
     buyTxId: string;
-    buyPrice: number;           // SOL per token at purchase
-    buyAmountSol: number;       // SOL spent
-    buyAmountTokens: string;    // Raw token units (bigint as string)
-    creator: string;            // Creator wallet
+    buyPrice: number;
+    buyAmountSol: number;
+    buyAmountTokens: string;
+    creator: string;
     strategy: "FLIP" | "GRADUATION";
     status: "ACTIVE" | "SOLD" | "GRADUATED" | "FAILED";
     created: string;
     soldTxId?: string;
     soldAmountSol?: number;
     pnl?: number;
-    currentPrice?: number;      // Runtime only — not persisted
+    currentPrice?: number;
 }
 
 export interface TradeHistory {

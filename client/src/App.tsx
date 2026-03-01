@@ -363,9 +363,6 @@ function App() {
     // Prebond Sniping
     const [enablePrebond, setEnablePrebond] = useState(false);
     const [prebondBuyAmount, setPrebondBuyAmount] = useState(0.05);
-    const [prebondStrategy, setPrebondStrategy] = useState<"FLIP" | "GRADUATION">("FLIP");
-    const [prebondFlipTarget, setPrebondFlipTarget] = useState(50);
-    const [prebondStopLoss, setPrebondStopLoss] = useState(-30);
     const [prebondMaxHoldings, setPrebondMaxHoldings] = useState(3);
     // Prebond Safety (independent from main safety)
     const [prebondEnableReputation, setPrebondEnableReputation] = useState(true);
@@ -551,9 +548,6 @@ function App() {
                     // Prebond
                     if (s.enablePrebond !== undefined) setEnablePrebond(s.enablePrebond);
                     if (s.prebondBuyAmount !== undefined) setPrebondBuyAmount(s.prebondBuyAmount);
-                    if (s.prebondStrategy !== undefined) setPrebondStrategy(s.prebondStrategy);
-                    if (s.prebondFlipTarget !== undefined) setPrebondFlipTarget(s.prebondFlipTarget);
-                    if (s.prebondStopLoss !== undefined) setPrebondStopLoss(s.prebondStopLoss);
                     if (s.prebondMaxHoldings !== undefined) setPrebondMaxHoldings(s.prebondMaxHoldings);
                     // Prebond Safety
                     if (s.prebondEnableReputation !== undefined) setPrebondEnableReputation(s.prebondEnableReputation);
@@ -612,7 +606,7 @@ function App() {
                     maxTop5HolderPct,
                     minSafetyScore,
                     minTokenScore,
-                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings,
+                    enablePrebond, prebondBuyAmount, prebondMaxHoldings,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount
                 })
             });
@@ -670,7 +664,7 @@ function App() {
                     maxTop5HolderPct,
                     minSafetyScore,
                     minTokenScore,
-                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings,
+                    enablePrebond, prebondBuyAmount, prebondMaxHoldings,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount
                 })
             });
@@ -1277,23 +1271,8 @@ function App() {
                                     </div>
                                     <div className="space-y-3">
                                         <SettingInput label="Buy Amount" value={prebondBuyAmount} onChange={setPrebondBuyAmount} disabled={running} unit="SOL" subtext="SOL per prebond buy" />
-                                        <div className="flex items-center justify-between">
-                                            <div className="flex items-center gap-1.5">
-                                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Strategy</label>
-                                                <button onClick={() => showModal({ title: 'Prebond Strategy', message: 'FLIP: Auto-sell on the bonding curve when the target gain % is reached. Quick in-and-out trades.\n\nGRADUATION: Hold tokens until they graduate to a DEX (Raydium/PumpSwap), then transition into the normal Meteora LP flow. Longer hold but potentially bigger gains.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
-                                            </div>
-                                            <select value={prebondStrategy} onChange={(e) => setPrebondStrategy(e.target.value as "FLIP" | "GRADUATION")} className="bg-zinc-900 text-primary font-bold border border-primary/20 rounded px-2 py-1 text-[10px] outline-none" disabled={running}>
-                                                <option value="FLIP">FLIP</option>
-                                                <option value="GRADUATION">GRADUATION</option>
-                                            </select>
-                                        </div>
-                                        {prebondStrategy === "FLIP" && (
-                                            <div className="animate-in fade-in zoom-in-95 duration-200">
-                                                <SettingInput label="Flip Target" value={prebondFlipTarget} onChange={setPrebondFlipTarget} disabled={running} unit="%" subtext="Sell when gain reaches this %" />
-                                            </div>
-                                        )}
-                                        <SettingInput label="Stop Loss" value={prebondStopLoss} onChange={setPrebondStopLoss} disabled={running} unit="%" subtext="Emergency sell threshold" />
-                                        <SettingInput label="Max Holdings" value={prebondMaxHoldings} onChange={setPrebondMaxHoldings} disabled={running} subtext="Max simultaneous prebond positions" />
+                                        <SettingInput label="Max Holdings" value={prebondMaxHoldings} onChange={setPrebondMaxHoldings} disabled={running} subtext="Max simultaneous prebond pools" />
+                                        <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. TP/SL uses main pool settings.</div>
                                     </div>
 
                                     {/* Prebond Safety */}

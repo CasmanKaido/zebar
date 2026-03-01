@@ -168,6 +168,12 @@ export class DatabaseService {
             console.log("[DB] Migrated: Added prebond safety columns to global_settings table.");
         } catch (e) { }
 
+        // isPrebond flag for pools created from prebond sniping
+        try {
+            this.db.exec("ALTER TABLE pools ADD COLUMN isPrebond INTEGER NOT NULL DEFAULT 0");
+            console.log("[DB] Migrated: Added isPrebond column to pools table.");
+        } catch (e) { }
+
         // Advanced Safety migrations
         try {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN enableAuthorityCheck INTEGER NOT NULL DEFAULT 1");
@@ -201,7 +207,7 @@ export class DatabaseService {
                 fee_sol, fee_token, fee_total_lppp, withdrawalPending, priceReconstructed,
                 netRoi, initialSolValue, isBotCreated, entryUsdValue,
                 pos_base_lp, pos_token_lp, pos_total_lppp, baseToken,
-                totalSupply, initialMcap
+                totalSupply, initialMcap, isPrebond
             ) VALUES (
                 @poolId, @token, @mint, @roi, @created, @initialPrice,
                 @initialTokenAmount, @initialLpppAmount, @exited,
@@ -209,7 +215,7 @@ export class DatabaseService {
                 @fee_sol, @fee_token, @fee_total_lppp, @withdrawalPending, @priceReconstructed,
                 @netRoi, @initialSolValue, @isBotCreated, @entryUsdValue,
                 @pos_base_lp, @pos_token_lp, @pos_total_lppp, @baseToken,
-                @totalSupply, @initialMcap
+                @totalSupply, @initialMcap, @isPrebond
             ) ON CONFLICT(poolId) DO UPDATE SET
                 roi = excluded.roi,
                 exited = excluded.exited,
@@ -232,6 +238,7 @@ export class DatabaseService {
                 baseToken = excluded.baseToken,
                 totalSupply = excluded.totalSupply,
                 initialMcap = excluded.initialMcap,
+                isPrebond = excluded.isPrebond,
                 updated_at = CURRENT_TIMESTAMP
         `);
 
@@ -264,7 +271,8 @@ export class DatabaseService {
             pos_total_lppp: pool.positionValue?.totalLppp || "0",
             baseToken: pool.baseToken || "LPPP",
             totalSupply: pool.totalSupply || 0,
-            initialMcap: pool.initialMcap || 0
+            initialMcap: pool.initialMcap || 0,
+            isPrebond: pool.isPrebond ? 1 : 0
         });
     }
 
@@ -362,9 +370,6 @@ export class DatabaseService {
             minTokenScore: row.minTokenScore ?? 60,
             enablePrebond: row.enablePrebond !== undefined ? !!row.enablePrebond : false,
             prebondBuyAmount: row.prebondBuyAmount ?? 0.05,
-            prebondStrategy: row.prebondStrategy || "FLIP",
-            prebondFlipTarget: row.prebondFlipTarget ?? 50,
-            prebondStopLoss: row.prebondStopLoss ?? -30,
             prebondMaxHoldings: row.prebondMaxHoldings ?? 3,
             prebondEnableReputation: row.prebondEnableReputation !== undefined ? !!row.prebondEnableReputation : true,
             prebondEnableBundle: row.prebondEnableBundle !== undefined ? !!row.prebondEnableBundle : true,
@@ -410,9 +415,6 @@ export class DatabaseService {
                 minTokenScore = @minTokenScore,
                 enablePrebond = @enablePrebond,
                 prebondBuyAmount = @prebondBuyAmount,
-                prebondStrategy = @prebondStrategy,
-                prebondFlipTarget = @prebondFlipTarget,
-                prebondStopLoss = @prebondStopLoss,
                 prebondMaxHoldings = @prebondMaxHoldings,
                 prebondEnableReputation = @prebondEnableReputation,
                 prebondEnableBundle = @prebondEnableBundle,
@@ -456,9 +458,6 @@ export class DatabaseService {
             minTokenScore: settings.minTokenScore,
             enablePrebond: settings.enablePrebond ? 1 : 0,
             prebondBuyAmount: settings.prebondBuyAmount,
-            prebondStrategy: settings.prebondStrategy,
-            prebondFlipTarget: settings.prebondFlipTarget,
-            prebondStopLoss: settings.prebondStopLoss,
             prebondMaxHoldings: settings.prebondMaxHoldings,
             prebondEnableReputation: settings.prebondEnableReputation ? 1 : 0,
             prebondEnableBundle: settings.prebondEnableBundle ? 1 : 0,
@@ -574,7 +573,8 @@ export class DatabaseService {
             entryUsdValue: row.entryUsdValue,
             baseToken: row.baseToken || "LPPP",
             totalSupply: row.totalSupply,
-            initialMcap: row.initialMcap
+            initialMcap: row.initialMcap,
+            isPrebond: !!row.isPrebond
         };
     }
 
