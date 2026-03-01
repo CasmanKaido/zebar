@@ -592,8 +592,10 @@ export class BotManager {
     /**
      * Direct Pump.fun program WebSocket subscription for PREBOND mode.
      * Listens for new token mints on the Pump.fun bonding curve program.
-     * Every log event = potential new token → extract mint → buyPrebond().
+     * Only fires on token CREATION events — not buys/sells on existing tokens.
      */
+    private _pumpfunSeenMints = new Set<string>(); // Mint-level dedup (signatures differ per tx, mints repeat)
+
     private startPrebondWebSocket() {
         const PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 
@@ -602,8 +604,17 @@ export class BotManager {
         const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
         const stables = new Set([SOL, USDC, USDT]);
 
-        // Pump.fun creation keywords (from their IDL / observed logs)
-        const CREATION_KEYWORDS = ["Create", "create", "Initialize", "initialize", "MintTo"];
+        // Pump.fun CREATION-ONLY keywords.
+        // IMPORTANT: "MintTo" is deliberately excluded — it fires on every BUY (minting tokens from curve).
+        // Only "Create"/"Initialize" indicate actual new token creation.
+        const CREATION_KEYWORDS = ["Create", "create", "Initialize", "initialize"];
+
+        // Clean up seen mints periodically (every 5 minutes)
+        setInterval(() => {
+            if (this._pumpfunSeenMints.size > 200) {
+                this._pumpfunSeenMints.clear();
+            }
+        }, 300000);
 
         try {
             const sub = connection.onLogs(
@@ -626,7 +637,7 @@ export class BotManager {
                     );
                     if (!isCreation) return;
 
-                    // Resolve the mint from the transaction
+                    // Resolve the mint from the transaction (pass dexId as "pumpfun_new" to distinguish from graduations)
                     this.resolveWsMint(signature, stables, "pumpfun").catch(() => { });
                 },
                 "confirmed"
@@ -671,8 +682,19 @@ export class BotManager {
                 const cached = this.rejectedTokens.get(mint);
                 if (cached && cached.expiry > Date.now()) continue;
 
+                // Mint-level dedup for Pump.fun: same token can fire many WebSocket events
+                // (different signatures for create, first buy, second buy, etc.)
+                if (dexId === "pumpfun") {
+                    if (this._pumpfunSeenMints.has(mint)) continue;
+                    this._pumpfunSeenMints.add(mint);
+                }
+
+                // For Pump.fun WebSocket: these are NEW token creations, not graduations.
+                // Graduations are detected by Raydium/Meteora WebSocket (pool creation on DEX).
+                const isGraduation = dexId !== "pumpfun";
+
                 SocketManager.emitLog(`[WS] ⚡ New pool detected! ${mint.slice(0, 8)}... (${dexId})`, "info");
-                this.triggerFlashScout(mint, "", dexId, true).catch(() => { });
+                this.triggerFlashScout(mint, "", dexId, isGraduation).catch(() => { });
             }
         } catch {
             // Silent
@@ -970,6 +992,7 @@ export class BotManager {
         this.pendingMints.clear();
         this._flashRetryCount.clear();
         this._pumpfunWatchlist.clear();
+        this._pumpfunSeenMints.clear();
 
         // Unsubscribe WebSocket listeners
         for (const subId of this._wsSubscriptionIds) {
