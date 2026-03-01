@@ -67,6 +67,12 @@ export interface BotSettings {
     prebondEnableSimulation: boolean;  // Jupiter sell simulation (honeypot check)
     prebondEnableAuthority: boolean;   // Reject tokens with mint/freeze authority
     prebondMinDevTxCount: number;      // Min creator wallet transactions
+    // Prebond Discovery Filters (Jupiter Token API V2)
+    prebondMinMcap: number;            // Min market cap on bonding curve (0 = disabled)
+    prebondMaxMcap: number;            // Max market cap on bonding curve (0 = no max)
+    prebondMinHolders: number;         // Min holder count (0 = disabled)
+    prebondMinOrganicScore: number;    // Min Jupiter organic score 0-100 (0 = disabled)
+    prebondMaxTopHolderPct: number;    // Max top holder % (0 = no max)
 }
 
 /** @deprecated Legacy interface — prebond positions are now saved as PoolData with isPrebond=true */

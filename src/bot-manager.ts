@@ -1,4 +1,4 @@
-import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT } from "./config";
+import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT, JUPITER_API_KEY } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -75,7 +75,12 @@ export class BotManager {
         prebondEnableBundle: true,
         prebondEnableSimulation: false,
         prebondEnableAuthority: true,
-        prebondMinDevTxCount: 10
+        prebondMinDevTxCount: 10,
+        prebondMinMcap: 0,
+        prebondMaxMcap: 0,
+        prebondMinHolders: 0,
+        prebondMinOrganicScore: 0,
+        prebondMaxTopHolderPct: 0
     };
 
     constructor() {
@@ -1987,6 +1992,47 @@ export class BotManager {
                 }
             }
 
+            // --- Prebond Discovery Filters (Jupiter Token API V2) ---
+            const hasFilters = this.settings.prebondMinMcap > 0 ||
+                               this.settings.prebondMaxMcap > 0 ||
+                               this.settings.prebondMinHolders > 0 ||
+                               this.settings.prebondMinOrganicScore > 0 ||
+                               this.settings.prebondMaxTopHolderPct > 0;
+
+            if (hasFilters) {
+                const tokenData = await this.fetchJupiterTokenData(mint);
+                if (tokenData) {
+                    const mcap = tokenData.mcap || 0;
+                    const holders = tokenData.holderCount || 0;
+                    const organicScore = tokenData.organicScore || 0;
+                    const topHolderPct = tokenData.audit?.topHoldersPercentage || 0;
+
+                    if (this.settings.prebondMinMcap > 0 && mcap < this.settings.prebondMinMcap) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: MCap $${mcap.toLocaleString()} < min $${this.settings.prebondMinMcap.toLocaleString()}`, "warning");
+                        return false;
+                    }
+                    if (this.settings.prebondMaxMcap > 0 && mcap > this.settings.prebondMaxMcap) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: MCap $${mcap.toLocaleString()} > max $${this.settings.prebondMaxMcap.toLocaleString()}`, "warning");
+                        return false;
+                    }
+                    if (this.settings.prebondMinHolders > 0 && holders < this.settings.prebondMinHolders) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${holders} holders < min ${this.settings.prebondMinHolders}`, "warning");
+                        return false;
+                    }
+                    if (this.settings.prebondMinOrganicScore > 0 && organicScore < this.settings.prebondMinOrganicScore) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: organic score ${organicScore} < min ${this.settings.prebondMinOrganicScore}`, "warning");
+                        return false;
+                    }
+                    if (this.settings.prebondMaxTopHolderPct > 0 && topHolderPct > this.settings.prebondMaxTopHolderPct) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: top holders ${topHolderPct.toFixed(1)}% > max ${this.settings.prebondMaxTopHolderPct}%`, "warning");
+                        return false;
+                    }
+
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} passed filters (MCap:$${mcap.toLocaleString()} Holders:${holders} Score:${organicScore})`, "info");
+                }
+                // If API fails (tokenData is null), skip filters — don't block the buy
+            }
+
             // --- Buy on bonding curve ---
             SocketManager.emitLog(`[PREBOND] Buying ${mint.slice(0, 8)}... on bonding curve (${this.settings.prebondBuyAmount} SOL)`, "info");
 
@@ -2109,6 +2155,28 @@ export class BotManager {
         } finally {
             this._pendingPrebondCount--;
             this.pendingMints.delete(mint);
+        }
+    }
+
+    /**
+     * Fetch token data from Jupiter Token API V2 for prebond discovery filters.
+     */
+    private async fetchJupiterTokenData(mint: string): Promise<any | null> {
+        try {
+            const headers: Record<string, string> = {};
+            if (JUPITER_API_KEY) headers["x-api-key"] = JUPITER_API_KEY;
+            const res = await axios.get("https://api.jup.ag/tokens/v2/search", {
+                params: { query: mint },
+                headers,
+                timeout: 5000
+            });
+            if (Array.isArray(res.data)) {
+                return res.data.find((t: any) => t.id === mint || t.mint === mint) || null;
+            }
+            return null;
+        } catch (err: any) {
+            console.warn(`[PREBOND] Jupiter Token API lookup failed for ${mint.slice(0, 8)}: ${err.message}`);
+            return null;
         }
     }
 

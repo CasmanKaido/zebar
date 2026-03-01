@@ -370,6 +370,12 @@ function App() {
     const [prebondEnableSimulation, setPrebondEnableSimulation] = useState(false);
     const [prebondEnableAuthority, setPrebondEnableAuthority] = useState(true);
     const [prebondMinDevTxCount, setPrebondMinDevTxCount] = useState(10);
+    // Prebond Discovery Filters
+    const [prebondMinMcap, setPrebondMinMcap] = useState(0);
+    const [prebondMaxMcap, setPrebondMaxMcap] = useState(0);
+    const [prebondMinHolders, setPrebondMinHolders] = useState(0);
+    const [prebondMinOrganicScore, setPrebondMinOrganicScore] = useState(0);
+    const [prebondMaxTopHolderPct, setPrebondMaxTopHolderPct] = useState(0);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -555,6 +561,11 @@ function App() {
                     if (s.prebondEnableSimulation !== undefined) setPrebondEnableSimulation(s.prebondEnableSimulation);
                     if (s.prebondEnableAuthority !== undefined) setPrebondEnableAuthority(s.prebondEnableAuthority);
                     if (s.prebondMinDevTxCount !== undefined) setPrebondMinDevTxCount(s.prebondMinDevTxCount);
+                    if (s.prebondMinMcap !== undefined) setPrebondMinMcap(s.prebondMinMcap);
+                    if (s.prebondMaxMcap !== undefined) setPrebondMaxMcap(s.prebondMaxMcap);
+                    if (s.prebondMinHolders !== undefined) setPrebondMinHolders(s.prebondMinHolders);
+                    if (s.prebondMinOrganicScore !== undefined) setPrebondMinOrganicScore(s.prebondMinOrganicScore);
+                    if (s.prebondMaxTopHolderPct !== undefined) setPrebondMaxTopHolderPct(s.prebondMaxTopHolderPct);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -607,7 +618,8 @@ function App() {
                     minSafetyScore,
                     minTokenScore,
                     enablePrebond, prebondBuyAmount, prebondMaxHoldings,
-                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount
+                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct
                 })
             });
 
@@ -665,7 +677,8 @@ function App() {
                     minSafetyScore,
                     minTokenScore,
                     enablePrebond, prebondBuyAmount, prebondMaxHoldings,
-                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount
+                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct
                 })
             });
 
@@ -1290,6 +1303,20 @@ function App() {
                                         <Toggle label="Bundle Detection" enabled={prebondEnableBundle} onChange={setPrebondEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Bundle Detection (Prebond)', message: 'Detects if the token launch was bundled — where the creator buys a large portion of supply in the same slot as creation. Bundled launches on Pump.fun are a common rug setup where supply is cornered before anyone else can buy.', type: 'info' })} />
                                         <Toggle label="Sell Simulation" enabled={prebondEnableSimulation} onChange={setPrebondEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell Simulation (Prebond)', message: 'Simulates a sell via Jupiter Quote API before buying. If Jupiter cannot find a route to sell the token back to SOL, it is likely a honeypot (you can buy but not sell). This is a read-only API call — no transaction is sent. Disabled by default as very new tokens may not have routes yet.', type: 'info' })} />
                                         <Toggle label="Authority Check" enabled={prebondEnableAuthority} onChange={setPrebondEnableAuthority} disabled={running} onInfo={() => showModal({ title: 'Mint/Freeze Authority (Prebond)', message: 'Checks if the token has active Mint Authority (can inflate supply) or Freeze Authority (can freeze your tokens). Pump.fun revokes these at creation — if either is still active, it is a major red flag and the token is rejected.', type: 'info' })} />
+                                    </div>
+
+                                    {/* Prebond Discovery Filters */}
+                                    <div className="pt-2 border-t border-white/5 space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <Search size={14} className="text-muted-foreground" />
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Discovery Filters</span>
+                                            <button onClick={() => showModal({ title: 'Prebond Discovery Filters', message: 'Filter bonding curve tokens using data from Jupiter Token API V2. Set any value to 0 to disable that filter. All filters are optional — when all are 0, every token that passes safety checks will be bought.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
+                                        </div>
+                                        <SettingInput label="Min MCap" value={prebondMinMcap} onChange={setPrebondMinMcap} disabled={running} unit="$" subtext="0 = disabled" />
+                                        <SettingInput label="Max MCap" value={prebondMaxMcap} onChange={setPrebondMaxMcap} disabled={running} unit="$" subtext="0 = no max" />
+                                        <SettingInput label="Min Holders" value={prebondMinHolders} onChange={setPrebondMinHolders} disabled={running} subtext="0 = disabled" />
+                                        <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
+                                        <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
                                     </div>
                                 </div>
                                 )}

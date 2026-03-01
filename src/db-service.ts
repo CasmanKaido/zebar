@@ -184,6 +184,16 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN minTokenScore REAL NOT NULL DEFAULT 60");
             console.log("[DB] Migrated: Added advanced safety columns to global_settings table.");
         } catch (e) { }
+
+        // Prebond Discovery Filters migrations
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinMcap REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxMcap REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinHolders INTEGER NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinOrganicScore REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxTopHolderPct REAL NOT NULL DEFAULT 0");
+            console.log("[DB] Migrated: Added prebond discovery filter columns to global_settings table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -375,7 +385,12 @@ export class DatabaseService {
             prebondEnableBundle: row.prebondEnableBundle !== undefined ? !!row.prebondEnableBundle : true,
             prebondEnableSimulation: row.prebondEnableSimulation !== undefined ? !!row.prebondEnableSimulation : false,
             prebondEnableAuthority: row.prebondEnableAuthority !== undefined ? !!row.prebondEnableAuthority : true,
-            prebondMinDevTxCount: row.prebondMinDevTxCount ?? 10
+            prebondMinDevTxCount: row.prebondMinDevTxCount ?? 10,
+            prebondMinMcap: row.prebondMinMcap ?? 0,
+            prebondMaxMcap: row.prebondMaxMcap ?? 0,
+            prebondMinHolders: row.prebondMinHolders ?? 0,
+            prebondMinOrganicScore: row.prebondMinOrganicScore ?? 0,
+            prebondMaxTopHolderPct: row.prebondMaxTopHolderPct ?? 0
         };
     }
 
@@ -420,7 +435,12 @@ export class DatabaseService {
                 prebondEnableBundle = @prebondEnableBundle,
                 prebondEnableSimulation = @prebondEnableSimulation,
                 prebondEnableAuthority = @prebondEnableAuthority,
-                prebondMinDevTxCount = @prebondMinDevTxCount
+                prebondMinDevTxCount = @prebondMinDevTxCount,
+                prebondMinMcap = @prebondMinMcap,
+                prebondMaxMcap = @prebondMaxMcap,
+                prebondMinHolders = @prebondMinHolders,
+                prebondMinOrganicScore = @prebondMinOrganicScore,
+                prebondMaxTopHolderPct = @prebondMaxTopHolderPct
             WHERE id = 1
         `);
 
@@ -463,7 +483,12 @@ export class DatabaseService {
             prebondEnableBundle: settings.prebondEnableBundle ? 1 : 0,
             prebondEnableSimulation: settings.prebondEnableSimulation ? 1 : 0,
             prebondEnableAuthority: settings.prebondEnableAuthority ? 1 : 0,
-            prebondMinDevTxCount: settings.prebondMinDevTxCount
+            prebondMinDevTxCount: settings.prebondMinDevTxCount,
+            prebondMinMcap: settings.prebondMinMcap,
+            prebondMaxMcap: settings.prebondMaxMcap,
+            prebondMinHolders: settings.prebondMinHolders,
+            prebondMinOrganicScore: settings.prebondMinOrganicScore,
+            prebondMaxTopHolderPct: settings.prebondMaxTopHolderPct
         });
     }
 
