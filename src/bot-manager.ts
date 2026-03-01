@@ -507,10 +507,14 @@ export class BotManager {
         }
 
         // Start real-time WebSocket listeners
-        // SCOUT/ALL: detect new pool creations + Pump.fun graduations
-        // PREBOND: only needed for Helius webhook Pump.fun token detection (handled separately)
+        // SCOUT/ALL: detect new pool creations (Raydium + Meteora)
         if (includesPoolScanning) {
             this.startPoolWebSocket();
+        }
+
+        // PREBOND/ALL: direct Pump.fun program subscription for bonding curve token detection
+        if (includesPrebond) {
+            this.startPrebondWebSocket();
         }
     }
 
@@ -582,6 +586,56 @@ export class BotManager {
             SocketManager.emitLog(`[WS] Real-time WebSocket listeners active on Raydium + Meteora (pool creation only).`, "success");
         } catch (err: any) {
             console.warn(`[WS] Failed to start WebSocket listeners: ${err.message}`);
+        }
+    }
+
+    /**
+     * Direct Pump.fun program WebSocket subscription for PREBOND mode.
+     * Listens for new token mints on the Pump.fun bonding curve program.
+     * Every log event = potential new token → extract mint → buyPrebond().
+     */
+    private startPrebondWebSocket() {
+        const PUMPFUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+
+        const SOL = "So11111111111111111111111111111111111111112";
+        const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+        const USDT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+        const stables = new Set([SOL, USDC, USDT]);
+
+        // Pump.fun creation keywords (from their IDL / observed logs)
+        const CREATION_KEYWORDS = ["Create", "create", "Initialize", "initialize", "MintTo"];
+
+        try {
+            const sub = connection.onLogs(
+                new PublicKey(PUMPFUN_PROGRAM),
+                (logs) => {
+                    if (!this.isRunning) return;
+                    if (logs.err) return;
+
+                    const signature = logs.signature;
+                    if (!signature) return;
+
+                    // Dedup with the shared signature set
+                    if (this._wsSeenSignatures.has(signature)) return;
+                    this._wsSeenSignatures.add(signature);
+
+                    // Filter for token creation events only (skip buys/sells on existing tokens)
+                    const logMessages: string[] = logs.logs || [];
+                    const isCreation = logMessages.some((msg: string) =>
+                        CREATION_KEYWORDS.some(kw => msg.includes(kw))
+                    );
+                    if (!isCreation) return;
+
+                    // Resolve the mint from the transaction
+                    this.resolveWsMint(signature, stables, "pumpfun").catch(() => { });
+                },
+                "confirmed"
+            );
+            this._wsSubscriptionIds.push(sub);
+
+            SocketManager.emitLog(`[WS] Pump.fun bonding curve WebSocket active — listening for new token mints.`, "success");
+        } catch (err: any) {
+            console.warn(`[WS] Failed to start Pump.fun WebSocket: ${err.message}`);
         }
     }
 
