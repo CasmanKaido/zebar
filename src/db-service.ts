@@ -158,6 +158,16 @@ export class DatabaseService {
             console.log("[DB] Migrated: Added prebond columns to global_settings table.");
         } catch (e) { }
 
+        // Prebond Safety migrations (independent from main safety settings)
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableReputation INTEGER NOT NULL DEFAULT 1");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableBundle INTEGER NOT NULL DEFAULT 1");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableSimulation INTEGER NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableAuthority INTEGER NOT NULL DEFAULT 1");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinDevTxCount INTEGER NOT NULL DEFAULT 10");
+            console.log("[DB] Migrated: Added prebond safety columns to global_settings table.");
+        } catch (e) { }
+
         // Advanced Safety migrations
         try {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN enableAuthorityCheck INTEGER NOT NULL DEFAULT 1");
@@ -355,7 +365,12 @@ export class DatabaseService {
             prebondStrategy: row.prebondStrategy || "FLIP",
             prebondFlipTarget: row.prebondFlipTarget ?? 50,
             prebondStopLoss: row.prebondStopLoss ?? -30,
-            prebondMaxHoldings: row.prebondMaxHoldings ?? 3
+            prebondMaxHoldings: row.prebondMaxHoldings ?? 3,
+            prebondEnableReputation: row.prebondEnableReputation !== undefined ? !!row.prebondEnableReputation : true,
+            prebondEnableBundle: row.prebondEnableBundle !== undefined ? !!row.prebondEnableBundle : true,
+            prebondEnableSimulation: row.prebondEnableSimulation !== undefined ? !!row.prebondEnableSimulation : false,
+            prebondEnableAuthority: row.prebondEnableAuthority !== undefined ? !!row.prebondEnableAuthority : true,
+            prebondMinDevTxCount: row.prebondMinDevTxCount ?? 10
         };
     }
 
@@ -398,7 +413,12 @@ export class DatabaseService {
                 prebondStrategy = @prebondStrategy,
                 prebondFlipTarget = @prebondFlipTarget,
                 prebondStopLoss = @prebondStopLoss,
-                prebondMaxHoldings = @prebondMaxHoldings
+                prebondMaxHoldings = @prebondMaxHoldings,
+                prebondEnableReputation = @prebondEnableReputation,
+                prebondEnableBundle = @prebondEnableBundle,
+                prebondEnableSimulation = @prebondEnableSimulation,
+                prebondEnableAuthority = @prebondEnableAuthority,
+                prebondMinDevTxCount = @prebondMinDevTxCount
             WHERE id = 1
         `);
 
@@ -439,7 +459,12 @@ export class DatabaseService {
             prebondStrategy: settings.prebondStrategy,
             prebondFlipTarget: settings.prebondFlipTarget,
             prebondStopLoss: settings.prebondStopLoss,
-            prebondMaxHoldings: settings.prebondMaxHoldings
+            prebondMaxHoldings: settings.prebondMaxHoldings,
+            prebondEnableReputation: settings.prebondEnableReputation ? 1 : 0,
+            prebondEnableBundle: settings.prebondEnableBundle ? 1 : 0,
+            prebondEnableSimulation: settings.prebondEnableSimulation ? 1 : 0,
+            prebondEnableAuthority: settings.prebondEnableAuthority ? 1 : 0,
+            prebondMinDevTxCount: settings.prebondMinDevTxCount
         });
     }
 

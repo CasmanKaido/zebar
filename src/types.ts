@@ -63,6 +63,12 @@ export interface BotSettings {
     prebondFlipTarget: number;        // % gain to trigger sell in FLIP mode (e.g. 50 = 1.5x)
     prebondStopLoss: number;          // % loss to trigger sell (e.g. -30)
     prebondMaxHoldings: number;       // Max simultaneous prebond positions
+    // Prebond Safety (independent from main forensic settings)
+    prebondEnableReputation: boolean;  // Check creator wallet tx history
+    prebondEnableBundle: boolean;      // Detect slot-0 bundled launches
+    prebondEnableSimulation: boolean;  // Jupiter sell simulation (honeypot check)
+    prebondEnableAuthority: boolean;   // Reject tokens with mint/freeze authority
+    prebondMinDevTxCount: number;      // Min creator wallet transactions
 }
 
 export interface PrebondPosition {

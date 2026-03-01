@@ -367,6 +367,12 @@ function App() {
     const [prebondFlipTarget, setPrebondFlipTarget] = useState(50);
     const [prebondStopLoss, setPrebondStopLoss] = useState(-30);
     const [prebondMaxHoldings, setPrebondMaxHoldings] = useState(3);
+    // Prebond Safety (independent from main safety)
+    const [prebondEnableReputation, setPrebondEnableReputation] = useState(true);
+    const [prebondEnableBundle, setPrebondEnableBundle] = useState(true);
+    const [prebondEnableSimulation, setPrebondEnableSimulation] = useState(false);
+    const [prebondEnableAuthority, setPrebondEnableAuthority] = useState(true);
+    const [prebondMinDevTxCount, setPrebondMinDevTxCount] = useState(10);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -549,6 +555,12 @@ function App() {
                     if (s.prebondFlipTarget !== undefined) setPrebondFlipTarget(s.prebondFlipTarget);
                     if (s.prebondStopLoss !== undefined) setPrebondStopLoss(s.prebondStopLoss);
                     if (s.prebondMaxHoldings !== undefined) setPrebondMaxHoldings(s.prebondMaxHoldings);
+                    // Prebond Safety
+                    if (s.prebondEnableReputation !== undefined) setPrebondEnableReputation(s.prebondEnableReputation);
+                    if (s.prebondEnableBundle !== undefined) setPrebondEnableBundle(s.prebondEnableBundle);
+                    if (s.prebondEnableSimulation !== undefined) setPrebondEnableSimulation(s.prebondEnableSimulation);
+                    if (s.prebondEnableAuthority !== undefined) setPrebondEnableAuthority(s.prebondEnableAuthority);
+                    if (s.prebondMinDevTxCount !== undefined) setPrebondMinDevTxCount(s.prebondMinDevTxCount);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -600,7 +612,8 @@ function App() {
                     maxTop5HolderPct,
                     minSafetyScore,
                     minTokenScore,
-                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings
+                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings,
+                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount
                 })
             });
 
@@ -657,7 +670,8 @@ function App() {
                     maxTop5HolderPct,
                     minSafetyScore,
                     minTokenScore,
-                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings
+                    enablePrebond, prebondBuyAmount, prebondStrategy, prebondFlipTarget, prebondStopLoss, prebondMaxHoldings,
+                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount
                 })
             });
 
@@ -1280,6 +1294,23 @@ function App() {
                                         )}
                                         <SettingInput label="Stop Loss" value={prebondStopLoss} onChange={setPrebondStopLoss} disabled={running} unit="%" subtext="Emergency sell threshold" />
                                         <SettingInput label="Max Holdings" value={prebondMaxHoldings} onChange={setPrebondMaxHoldings} disabled={running} subtext="Max simultaneous prebond positions" />
+                                    </div>
+
+                                    {/* Prebond Safety */}
+                                    <div className="pt-2 border-t border-white/5 space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <ShieldAlert size={14} className="text-muted-foreground" />
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Prebond Safety</span>
+                                        </div>
+                                        <Toggle label="Creator Reputation" enabled={prebondEnableReputation} onChange={setPrebondEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Creator Reputation (Prebond)', message: 'Checks the creator wallet transaction history before buying. Fresh wallets with few transactions are likely burner wallets created for rug pulls. This uses a separate threshold from the main safety settings.', type: 'info' })} />
+                                        {prebondEnableReputation && (
+                                            <div className="ml-4 animate-in fade-in zoom-in-95 duration-200">
+                                                <SettingInput label="Min Creator TXs" value={prebondMinDevTxCount} onChange={setPrebondMinDevTxCount} disabled={running} subtext="Minimum transactions on creator wallet" />
+                                            </div>
+                                        )}
+                                        <Toggle label="Bundle Detection" enabled={prebondEnableBundle} onChange={setPrebondEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Bundle Detection (Prebond)', message: 'Detects if the token launch was bundled — where the creator buys a large portion of supply in the same slot as creation. Bundled launches on Pump.fun are a common rug setup where supply is cornered before anyone else can buy.', type: 'info' })} />
+                                        <Toggle label="Sell Simulation" enabled={prebondEnableSimulation} onChange={setPrebondEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell Simulation (Prebond)', message: 'Simulates a sell via Jupiter Quote API before buying. If Jupiter cannot find a route to sell the token back to SOL, it is likely a honeypot (you can buy but not sell). This is a read-only API call — no transaction is sent. Disabled by default as very new tokens may not have routes yet.', type: 'info' })} />
+                                        <Toggle label="Authority Check" enabled={prebondEnableAuthority} onChange={setPrebondEnableAuthority} disabled={running} onInfo={() => showModal({ title: 'Mint/Freeze Authority (Prebond)', message: 'Checks if the token has active Mint Authority (can inflate supply) or Freeze Authority (can freeze your tokens). Pump.fun revokes these at creation — if either is still active, it is a major red flag and the token is rejected.', type: 'info' })} />
                                     </div>
                                 </div>
                                 )}

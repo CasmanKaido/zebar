@@ -1,4 +1,5 @@
 import { Connection, PublicKey } from "@solana/web3.js";
+import { getMint } from "@solana/spl-token";
 import { BotSettings } from "./types";
 import { RPC_URL, JUPITER_API_KEY } from "./config";
 import axios from "axios";
@@ -121,6 +122,30 @@ export class SecurityGuard {
             // Network/timeout errors — fail open (don't block on API issues)
             console.warn(`[SECURITY] Sell simulation failed: ${err.message}`);
             return { success: true };
+        }
+    }
+
+    /**
+     * Checks if a token has active mint or freeze authority.
+     * Pump.fun revokes these at creation — if present, it's a red flag.
+     * Pure on-chain read (1 RPC call), no external API needed.
+     */
+    async checkMintAuthority(mint: string): Promise<{ safe: boolean; reason?: string }> {
+        try {
+            const mintPubkey = new PublicKey(mint);
+            const mintInfo = await getMint(this.connection, mintPubkey, "confirmed");
+
+            if (mintInfo.mintAuthority !== null) {
+                return { safe: false, reason: `Mint authority is active (${mintInfo.mintAuthority.toBase58().slice(0, 8)}...) — supply can be inflated` };
+            }
+            if (mintInfo.freezeAuthority !== null) {
+                return { safe: false, reason: `Freeze authority is active (${mintInfo.freezeAuthority.toBase58().slice(0, 8)}...) — tokens can be frozen` };
+            }
+
+            return { safe: true };
+        } catch (error: any) {
+            console.warn(`[SECURITY] Authority check failed for ${mint.slice(0, 8)}: ${error.message}`);
+            return { safe: true }; // Fail open
         }
     }
 

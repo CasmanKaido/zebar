@@ -73,7 +73,12 @@ export class BotManager {
         prebondStrategy: "FLIP",
         prebondFlipTarget: 50,
         prebondStopLoss: -30,
-        prebondMaxHoldings: 3
+        prebondMaxHoldings: 3,
+        prebondEnableReputation: true,
+        prebondEnableBundle: true,
+        prebondEnableSimulation: false,
+        prebondEnableAuthority: true,
+        prebondMinDevTxCount: 10
     };
 
     constructor() {
@@ -1835,9 +1840,11 @@ export class BotManager {
                 return false;
             }
 
-            // Creator reputation check (reuse existing security guard)
-            if (creator && this.settings.enableReputation) {
-                const rep = await securityGuard.checkDevReputation(creator, this.settings.minDevTxCount);
+            // --- Prebond-specific safety gates (independent from main forensic settings) ---
+
+            // Creator reputation check
+            if (creator && this.settings.prebondEnableReputation) {
+                const rep = await securityGuard.checkDevReputation(creator, this.settings.prebondMinDevTxCount);
                 if (!rep.safe) {
                     SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${rep.reason}`, "warning");
                     this.rejectedTokens.set(mint, { reason: rep.reason || "bad_creator", expiry: Date.now() + 10 * 60 * 1000 });
@@ -1846,11 +1853,31 @@ export class BotManager {
             }
 
             // Bundle detection
-            if (this.settings.enableBundle) {
+            if (this.settings.prebondEnableBundle) {
                 const bundle = await securityGuard.detectBundle(mint);
                 if (bundle.bundled) {
                     SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${bundle.reason}`, "warning");
                     this.rejectedTokens.set(mint, { reason: bundle.reason || "bundled", expiry: Date.now() + 10 * 60 * 1000 });
+                    return false;
+                }
+            }
+
+            // Honeypot simulation (Jupiter sell quote)
+            if (this.settings.prebondEnableSimulation) {
+                const sim = await securityGuard.simulateExecution(mint);
+                if (!sim.success) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${sim.error}`, "warning");
+                    this.rejectedTokens.set(mint, { reason: sim.error || "honeypot", expiry: Date.now() + 10 * 60 * 1000 });
+                    return false;
+                }
+            }
+
+            // Mint/Freeze authority check (on-chain)
+            if (this.settings.prebondEnableAuthority) {
+                const auth = await securityGuard.checkMintAuthority(mint);
+                if (!auth.safe) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${auth.reason}`, "warning");
+                    this.rejectedTokens.set(mint, { reason: auth.reason || "authority_active", expiry: Date.now() + 10 * 60 * 1000 });
                     return false;
                 }
             }
