@@ -474,12 +474,10 @@ export class BotManager {
             SocketManager.emitLog(`LPPP BOT [${mode}] Active (Vol5m: $${this.settings.volume5m.min}-$${this.settings.volume5m.max}, Vol1h: $${this.settings.volume1h.min}-$${this.settings.volume1h.max}, Vol24h: $${this.settings.volume24h.min}-$${this.settings.volume24h.max}, Liq: $${this.settings.liquidity.min}-$${this.settings.liquidity.max}, MCAP: $${this.settings.mcap.min}-$${this.settings.mcap.max})...`, "info");
         }
 
+        // Derive enablePrebond from mode — mode is the single source of truth
+        this.settings.enablePrebond = includesPrebond;
         if (includesPrebond) {
-            // Force enablePrebond ON when mode includes prebond
-            this.settings.enablePrebond = true;
             SocketManager.emitLog(`[PREBOND] Bonding curve sniping active (${this.settings.prebondStrategy} strategy, ${this.settings.prebondBuyAmount} SOL/buy, max ${this.settings.prebondMaxHoldings} holdings)`, "info");
-        } else {
-            this.settings.enablePrebond = false;
         }
 
         // Start pool-based scanner (SCOUT, ANALYST, ALL — but NOT PREBOND-only)
@@ -1342,10 +1340,8 @@ export class BotManager {
             } finally {
                 sweepCount++;
 
-                // Prebond position monitoring (every other sweep to avoid rate limiting Jupiter)
-                if (sweepCount % 2 === 0) {
-                    this.monitorPrebondPositions().catch(e => console.warn("[PREBOND] Monitor error:", e));
-                }
+                // Prebond position monitoring (every sweep — bonding curve prices move fast)
+                this.monitorPrebondPositions().catch(e => console.warn("[PREBOND] Monitor error:", e));
 
                 // Schedule next iteration (recursive timeout).
                 // Use activePools (non-exited, bot-created) not pools (all historical records),
@@ -1691,10 +1687,11 @@ export class BotManager {
         if (isGraduation) {
             const prebondPos = await dbService.getPrebondPosition(mint);
             if (prebondPos && prebondPos.status === "ACTIVE" && prebondPos.strategy === "GRADUATION") {
-                SocketManager.emitLog(`[PREBOND] ${prebondPos.symbol || mint.slice(0, 8)} graduated! Transitioning to LP flow...`, "success");
+                SocketManager.emitLog(`[PREBOND] ${prebondPos.symbol || mint.slice(0, 8)} graduated! Tokens already in wallet.`, "success");
                 await dbService.updatePrebondPosition(mint, { status: "GRADUATED" });
-                // Let the normal flash scout flow continue — it will buy fresh via Jupiter + create Meteora LP
-                // The graduated tokens already in wallet will be used by createMeteoraPool
+                // Do NOT continue to the buy flow — tokens are already held from prebond.
+                // The existing tokens will be picked up by the next scanner sweep or manual LP creation.
+                return;
             }
         }
 
@@ -1823,6 +1820,10 @@ export class BotManager {
      * Buy a token directly on the Pump.fun bonding curve via Jupiter.
      */
     private async buyPrebond(mint: string, creator: string): Promise<boolean> {
+        // Concurrent buy guard — prevents double buys from rapid webhook duplicates
+        if (this.pendingMints.has(mint)) return false;
+        this.pendingMints.add(mint);
+
         try {
             // Guard: check max holdings
             const activePositions = await dbService.getActivePrebondPositions();
@@ -1906,6 +1907,8 @@ export class BotManager {
             console.error(`[PREBOND] Buy error for ${mint}:`, error.message);
             SocketManager.emitLog(`[PREBOND] Buy error: ${error.message}`, "error");
             return false;
+        } finally {
+            this.pendingMints.delete(mint);
         }
     }
 
@@ -1970,7 +1973,17 @@ export class BotManager {
      */
     private async sellPrebond(pos: PrebondPosition, reason: string): Promise<void> {
         try {
-            const tokenBalance = BigInt(pos.buyAmountTokens);
+            // Fetch actual on-chain balance (not stored purchase amount — could differ due to transfer taxes, rounding, etc.)
+            let tokenBalance = 0n;
+            try {
+                const mintPubkey = new PublicKey(pos.mint);
+                const accounts = await monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: mintPubkey });
+                tokenBalance = accounts.value.reduce((acc, a) => acc + BigInt(a.account.data.parsed.info.tokenAmount.amount), 0n);
+            } catch (_) {
+                // Fallback to stored amount if RPC fails
+                tokenBalance = BigInt(pos.buyAmountTokens);
+            }
+
             if (tokenBalance <= 0n) {
                 await dbService.updatePrebondPosition(pos.mint, { status: "FAILED" });
                 return;
