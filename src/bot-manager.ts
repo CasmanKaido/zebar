@@ -501,8 +501,12 @@ export class BotManager {
             this.scanner.start();
         }
 
-        // Start real-time WebSocket listeners (Helius webhooks detect both pool events AND Pump.fun mints)
-        this.startPoolWebSocket();
+        // Start real-time WebSocket listeners
+        // SCOUT/ALL: detect new pool creations + Pump.fun graduations
+        // PREBOND: only needed for Helius webhook Pump.fun token detection (handled separately)
+        if (includesPoolScanning) {
+            this.startPoolWebSocket();
+        }
     }
 
     /**
