@@ -1795,7 +1795,9 @@ export class BotManager {
                         }, delay);
                     } else {
                         this._flashRetryCount.delete(mint);
-                        SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. Dropping.`, "warning");
+                        // Block this token for 30 minutes so WebSocket re-fires don't restart the retry cycle
+                        this.rejectedTokens.set(mint, { reason: "unresolvable", expiry: Date.now() + 30 * 60 * 1000 });
+                        SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... unresolvable after ${RETRY_DELAYS.length} retries. Blocked for 30m.`, "warning");
                     }
                 }
             }
