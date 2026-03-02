@@ -156,7 +156,7 @@ const Toggle = ({ label, enabled, onChange, disabled, onInfo }: { label: string;
     </div>
 );
 
-const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, refreshPool, basePrice }: {
+const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity, refreshPool, basePrice, solPrice }: {
     pool: Pool;
     isBot: boolean;
     claimFees: (id: string) => void;
@@ -164,10 +164,13 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
     withdrawLiquidity: (id: string, percent: number) => void;
     refreshPool: (id: string) => void;
     basePrice: number | null;
+    solPrice: number | null;
 }) => {
     const isProfit = pool.initialMcap && pool.currentMcap ? (pool.currentMcap / pool.initialMcap) >= 1 : false;
     const multiplier = pool.initialMcap && pool.currentMcap ? (pool.currentMcap / pool.initialMcap).toFixed(2) : "0.00";
-    const posValue = ((Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0)).toFixed(2);
+    const posValueUsd = (Number(pool.positionValue?.totalLppp || 0)) * (basePrice || 0);
+    const posValue = posValueUsd.toFixed(2);
+    const posValueSol = solPrice && solPrice > 0 ? (posValueUsd / solPrice).toFixed(4) : null;
     const feesValue = ((Number(pool.unclaimedFees?.totalLppp || 0)) * (basePrice || 0)).toFixed(3);
 
     return (
@@ -280,6 +283,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
                 <div className="flex flex-col min-w-0 pr-2">
                     <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mb-0.5">Pos Value</span>
                     <span className="text-xl font-bold text-white font-mono truncate" title={`$${posValue}`}>${posValue}</span>
+                    {posValueSol && <span className="text-[10px] text-muted-foreground/60 font-mono">{posValueSol} SOL</span>}
                 </div>
 
                 <div className="flex flex-col items-end text-right shrink-0">
@@ -1057,6 +1061,7 @@ function App() {
                                             withdrawLiquidity={withdrawLiquidity}
                                             refreshPool={refreshPool}
                                             basePrice={baseTokenPrices[pool.baseToken || 'LPPP']}
+                                            solPrice={solPrice}
                                         />
                                     ))}
 

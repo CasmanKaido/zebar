@@ -1294,7 +1294,7 @@ export class BotManager {
                                         await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "TP1" });
                                     }
                                 } else {
-                                    SocketManager.emitLog(`[TP1] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
+                                    SocketManager.emitLog(`[TP1] ${pool.token} withdrawal failed. Retrying next cycle.`, "warning");
                                 }
                             }
 
@@ -1312,7 +1312,7 @@ export class BotManager {
                                         await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "TP2" });
                                     }
                                 } else {
-                                    SocketManager.emitLog(`[TP2] ${pool.token} withdrawal failed. Will retry next tick.`, "warning");
+                                    SocketManager.emitLog(`[TP2] ${pool.token} withdrawal failed. Retrying next cycle.`, "warning");
                                 }
                             }
 
@@ -1325,24 +1325,23 @@ export class BotManager {
 
                             if (this.settings.enableStopLoss && mcapMultiplier <= slThreshold && !pool.stopLossDone && poolAgeMs > SL_COOLDOWN_MS) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${this.settings.stopLossPct}% threshold! Atomic exit via Jito...`, "error");
+                                SocketManager.emitLog(`[STOP LOSS] ${pool.token} hit ${this.settings.stopLossPct}% threshold. Exiting position...`, "error");
                                 const atomicResult = await this.strategy.executeAtomicStopLoss(pool.poolId, pool.mint, slWithdrawPct, pool.positionId);
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (atomicResult.success) {
-                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} atomic exit sent! Bundle: ${atomicResult.bundleId}`, "success");
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} exit confirmed.`, "success");
                                     await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
 
                                     if (mcapMultiplier <= 0.05) {
-                                        SocketManager.emitLog(`[CLEANUP] ${pool.token} value is dead (0.05x MCAP). Marking as EXITED.`, "warning");
                                         await this.updatePoolROI(pool.poolId, "DEAD", true, undefined, { stopLossDone: true });
                                     }
                                 } else if (atomicResult.bundleAccepted) {
                                     // Bundle was accepted by Jito but not confirmed — do NOT fall back or we'll double-withdraw
-                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} bundle accepted but unconfirmed (${atomicResult.error}). Marking stopLossDone to prevent double withdrawal.`, "warning");
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} exit sent, awaiting confirmation. Do not retry.`, "warning");
                                     await this.updatePoolROI(pool.poolId, roiString, false, undefined, { stopLossDone: true });
                                 } else {
                                     // Bundle was rejected by Jito — safe to fall back
-                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} atomic exit rejected: ${atomicResult.error}. Falling back to standard...`, "warning");
+                                    SocketManager.emitLog(`[STOP LOSS] ${pool.token} Jito rejected. Using standard withdrawal...`, "warning");
                                     const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "STOP LOSS");
                                     if (result.success) {
                                         const sold = await this.liquidatePoolToSol(pool.mint);
@@ -1352,7 +1351,7 @@ export class BotManager {
                                             await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "STOP LOSS" });
                                         }
                                     } else {
-                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} fallback withdrawal also failed. Will retry next tick.`, "warning");
+                                        SocketManager.emitLog(`[STOP LOSS] ${pool.token} withdrawal failed. Retrying next cycle.`, "warning");
                                     }
                                 }
                             }
@@ -1482,7 +1481,7 @@ export class BotManager {
         try {
             const result = await this.strategy.removeMeteoraLiquidity(poolId, percent, positionId);
             if (result.success) {
-                SocketManager.emitLog(`[SUCCESS] Withdrew ${percent}% liquidity.`, "success");
+                SocketManager.emitLog(`[WITHDRAW] Removed ${percent}% liquidity.`, "success");
 
                 // 2. Clear pending and update state
                 const isFull = percent >= 100;
@@ -1525,13 +1524,13 @@ export class BotManager {
                 }
                 return result;
             } else {
-                SocketManager.emitLog(`[ERROR] Withdrawal failed: ${result.error}`, "error");
+                SocketManager.emitLog(`[WITHDRAW] Failed: ${result.error}`, "error");
 
                 // Issue: Ghost Positions (Position gone from chain but in our JSON)
                 // If the error specifically says "No active position found", it means we can't manage this anymore.
                 // We should mark it as exited so the bot stops spamming SL/TP checks.
                 if (result.error?.includes("No active position found")) {
-                    SocketManager.emitLog(`[RECOVERY] Pool position is gone from chain. Marking ${poolId.slice(0, 8)}... as EXITED.`, "warning");
+                    SocketManager.emitLog(`[WITHDRAW] Position no longer exists on-chain. Marking as exited.`, "warning");
                     await this.updatePoolROI(poolId, "GONE", true, undefined, { withdrawalPending: false });
                 } else {
                     // Clear pending flag so it can be re-tried for other errors
@@ -1547,12 +1546,12 @@ export class BotManager {
     }
 
     async increaseLiquidity(poolId: string, amountSol: number) {
-        SocketManager.emitLog(`[MANUAL] Increasing liquidity by ${amountSol} SOL in ${poolId.slice(0, 8)}...`, "warning");
+        SocketManager.emitLog(`[ADD LIQ] Adding ${amountSol} SOL to ${poolId.slice(0, 8)}...`, "info");
         const result = await this.strategy.addMeteoraLiquidity(poolId, amountSol);
         if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Added more liquidity!`, "success");
+            SocketManager.emitLog(`[ADD LIQ] Liquidity added successfully.`, "success");
         } else {
-            SocketManager.emitLog(`[ERROR] Failed to add liquidity: ${result.error}`, "error");
+            SocketManager.emitLog(`[ADD LIQ] Failed: ${result.error}`, "error");
         }
         return result;
     }
@@ -1561,24 +1560,28 @@ export class BotManager {
         const { FEE_RECIPIENT_WALLET } = require("./config");
 
         if (FEE_RECIPIENT_WALLET && FEE_RECIPIENT_WALLET.length > 30) {
-            SocketManager.emitLog(`[FEE-FUNNEL] Initiating Jito-Atomic payout to ${FEE_RECIPIENT_WALLET.slice(0, 8)}...`, "warning");
+            SocketManager.emitLog(`[FEE CLAIM] Sending fees to ${FEE_RECIPIENT_WALLET.slice(0, 8)}...`, "info");
             const result = await this.strategy.executeAtomicFeeFunnel(poolId, FEE_RECIPIENT_WALLET);
             if (result.success) {
-                SocketManager.emitLog(`[SUCCESS] Fee funnel bundle accepted!`, "success");
+                SocketManager.emitLog(`[FEE CLAIM] Payout confirmed.`, "success");
                 await this.refreshPool(poolId);
                 return result;
+            } else if ((result as any).bundleAccepted) {
+                // Bundle accepted but unconfirmed — don't fall back to avoid double-claim
+                SocketManager.emitLog(`[FEE CLAIM] Payout sent, awaiting confirmation. Do not retry.`, "warning");
+                return result;
             } else {
-                SocketManager.emitLog(`[ERROR] Funnel failed: ${result.error}. Falling back to standard claim...`, "error");
+                SocketManager.emitLog(`[FEE CLAIM] Jito rejected. Using standard claim...`, "warning");
             }
         }
 
-        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)} to Hot Wallet...`, "warning");
+        SocketManager.emitLog(`[FEE CLAIM] Claiming fees from ${poolId.slice(0, 8)}...`, "info");
         const result = await this.strategy.claimMeteoraFees(poolId);
         if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Fees harvested to Hot Wallet!`, "success");
+            SocketManager.emitLog(`[FEE CLAIM] Fees harvested successfully.`, "success");
             await this.refreshPool(poolId);
         } else {
-            SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");
+            SocketManager.emitLog(`[FEE CLAIM] Failed: ${result.error}`, "error");
         }
         return result;
     }

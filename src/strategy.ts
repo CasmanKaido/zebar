@@ -401,7 +401,7 @@ export class StrategyManager {
 
             // FALLBACK STRATEGY DISABLED (User: Full Jupiter/Metis Only)
             console.warn(`[STRATEGY] Jupiter Failed. Fallbacks are DISABLED (Jupiter Only Mode).`);
-            SocketManager.emitLog("[STRATEGY] Jupiter Failed. Retrying next cycle...", "warning");
+            SocketManager.emitLog("[BUY] Jupiter swap failed. Retrying next cycle.", "warning");
 
             return { success: false, amount: BigInt(0), uiAmount: 0, error: `Jupiter Only Mode: ${errMsg}` };
         }
@@ -817,9 +817,9 @@ export class StrategyManager {
 
             if (logs && logs.length > 0) {
                 console.error(`[METEORA ERROR LOGS]`, logs);
-                SocketManager.emitLog(`[LP ERROR] Logs: ${logs.join(' | ').slice(0, 500)}`, "error");
+                SocketManager.emitLog(`[POOL CREATE] Failed: ${logs.join(' | ').slice(0, 300)}`, "error");
             } else {
-                SocketManager.emitLog(`[LP ERROR] No on-chain logs available. Error: ${e.message?.slice(0, 200)}`, "error");
+                SocketManager.emitLog(`[POOL CREATE] Failed: ${e.message?.slice(0, 200)}`, "error");
             }
             return { success: false, error: e.message };
         }
@@ -840,11 +840,6 @@ export class StrategyManager {
 
             if (userPositions.length === 0) {
                 return { success: false, error: "No active position found for this pool/wallet." };
-            }
-
-            // Use stored positionId to find the correct position, or fall back to first
-            if (userPositions.length === 0) {
-                return { success: false, error: "No active position found." };
             }
 
             // Issue 44: Bin Shift Logic - Iterate over ALL positions, not just the first one
@@ -875,6 +870,12 @@ export class StrategyManager {
                             positionNftAccount: pos.positionNftAccount,
                             tokenAAmountThreshold: new BN(0),
                             tokenBAmountThreshold: new BN(0),
+                            tokenAMint: poolState.tokenAMint,
+                            tokenBMint: poolState.tokenBMint,
+                            tokenAVault: poolState.tokenAVault,
+                            tokenBVault: poolState.tokenBVault,
+                            tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                            tokenBProgram: getTokenProgram(poolState.tokenBFlag),
                             vestings: [],
                             currentPoint: new BN(0)
                         });
@@ -889,6 +890,12 @@ export class StrategyManager {
                         positionNftAccount: pos.positionNftAccount,
                         tokenAAmountThreshold: new BN(0),
                         tokenBAmountThreshold: new BN(0),
+                        tokenAMint: poolState.tokenAMint,
+                        tokenBMint: poolState.tokenBMint,
+                        tokenAVault: poolState.tokenAVault,
+                        tokenBVault: poolState.tokenBVault,
+                        tokenAProgram: getTokenProgram(poolState.tokenAFlag),
+                        tokenBProgram: getTokenProgram(poolState.tokenBFlag),
                         vestings: [],
                         currentPoint: new BN(0)
                     });
@@ -948,6 +955,13 @@ export class StrategyManager {
                     skipPreflight: true,
                     commitment: "confirmed"
                 });
+
+                // Verify the tx actually succeeded on-chain (skipPreflight can mask failures)
+                const status = await this.connection.getSignatureStatus(lastSig);
+                if (status?.value?.err) {
+                    console.error(`[METEORA] Tx confirmed but FAILED on-chain: ${JSON.stringify(status.value.err)} | Sig: ${lastSig}`);
+                    return { success: false, txSig: lastSig, error: `Transaction reverted on-chain: ${JSON.stringify(status.value.err)}` };
+                }
             }
 
             console.log(`[METEORA] Liquidity Removed. Last Sig: https://solscan.io/tx/${lastSig}`);
@@ -961,6 +975,7 @@ export class StrategyManager {
 
     /**
      * Increases liquidity in a Meteora CP-AMM pool.
+     * For LPPP/HTP pools: swaps SOL → base token first, then deposits base token side.
      */
     async addMeteoraLiquidity(poolAddress: string, amountSol: number): Promise<{ success: boolean; txSig?: string; error?: string }> {
         const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
@@ -978,28 +993,57 @@ export class StrategyManager {
             }
 
             const pos = userPositions[0];
-            const amountLamports = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
-
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
+
+            // Determine which side is the base token (SOL, LPPP, or HTP)
+            const tokenAMintStr = poolState.tokenAMint.toBase58();
+            const tokenBMintStr = poolState.tokenBMint.toBase58();
+            const baseMints = Object.values(BASE_TOKENS).map((m: PublicKey) => m.toBase58());
             const isTokenASOL = poolState.tokenAMint.equals(SOL_MINT);
+            const isTokenBSOL = poolState.tokenBMint.equals(SOL_MINT);
+            const isTokenABase = baseMints.includes(tokenAMintStr);
+            const isTokenBBase = baseMints.includes(tokenBMintStr);
+
+            let depositAmountBN: any;
+            let isDepositSideA: boolean;
+
+            if (isTokenASOL || isTokenBSOL) {
+                // SOL pool — deposit SOL directly
+                depositAmountBN = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
+                isDepositSideA = isTokenASOL;
+            } else if (isTokenABase || isTokenBBase) {
+                // LPPP/HTP pool — swap SOL → base token first, then deposit
+                const baseMint = isTokenABase ? poolState.tokenAMint : poolState.tokenBMint;
+                isDepositSideA = isTokenABase;
+
+                console.log(`[METEORA] Pool uses ${isTokenABase ? tokenAMintStr.slice(0, 8) : tokenBMintStr.slice(0, 8)} as base. Swapping ${amountSol} SOL → base token...`);
+                const swapResult = await this.swapToken(baseMint, amountSol, 10);
+                if (!swapResult.success) {
+                    return { success: false, error: `SOL → base token swap failed: ${swapResult.error}` };
+                }
+                console.log(`[METEORA] Swap success: received ${swapResult.uiAmount} base tokens (${swapResult.amount} raw)`);
+                // Use 99% of received amount to account for rounding
+                depositAmountBN = new BN((swapResult.amount * 99n / 100n).toString());
+            } else {
+                return { success: false, error: "Pool has no recognized base token (SOL/LPPP/HTP)" };
+            }
 
             const depositQuote = cpAmm.getDepositQuote({
-                inAmount: amountLamports,
-                isTokenA: isTokenASOL,
+                inAmount: depositAmountBN,
+                isTokenA: isDepositSideA,
                 minSqrtPrice: poolState.sqrtMinPrice,
                 maxSqrtPrice: poolState.sqrtMaxPrice,
                 sqrtPrice: poolState.sqrtPrice
             });
 
-            // Map quote to max amounts with 1% slippage
             const slippageMult = new BN(101);
             const slippageDiv = new BN(100);
 
-            const maxAmountA = isTokenASOL
+            const maxAmountA = isDepositSideA
                 ? depositQuote.consumedInputAmount.mul(slippageMult).div(slippageDiv)
                 : depositQuote.outputAmount.mul(slippageMult).div(slippageDiv);
 
-            const maxAmountB = isTokenASOL
+            const maxAmountB = isDepositSideA
                 ? depositQuote.outputAmount.mul(slippageMult).div(slippageDiv)
                 : depositQuote.consumedInputAmount.mul(slippageMult).div(slippageDiv);
 
@@ -1028,6 +1072,14 @@ export class StrategyManager {
                 skipPreflight: true,
                 commitment: "confirmed"
             });
+
+            // Verify on-chain success (skipPreflight can mask failures)
+            const status = await this.connection.getSignatureStatus(txSig);
+            if (status?.value?.err) {
+                console.error(`[METEORA] Add liquidity tx confirmed but FAILED: ${JSON.stringify(status.value.err)}`);
+                return { success: false, txSig, error: `Transaction reverted: ${JSON.stringify(status.value.err)}` };
+            }
+
             console.log(`[METEORA] Liquidity Increased: https://solscan.io/tx/${txSig}`);
             return { success: true, txSig };
 
@@ -1842,6 +1894,14 @@ export class StrategyManager {
                 skipPreflight: true,
                 commitment: "confirmed"
             });
+
+            // Verify on-chain success (skipPreflight can mask failures)
+            const status = await this.connection.getSignatureStatus(txSig);
+            if (status?.value?.err) {
+                console.error(`[METEORA] Claim fees tx confirmed but FAILED: ${JSON.stringify(status.value.err)}`);
+                return { success: false, txSig, error: `Transaction reverted: ${JSON.stringify(status.value.err)}` };
+            }
+
             console.log(`[METEORA] Fees Claimed: https://solscan.io/tx/${txSig}`);
             return { success: true, txSig };
 
@@ -1923,7 +1983,7 @@ export class StrategyManager {
             const bundleRes = await this.sendJitoBundle(allTxs);
             if (bundleRes.success) {
                 const solValue = Number(transferAmountLamports) / Number(LAMPORTS_PER_SOL);
-                SocketManager.emitLog(`[FEE-FUNNEL] Bundle accepted. Payout: ~${solValue.toFixed(4)} SOL`, "success");
+                SocketManager.emitLog(`[FEE CLAIM] Payout confirmed: ~${solValue.toFixed(4)} SOL`, "success");
                 return bundleRes;
             } else {
                 return { success: false, error: bundleRes.error };
@@ -1991,7 +2051,7 @@ export class StrategyManager {
             const bundleRes = await this.sendJitoBundle(allTxs);
 
             if (bundleRes.success) {
-                SocketManager.emitLog(`[ATOMIC-SL] Bundle accepted by Jito. Confirming on-chain...`, "warning");
+                SocketManager.emitLog(`[STOP LOSS] Exit sent. Confirming on-chain...`, "warning");
 
                 // Wait for on-chain confirmation (poll every 2s, max 30s)
                 const sigToConfirm = bundleRes.signatures?.find(s => s !== "unknown");
@@ -2002,7 +2062,7 @@ export class StrategyManager {
                         const statusRes = await this.connection.getSignatureStatuses([sigToConfirm]);
                         const status = statusRes.value?.[0];
                         if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
-                            SocketManager.emitLog(`[ATOMIC-SL] Bundle confirmed on-chain! Bundle: ${bundleRes.bundleId}`, "success");
+                            SocketManager.emitLog(`[STOP LOSS] Exit confirmed on-chain.`, "success");
                             return { success: true, bundleId: bundleRes.bundleId, signatures: bundleRes.signatures };
                         }
                         if (status?.err) {
