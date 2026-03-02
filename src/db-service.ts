@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import * as path from "path";
 import * as fs from "fs";
-import { PoolData, TradeHistory, BotSettings, PrebondPosition } from "./types";
+import { PoolData, TradeHistory, BotSettings } from "./types";
 
 const DB_PATH = path.join(process.cwd(), "data", "zebar.db");
 
@@ -208,6 +208,15 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume24h REAL NOT NULL DEFAULT 0");
             console.log("[DB] Migrated: Added prebond volume filter columns.");
         } catch (e) { }
+
+        // TP settings migration
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp1Multiplier REAL NOT NULL DEFAULT 7");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp1WithdrawPct REAL NOT NULL DEFAULT 30");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp2Multiplier REAL NOT NULL DEFAULT 14");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp2WithdrawPct REAL NOT NULL DEFAULT 30");
+            console.log("[DB] Migrated: Added TP settings columns.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -379,6 +388,10 @@ export class DatabaseService {
             mode: row.mode,
             maxAgeMinutes: row.maxAgeMinutes,
             baseToken: row.baseToken,
+            tp1Multiplier: row.tp1Multiplier ?? 7,
+            tp1WithdrawPct: row.tp1WithdrawPct ?? 30,
+            tp2Multiplier: row.tp2Multiplier ?? 14,
+            tp2WithdrawPct: row.tp2WithdrawPct ?? 30,
             stopLossPct: row.stopLossPct,
             enableReputation: !!row.enableReputation,
             enableBundle: !!row.enableBundle,
@@ -431,6 +444,10 @@ export class DatabaseService {
                 mode = @mode,
                 maxAgeMinutes = @maxAgeMinutes,
                 baseToken = @baseToken,
+                tp1Multiplier = @tp1Multiplier,
+                tp1WithdrawPct = @tp1WithdrawPct,
+                tp2Multiplier = @tp2Multiplier,
+                tp2WithdrawPct = @tp2WithdrawPct,
                 stopLossPct = @stopLossPct,
                 enableReputation = @enableReputation,
                 enableBundle = @enableBundle,
@@ -481,6 +498,10 @@ export class DatabaseService {
             mode: settings.mode,
             maxAgeMinutes: settings.maxAgeMinutes,
             baseToken: settings.baseToken,
+            tp1Multiplier: settings.tp1Multiplier,
+            tp1WithdrawPct: settings.tp1WithdrawPct,
+            tp2Multiplier: settings.tp2Multiplier,
+            tp2WithdrawPct: settings.tp2WithdrawPct,
             stopLossPct: settings.stopLossPct,
             enableReputation: settings.enableReputation ? 1 : 0,
             enableBundle: settings.enableBundle ? 1 : 0,
@@ -510,77 +531,6 @@ export class DatabaseService {
             prebondMinVolume1h: settings.prebondMinVolume1h,
             prebondMinVolume24h: settings.prebondMinVolume24h
         });
-    }
-
-    // --- Prebond Methods ---
-
-    async getActivePrebondPositions(): Promise<PrebondPosition[]> {
-        const rows = this.db.prepare("SELECT * FROM prebond_positions WHERE status = 'ACTIVE'").all() as any[];
-        return rows.map(r => this.mapRowToPrebond(r));
-    }
-
-    async getAllPrebondPositions(): Promise<PrebondPosition[]> {
-        const rows = this.db.prepare("SELECT * FROM prebond_positions ORDER BY created DESC").all() as any[];
-        return rows.map(r => this.mapRowToPrebond(r));
-    }
-
-    async getPrebondPosition(mint: string): Promise<PrebondPosition | null> {
-        const row = this.db.prepare("SELECT * FROM prebond_positions WHERE mint = ?").get(mint) as any;
-        return row ? this.mapRowToPrebond(row) : null;
-    }
-
-    async savePrebondPosition(pos: PrebondPosition): Promise<void> {
-        this.db.prepare(`
-            INSERT OR REPLACE INTO prebond_positions (
-                mint, symbol, buyTxId, buyPrice, buyAmountSol, buyAmountTokens,
-                creator, strategy, status, created
-            ) VALUES (
-                @mint, @symbol, @buyTxId, @buyPrice, @buyAmountSol, @buyAmountTokens,
-                @creator, @strategy, @status, @created
-            )
-        `).run({
-            mint: pos.mint,
-            symbol: pos.symbol,
-            buyTxId: pos.buyTxId,
-            buyPrice: pos.buyPrice,
-            buyAmountSol: pos.buyAmountSol,
-            buyAmountTokens: pos.buyAmountTokens,
-            creator: pos.creator,
-            strategy: pos.strategy,
-            status: pos.status,
-            created: pos.created
-        });
-    }
-
-    async updatePrebondPosition(mint: string, updates: Partial<PrebondPosition>): Promise<void> {
-        const fields: string[] = [];
-        const values: any = { mint };
-        for (const [key, val] of Object.entries(updates)) {
-            if (key !== "mint" && val !== undefined) {
-                fields.push(`${key} = @${key}`);
-                values[key] = val;
-            }
-        }
-        if (fields.length === 0) return;
-        this.db.prepare(`UPDATE prebond_positions SET ${fields.join(", ")} WHERE mint = @mint`).run(values);
-    }
-
-    private mapRowToPrebond(row: any): PrebondPosition {
-        return {
-            mint: row.mint,
-            symbol: row.symbol || "",
-            buyTxId: row.buyTxId || "",
-            buyPrice: row.buyPrice || 0,
-            buyAmountSol: row.buyAmountSol || 0,
-            buyAmountTokens: row.buyAmountTokens || "0",
-            creator: row.creator || "",
-            strategy: row.strategy || "FLIP",
-            status: row.status || "ACTIVE",
-            created: row.created || "",
-            soldTxId: row.soldTxId,
-            soldAmountSol: row.soldAmountSol,
-            pnl: row.pnl
-        };
     }
 
     // --- Helpers ---

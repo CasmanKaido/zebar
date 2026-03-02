@@ -1,6 +1,6 @@
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
-import { HELIUS_AUTH_SECRET } from "./config";
+import { HELIUS_AUTH_SECRET, BASE_TOKENS } from "./config";
 
 /**
  * Helius Webhook Service
@@ -73,11 +73,9 @@ export class HeliusWebhookService {
         const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
         const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 
-        // Also ignore base tokens (LPPP, HTP) — pool creation triggers webhooks for these
-        const LPPP_MINT = "44sHXMkPeciUpqhecfCysVs7RcaxeM24VPMauQouBREV";
-        const HTP_MINT = "2JnYVAeY4gYjRSmGRPQi9EudJm88AT6LgVKeKvxeb9Qp";
-
-        const ignoredMints = new Set([SOL_MINT, USDC_MINT, USDT_MINT, LPPP_MINT, HTP_MINT]);
+        // Also ignore base tokens (LPPP, HTP, etc.) — pool creation triggers webhooks for these
+        const baseTokenMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
+        const ignoredMints = new Set([SOL_MINT, USDC_MINT, USDT_MINT, ...baseTokenMints]);
 
         let unconventionalTokens = tx.tokenTransfers
             ?.map((t: any) => t.mint)

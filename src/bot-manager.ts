@@ -8,7 +8,6 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { GeckoService } from "./gecko-service";
 import axios from "axios";
-import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { dbService } from "./db-service";
 import { PoolData, TradeHistory, BotSettings } from "./types";
 import { securityGuard } from "./security-guard";
@@ -39,6 +38,7 @@ export class BotManager {
     private _flashRetryCount: Map<string, number> = new Map(); // Track retry attempts for DexScreener resolution
     private _pumpfunWatchlist: Map<string, number> = new Map(); // Pump.fun tokens rejected on curve — re-evaluate on graduation
     private _wsSubscriptionIds: number[] = []; // WebSocket subscription IDs for cleanup
+    private _wsIntervalIds: ReturnType<typeof setInterval>[] = []; // setInterval IDs for cleanup
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
     private settings: BotSettings = {
@@ -55,6 +55,10 @@ export class BotManager {
         mode: "SCOUT",
         maxAgeMinutes: 0,
         baseToken: "LPPP",
+        tp1Multiplier: 7,
+        tp1WithdrawPct: 30,
+        tp2Multiplier: 14,
+        tp2WithdrawPct: 30,
         stopLossPct: -2,
         enableStopLoss: true,
         enableReputation: true,
@@ -108,9 +112,6 @@ export class BotManager {
 
         // 2. Migrate if needed
         await this.migrateFromJsonToSqlite();
-
-        // 2. Recovery scan DISABLED — bot only tracks its own created pools.
-        // await this.syncActivePositions();
 
         // 3. Load and Start Monitor (bot-created pools only)
         await this.loadAndMonitor();
@@ -171,72 +172,6 @@ export class BotManager {
     /**
      * Scans the blockchain and re-registers any active Meteora positions missing from the DB.
      */
-    private async syncActivePositions() {
-        SocketManager.emitLog("[RECOVERY] Scanning blockchain for lost positions...", "info");
-        try {
-            const onChainPositions = await this.strategy.fetchAllUserPositions();
-            const dbPools = await dbService.getAllPools();
-            const dbIds = new Set(dbPools.map(p => p.poolId));
-
-            let recoveredCount = 0;
-            for (const pos of onChainPositions) {
-                if (!dbIds.has(pos.poolAddress)) {
-                    SocketManager.emitLog(`[RECOVERY] Found untracked pool: ${pos.poolAddress.slice(0, 8)}...`, "warning");
-
-                    // Fetch pool details to reconstruct entry
-                    const poolInfo = await this.strategy.getPoolMints(pos.poolAddress);
-                    if (!poolInfo) continue;
-
-                    const mintA = poolInfo.tokenA;
-                    const mintB = poolInfo.tokenB;
-                    const targetMint = Object.values(BASE_TOKENS).some(m => m.toBase58() === mintA) ? mintB : mintA;
-
-                    // Fetch token metadata (name) - Use the new robust service
-                    const tokenSymbol = await TokenMetadataService.getSymbol(targetMint, connection);
-
-                    const posValue = await this.strategy.getPositionValue(pos.poolAddress, targetMint);
-
-                    if (!posValue.success) {
-                        SocketManager.emitLog(`[RECOVERY] Could not fetch value for ${pos.poolAddress.slice(0, 8)}. Moving to next.`, "warning");
-                        continue;
-                    }
-
-                    const recoveredPool: PoolData = {
-                        poolId: pos.poolAddress,
-                        token: tokenSymbol,
-                        mint: targetMint,
-                        roi: "0.00%",
-                        netRoi: "0.00%",
-                        created: new Date().toISOString(),
-                        initialPrice: posValue.spotPrice, // Using current as baseline to track from here
-                        initialTokenAmount: 0,
-                        initialLpppAmount: 0,
-                        initialSolValue: posValue.totalSol, // Set baseline to current position value
-                        exited: false,
-                        positionId: pos.positionId,
-                        isBotCreated: false, // Recovered pools are not created by the bot
-                        baseToken: Object.keys(BASE_TOKENS).find(k => BASE_TOKENS[k].toBase58() === (mintA === targetMint ? mintB : mintA)) || "LPPP"
-                    };
-
-                    await dbService.savePool(recoveredPool);
-                    SocketManager.emitPool(recoveredPool);
-                    recoveredCount++;
-
-                    // Throttling to prevent 429 (Too Many Requests) - Be aggressive for DRPC
-                    await new Promise(r => setTimeout(r, 1500));
-                }
-            }
-
-            if (recoveredCount > 0) {
-                SocketManager.emitLog(`[RECOVERY] Successfully restored ${recoveredCount} pools to dashboard.`, "success");
-            } else {
-                SocketManager.emitLog("[RECOVERY] Scan complete. Database is already in sync.", "info");
-            }
-        } catch (e: any) {
-            console.error("[RECOVERY] Sync failed:", e.message);
-        }
-    }
-
     private startHealthCheck() {
         if (this.healthCheckInterval) clearInterval(this.healthCheckInterval);
         this.healthCheckInterval = setInterval(() => this.checkRpcHealth(), 60000); // Check every 60s
@@ -285,6 +220,39 @@ export class BotManager {
                 this.lastMonitorHeartbeat = Date.now();
             }
         }
+
+        // Periodic memory cleanup — evict expired entries from caches
+        this.cleanupMemory();
+    }
+
+    private cleanupMemory() {
+        const now = Date.now();
+
+        // Evict expired rejected tokens
+        let evicted = 0;
+        for (const [mint, entry] of this.rejectedTokens) {
+            if (entry.expiry <= now) {
+                this.rejectedTokens.delete(mint);
+                evicted++;
+            }
+        }
+
+        // Cap _flashRetryCount (entries are deleted on success/max retries, but stale ones can linger)
+        if (this._flashRetryCount.size > 500) {
+            this._flashRetryCount.clear();
+        }
+
+        // Evict stale _pumpfunWatchlist entries (older than 30 minutes)
+        const WATCHLIST_MAX_AGE = 30 * 60 * 1000;
+        for (const [mint, ts] of this._pumpfunWatchlist) {
+            if (now - ts > WATCHLIST_MAX_AGE) {
+                this._pumpfunWatchlist.delete(mint);
+            }
+        }
+
+        if (evicted > 0) {
+            console.log(`[CLEANUP] Evicted ${evicted} expired rejections. Caches: rejected=${this.rejectedTokens.size} retry=${this._flashRetryCount.size} watchlist=${this._pumpfunWatchlist.size}`);
+        }
     }
 
     /**
@@ -313,43 +281,6 @@ export class BotManager {
         }
     }
 
-
-    /**
-     * Scans the wallet for tokens purchased by the bot but never pooled (Issue 28).
-     */
-    private async checkOrphanTokens() {
-        SocketManager.emitLog("[ORPHAN-CHECK] Scanning wallet for un-pooled tokens...", "info");
-        try {
-            const pools = await dbService.getAllPools();
-            const pooledMints = new Set(pools.map(p => p.mint));
-
-            // Get all token accounts with balance > 0
-            const accounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                programId: TOKEN_PROGRAM_ID
-            });
-            const accounts2022 = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
-                programId: TOKEN_2022_PROGRAM_ID
-            });
-
-            const allAccounts = [...accounts.value, ...accounts2022.value];
-
-            for (const acc of allAccounts) {
-                const info = acc.account.data.parsed.info;
-                const mint = info.mint;
-                const balance = info.tokenAmount.uiAmount || 0;
-
-                // Skip LPPP and SOL
-                if (Object.values(BASE_TOKENS).some(m => m.toBase58() === mint) || mint === SOL_MINT.toBase58()) continue;
-
-                if (balance > 0 && !pooledMints.has(mint)) {
-                    SocketManager.emitLog(`[ORPHAN] Detected un-pooled tokens: ${balance.toFixed(2)} units of ${mint.slice(0, 8)}...`, "warning");
-                    SocketManager.emitLog(`[RECOVERY] Tip: You can manually swap these to SOL or wait for future auto-recovery.`, "info");
-                }
-            }
-        } catch (e) {
-            console.warn("[ORPHAN-CHECK] Skip: No pool data file yet.");
-        }
-    }
 
     private async safeRename(src: string, dest: string, retries = 5, delay = 50) {
         for (let i = 0; i < retries; i++) {
@@ -449,9 +380,6 @@ export class BotManager {
         if (this.settings.buyAmount <= 0) {
             SocketManager.emitLog(`[CONFIG WARNING] Buy Amount received was ${this.settings.buyAmount} SOL.`, "warning");
         }
-
-        // Orphan check DISABLED — focused on bot-created pools only.
-        // await this.checkOrphanTokens();
 
         this.sessionPoolCount = 0; // Reset session counter
         this.pendingMints.clear(); // Reset pending buys
@@ -566,11 +494,11 @@ export class BotManager {
         };
 
         // Clean up seen signatures periodically (every 60s, keep last 5 minutes)
-        setInterval(() => {
+        this._wsIntervalIds.push(setInterval(() => {
             if (this._wsSeenSignatures.size > 500) {
                 this._wsSeenSignatures.clear();
             }
-        }, 60000);
+        }, 60000));
 
         try {
             const raySub = connection.onLogs(
@@ -614,11 +542,11 @@ export class BotManager {
         const CREATION_KEYWORDS = ["Create", "create", "Initialize", "initialize"];
 
         // Clean up seen mints periodically (every 5 minutes)
-        setInterval(() => {
+        this._wsIntervalIds.push(setInterval(() => {
             if (this._pumpfunSeenMints.size > 200) {
                 this._pumpfunSeenMints.clear();
             }
-        }, 300000);
+        }, 300000));
 
         try {
             const sub = connection.onLogs(
@@ -1004,6 +932,12 @@ export class BotManager {
         }
         this._wsSubscriptionIds = [];
 
+        // Clear WebSocket cleanup intervals
+        for (const id of this._wsIntervalIds) {
+            clearInterval(id);
+        }
+        this._wsIntervalIds = [];
+
         if (flushed > 0) {
             console.log(`[BOT] Flushed ${flushed} pending tokens from evaluation queue.`);
         }
@@ -1219,8 +1153,18 @@ export class BotManager {
                                 basePrice = await this.getBaseTokenPrice(activeBaseMintStr);
                             }
 
-                            // 3. USD STRATEGY (4x/7x Take Profit, 0.7x Stop Loss)
-                            const tokenPrice = jupPrices.get(pool.mint) || (posValue.spotPrice * basePrice);
+                            // 3. USD STRATEGY (TP/SL)
+                            // For prebond pools: Jupiter Price API tracks the real bonding curve price.
+                            // The Meteora pool spotPrice is static (only the bot's liquidity, no external trades).
+                            let tokenPrice = jupPrices.get(pool.mint) || 0;
+                            if (tokenPrice <= 0 && pool.isPrebond) {
+                                // Fallback: fetch directly from Jupiter for prebond tokens
+                                const jupDirect = await JupiterPriceService.getPrice(pool.mint);
+                                if (jupDirect > 0) tokenPrice = jupDirect;
+                            }
+                            if (tokenPrice <= 0) {
+                                tokenPrice = posValue.spotPrice * basePrice;
+                            }
 
                             // Initialize entryUsdValue if missing (or fix corrupted HTP fallbacks)
                             const expectedEntryUsd = (pool.initialSolValue || 0) * basePrice;
@@ -1336,11 +1280,11 @@ export class BotManager {
                                 continue; // skip TP/SL checks this tick — either sold or will retry next tick
                             }
 
-                            // ── Take Profit Stage 1: 7x Value → Close 30% ──
-                            if (mcapMultiplier >= 7.0 && !pool.tp1Done) {
+                            // ── Take Profit Stage 1 ──
+                            if (mcapMultiplier >= this.settings.tp1Multiplier && !pool.tp1Done) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP1] ${pool.token} reached 7x MCAP! Withdrawing 30%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 30, "TP1");
+                                SocketManager.emitLog(`[TP1] ${pool.token} reached ${this.settings.tp1Multiplier}x MCAP! Withdrawing ${this.settings.tp1WithdrawPct}%...`, "success");
+                                const result = await this.withdrawLiquidity(pool.poolId, this.settings.tp1WithdrawPct, "TP1");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
                                     const sold = await this.liquidatePoolToSol(pool.mint);
@@ -1354,11 +1298,11 @@ export class BotManager {
                                 }
                             }
 
-                            // ── Take Profit Stage 2: 14x Value → Close another 30% ──
-                            if (mcapMultiplier >= 14.0 && pool.tp1Done && !pool.takeProfitDone) {
+                            // ── Take Profit Stage 2 ──
+                            if (mcapMultiplier >= this.settings.tp2Multiplier && pool.tp1Done && !pool.takeProfitDone) {
                                 this.activeTpSlActions.add(pool.poolId);
-                                SocketManager.emitLog(`[TP2] ${pool.token} reached 14x MCAP! Withdrawing 30%...`, "success");
-                                const result = await this.withdrawLiquidity(pool.poolId, 30, "TP2");
+                                SocketManager.emitLog(`[TP2] ${pool.token} reached ${this.settings.tp2Multiplier}x MCAP! Withdrawing ${this.settings.tp2WithdrawPct}%...`, "success");
+                                const result = await this.withdrawLiquidity(pool.poolId, this.settings.tp2WithdrawPct, "TP2");
                                 this.activeTpSlActions.delete(pool.poolId);
                                 if (result.success) {
                                     const sold = await this.liquidatePoolToSol(pool.mint);
@@ -1836,16 +1780,6 @@ export class BotManager {
                     (result as any).volume1h = birdeye.volume1h;
                     SocketManager.emitLog(`[HELIUS] Flash Scout via Birdeye fallback: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
                 }
-            }
-
-            // Legacy prebond path (should not be reached due to fast path above, but kept as safety net)
-            if (dexId === "pumpfun" && this.settings.enablePrebond) {
-                this._flashRetryCount.delete(mint);
-                const bought = await this.buyPrebond(mint, creator || "");
-                if (!bought) {
-                    this._pumpfunWatchlist.set(mint, Date.now());
-                }
-                return;
             }
 
             // If we resolved data from any source, run through scanner criteria filters

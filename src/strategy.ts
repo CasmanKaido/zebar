@@ -1,11 +1,9 @@
 import { Connection, PublicKey, Transaction, SystemProgram, Keypair, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction, ComputeBudgetProgram, TransactionExpiredBlockheightExceededError, TransactionMessage } from "@solana/web3.js";
 import bs58 from "bs58";
-import { wallet, connection, JUPITER_API_KEY, DRY_RUN, SOL_MINT, USDC_MINT, BASE_TOKENS, JITO_TIP_ADDRESSES, JITO_BLOCK_ENGINE_URL, JITO_TIP_LAMPORTS } from "./config";
-import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE, getMint } from "@solana/spl-token";
+import { wallet, connection, JUPITER_API_KEY, DRY_RUN, SOL_MINT, BASE_TOKENS, JITO_TIP_ADDRESSES, JITO_BLOCK_ENGINE_URL, JITO_TIP_LAMPORTS } from "./config";
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, TOKEN_2022_PROGRAM_ID, getMint } from "@solana/spl-token";
 import BN from "bn.js";
 import { deriveTokenVaultAddress, derivePositionAddress } from "@meteora-ag/cp-amm-sdk";
-import { Liquidity, LiquidityPoolKeys, Token, TokenAmount, Percent, Currency, SOL, MAINNET_PROGRAM_ID, SPL_ACCOUNT_LAYOUT } from "@raydium-io/raydium-sdk";
-import { Market } from "@project-serum/serum";
 import axios from "axios";
 import { SocketManager } from "./socket";
 import { safeRpc } from "./rpc-utils";
@@ -264,47 +262,6 @@ export class StrategyManager {
     }
 
     /**
-     * Gets the current price of a token via Jupiter Quote API (read-only, no tx).
-     * Used by prebond monitor to check current value of bonding curve tokens.
-     */
-    async getPrebondPrice(mint: string): Promise<{ pricePerToken: number; success: boolean }> {
-        try {
-            const headers: Record<string, string> = {};
-            if (JUPITER_API_KEY) headers["x-api-key"] = JUPITER_API_KEY;
-
-            // Quote a small SOL amount to get the exchange rate
-            const testLamports = Math.floor(0.001 * LAMPORTS_PER_SOL); // 0.001 SOL
-            const res = await axios.get("https://api.jup.ag/quote/v1", {
-                params: {
-                    inputMint: SOL_MINT.toBase58(),
-                    outputMint: mint,
-                    amount: testLamports.toString(),
-                    slippageBps: 1000,
-                },
-                headers,
-                timeout: 5000,
-            });
-
-            if (res.data && res.data.outAmount) {
-                const solIn = testLamports / LAMPORTS_PER_SOL; // 0.001
-                const tokensOut = Number(res.data.outAmount);
-                if (tokensOut > 0) {
-                    // Price = SOL per token
-                    const pricePerToken = solIn / tokensOut;
-                    return { pricePerToken, success: true };
-                }
-            }
-            return { pricePerToken: 0, success: false };
-        } catch (err: any) {
-            // 404 = token graduated off bonding curve (expected), only log unexpected errors
-            if (err.response?.status !== 404) {
-                console.warn(`[STRATEGY] getPrebondPrice failed for ${mint.slice(0, 8)}: ${err.message}`);
-            }
-            return { pricePerToken: 0, success: false };
-        }
-    }
-
-    /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
     async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; uiAmount: number; error?: string }> {
@@ -531,333 +488,6 @@ export class StrategyManager {
             console.error(`[STRATEGY] Sell failed:`, error.message);
             return { success: false, amountSol: 0, error: error.message };
         }
-    }
-
-    /**
-     * Fallback: Swap directly via Raydium SDK if Jupiter fails.
-     */
-    async swapRaydium(mint: PublicKey, pairAddress: string, amountSol: number, slippagePercent: number): Promise<{ success: boolean; amount: bigint; error?: string }> {
-        console.log(`[STRATEGY] Initiating Raydium Direct Swap for Pair: ${pairAddress} `);
-
-        try {
-            // 1. Fetch Pool Keys (Efficiently)
-            let poolData;
-            try {
-                const response = await axios.get(`https://api-v3.raydium.io/pools/info/ids?ids=${pairAddress}`);
-                poolData = response.data.data?.[0];
-            } catch (apiErr) {
-                console.warn("[RAYDIUM] API Fetch by ID failed, proceeding to Mint discovery...");
-            }
-
-            // 1b. Fallback: Fetch by Mint (If pairAddress was invalid or from Meteora)
-            if (!poolData) {
-                try {
-                    console.log("[RAYDIUM] Pool ID lookup failed. Attempting lookup by Token Mint...");
-                    // Use WSOL Mint for the pair
-                    const SOL_MINT_ADDR = SOL_MINT.toBase58();
-                    const response = await axios.get(`https://api-v3.raydium.io/pools/info/mint?mint1=${mint.toBase58()}&mint2=${SOL_MINT_ADDR}&poolType=all&poolSortField=default&sortType=desc&pageSize=1&page=1`);
-                    poolData = response.data.data?.[0];
-
-                    if (poolData) {
-                        console.log(`[RAYDIUM] Found correct Pool ID via Mint: ${poolData.id}`);
-                        // We found it!
-                    }
-                } catch (mintErr) {
-                    console.warn("[RAYDIUM] API Fetch by Mint failed...");
-                }
-            }
-
-            if (!poolData) {
-                // On-chain fallback would require full layout decoding which is heavy,
-                // but we can at least try the V2 API which sometimes has different indexing.
-                try {
-                    const backupResponse = await axios.get(`https://api.raydium.io/v2/sdk/liquidity/mainnet.json`);
-                    // We search for the specific ID in the backup list
-                    poolData = backupResponse.data.official.find((p: any) => p.id === pairAddress) ||
-                        backupResponse.data.unOfficial.find((p: any) => p.id === pairAddress);
-
-                    if (poolData) {
-                        console.log("[RAYDIUM] Found pool data in backup V2 index.");
-                        // Map V2 format to expected structure
-                        poolData = {
-                            id: poolData.id,
-                            mintA: { address: poolData.baseMint, decimals: poolData.baseDecimals },
-                            mintB: { address: poolData.quoteMint, decimals: poolData.quoteDecimals },
-                            lpMint: { address: poolData.lpMint, decimals: poolData.lpDecimals },
-                            programId: poolData.programId,
-                            authority: poolData.authority,
-                            openOrders: poolData.openOrders,
-                            targetOrders: poolData.targetOrders,
-                            vault: { A: poolData.baseVault, B: poolData.quoteVault },
-                            marketProgramId: poolData.marketProgramId,
-                            marketId: poolData.marketId,
-                            marketAuthority: poolData.marketAuthority,
-                            marketVault: { A: poolData.marketBaseVault, B: poolData.marketQuoteVault },
-                            marketBids: poolData.marketBids,
-                            marketAsks: poolData.marketAsks,
-                            marketEventQueue: poolData.marketEventQueue
-                        };
-                    }
-                } catch (backupErr) {
-                    console.warn("[RAYDIUM] V2 Backup API failed...");
-                }
-            }
-
-            // 2. TRUE ON-CHAIN SEARCH (If API fails, find the address ourselves)
-            if (!poolData) {
-                try {
-                    // Raydium V4 Program ID
-                    // Raydium V4 Program ID
-                    const RAYDIUM_V4_PROGRAM_ID = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
-
-                    // Filter 1: Token / SOL
-                    const filtersSol = [
-                        { dataSize: 752 },
-                        { memcmp: { offset: 400, bytes: mint.toBase58() } }, // Base = Token
-                        { memcmp: { offset: 432, bytes: SOL_MINT.toBase58() } }  // Quote = SOL
-                    ];
-
-                    let accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersSol });
-
-                    if (accounts.length === 0) {
-                        // Filter 2: SOL / Token
-                        const filtersSolRev = [
-                            { dataSize: 752 },
-                            { memcmp: { offset: 400, bytes: SOL_MINT.toBase58() } },
-                            { memcmp: { offset: 432, bytes: mint.toBase58() } }
-                        ];
-                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersSolRev });
-                    }
-
-                    if (accounts.length === 0) {
-                        // Filter 3: Token / USDC (Common for larger launches)
-                        const filtersUsdc = [
-                            { dataSize: 752 },
-                            { memcmp: { offset: 400, bytes: mint.toBase58() } },
-                            { memcmp: { offset: 432, bytes: USDC_MINT.toBase58() } }
-                        ];
-                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersUsdc });
-                    }
-
-                    if (accounts.length === 0) {
-                        // Filter 4: USDC / Token
-                        const filtersUsdcRev = [
-                            { dataSize: 752 },
-                            { memcmp: { offset: 400, bytes: USDC_MINT.toBase58() } },
-                            { memcmp: { offset: 432, bytes: mint.toBase58() } }
-                        ];
-                        accounts = await this.connection.getProgramAccounts(RAYDIUM_V4_PROGRAM_ID, { filters: filtersUsdcRev });
-                    }
-
-                    if (accounts.length > 0) {
-                        const correctPairAddress = accounts[0].pubkey.toBase58();
-                        console.log(`[RAYDIUM] Found On-Chain Pool Address: ${correctPairAddress} (Replacing: ${pairAddress})`);
-                        pairAddress = correctPairAddress; // UPDATE LOCAL VAR
-                    }
-                } catch (searchErr) {
-                    console.warn("[RAYDIUM] On-Chain Address Search Failed:", searchErr);
-                }
-            }
-
-            // 3. TRUE ON-CHAIN DISCOVERY (The "Nuclear Option")
-            // This now uses the potentially corrected 'pairAddress'
-            if (!poolData) {
-                try {
-                    console.log("[RAYDIUM] Attempting direct on-chain account fetch...");
-                    const poolId = new PublicKey(pairAddress);
-                    const accountInfo = await this.connection.getAccountInfo(poolId);
-
-                    if (!accountInfo) {
-                        console.error(`[RAYDIUM] No account found at address: ${pairAddress}`);
-                        throw new Error("Pool account does not exist on-chain");
-                    }
-
-                    // Verify this is actually a Raydium account by checking owner
-                    const RAYDIUM_V4_PROGRAM_ID = new PublicKey("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
-                    if (!accountInfo.owner.equals(RAYDIUM_V4_PROGRAM_ID)) {
-                        console.error(`[RAYDIUM] Account owner mismatch. Expected Raydium V4, got: ${accountInfo.owner.toBase58()}`);
-                        throw new Error("Account is not a Raydium V4 pool");
-                    }
-
-                    if (accountInfo) {
-                        const LIQUIDITY_STATE_LAYOUT_V4 = Liquidity.getStateLayout(4);
-                        const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(accountInfo.data);
-
-                        const marketId = poolState.marketId;
-                        const marketAccountInfo = await this.connection.getAccountInfo(marketId);
-
-                        if (marketAccountInfo) {
-                            // Decode Market Data using the Market class from @project-serum/serum
-                            // Program ID for decoding is usually the owner of the account
-                            const MARKET_STATE_LAYOUT_V3 = Market.getLayout(marketAccountInfo.owner);
-                            const marketState = MARKET_STATE_LAYOUT_V3.decode(marketAccountInfo.data);
-
-                            // Reconstruction
-                            poolData = {
-                                id: pairAddress,
-                                mintA: { address: poolState.baseMint.toBase58(), decimals: poolState.baseDecimal.toNumber() },
-                                mintB: { address: poolState.quoteMint.toBase58(), decimals: poolState.quoteDecimal.toNumber() },
-                                lpMint: { address: poolState.lpMint.toBase58(), decimals: 9 },
-                                programId: accountInfo.owner.toBase58(),
-                                authority: Liquidity.getAssociatedAuthority({ programId: RAYDIUM_V4_PROGRAM_ID }).publicKey.toBase58(),
-                                openOrders: poolState.openOrders.toBase58(),
-                                targetOrders: poolState.targetOrders.toBase58(),
-                                vault: { A: poolState.baseVault.toBase58(), B: poolState.quoteVault.toBase58() },
-                                marketProgramId: poolState.marketProgramId.toBase58(),
-                                marketId: marketId.toBase58(),
-                                marketAuthority: Liquidity.getAssociatedAuthority({ programId: poolState.marketProgramId }).publicKey.toBase58(),
-                                marketVault: { A: marketState.baseVault.toBase58(), B: marketState.quoteVault.toBase58() },
-                                marketBids: marketState.bids.toBase58(),
-                                marketAsks: marketState.asks.toBase58(),
-                                marketEventQueue: marketState.eventQueue.toBase58()
-                            };
-
-                            console.log("[RAYDIUM] SUCCESS: Reconstructed pool data from on-chain state!");
-                        }
-                    }
-                } catch (chainErr: any) {
-                    console.error("[RAYDIUM] On-Chain Discovery Failed:", chainErr.message);
-                }
-            }
-
-            if (!poolData) {
-                return { success: false, amount: BigInt(0), error: "Raydium Pool Data not found anywhere (API or On-Chain)" };
-            }
-
-            // Map API response to PoolKeys format
-            const poolKeys: LiquidityPoolKeys = {
-                id: new PublicKey(poolData.id),
-                baseMint: new PublicKey(poolData.mintA.address),
-                quoteMint: new PublicKey(poolData.mintB.address),
-                lpMint: new PublicKey(poolData.lpMint.address),
-                baseDecimals: poolData.mintA.decimals,
-                quoteDecimals: poolData.mintB.decimals,
-                lpDecimals: poolData.lpMint.decimals,
-                version: 4,
-                programId: new PublicKey(poolData.programId),
-                authority: new PublicKey(poolData.authority),
-                openOrders: new PublicKey(poolData.openOrders),
-                targetOrders: new PublicKey(poolData.targetOrders),
-                baseVault: new PublicKey(poolData.vault.A),
-                quoteVault: new PublicKey(poolData.vault.B),
-                withdrawQueue: PublicKey.default,
-                lpVault: PublicKey.default,
-                marketVersion: 3,
-                marketProgramId: new PublicKey(poolData.marketProgramId),
-                marketId: new PublicKey(poolData.marketId),
-                marketAuthority: new PublicKey(poolData.marketAuthority),
-                marketBaseVault: new PublicKey(poolData.marketVault.A),
-                marketQuoteVault: new PublicKey(poolData.marketVault.B),
-                marketBids: new PublicKey(poolData.marketBids),
-                marketAsks: new PublicKey(poolData.marketAsks),
-                marketEventQueue: new PublicKey(poolData.marketEventQueue),
-                lookupTableAccount: PublicKey.default,
-            };
-
-            // 2. Define Tokens
-            // 2. Define Tokens
-            const currencyIn = poolKeys.quoteMint.equals(SOL_MINT) ? Token.WSOL : new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.quoteMint, Number(poolKeys.quoteDecimals), "QUOTE", "Quote Token");
-
-            const isBase = poolKeys.baseMint.toBase58() === mint.toBase58();
-            const currencyOut = isBase
-                ? new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.baseMint, Number(poolKeys.baseDecimals), "BASE", "Base Token")
-                : new (Token as any)(TOKEN_PROGRAM_ID, poolKeys.quoteMint, Number(poolKeys.quoteDecimals), "QUOTE", "Quote Token");
-
-            // 3. Compute Amounts
-            const amountIn = new TokenAmount(currencyIn, Math.floor(amountSol * 1e9), false);
-            const slippageProxy = new Percent(slippagePercent, 100);
-
-            const computation = Liquidity.computeAmountOut({
-                poolKeys,
-                poolInfo: await Liquidity.fetchInfo({ connection: this.connection, poolKeys }),
-                amountIn,
-                currencyOut,
-                slippage: slippageProxy,
-            });
-
-            // HELPER: Fetch Token Accounts manually for SDK verification
-            // This prevents "failed to simulate" errors inside the SDK due to missing account context
-            const userTokenAccounts = await this.getOwnerTokenAccounts();
-
-            // 4. Create Transaction Instructions (Simple V0)
-            const { innerTransactions } = await Liquidity.makeSwapInstructionSimple({
-                connection: this.connection,
-                poolKeys,
-                userKeys: {
-                    tokenAccounts: userTokenAccounts, // <--- PASS REAL ACCOUNTS
-                    owner: this.wallet.publicKey,
-                },
-                amountIn: amountIn,
-                amountOut: computation.minAmountOut,
-                fixedSide: 'in',
-                makeTxVersion: 0,
-            });
-
-            // 5. Build & Send Sequentially
-            // Raydium SDK might break the swap into multiple transactions (e.g. Setup ATA -> Swap)
-            // We must execute them in order.
-            console.log(`[RAYDIUM] Processing ${innerTransactions.length} internal transactions...`);
-
-            let lastTxId = "";
-            for (const iTx of innerTransactions) {
-                const tx = new Transaction();
-
-                const priorityFee = await this.getPriorityFee();
-                tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 200000 }));
-                tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
-
-                tx.add(...iTx.instructions);
-                tx.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
-                tx.feePayer = this.wallet.publicKey;
-
-                tx.sign(this.wallet);
-                const rawTransaction = tx.serialize();
-
-                // Skip Preflight to generally avoid "Simulation Error" blocking the send
-                // We rely on our added Compute Budget to get it processed
-                const txid = await this.connection.sendRawTransaction(rawTransaction, { skipPreflight: true });
-                console.log(`[RAYDIUM] Sent Internal Tx: https://solscan.io/tx/${txid}`);
-
-                // Confirm before next step (Crucial for ATAs)
-                await this.confirmOrRetry(txid);
-                lastTxId = txid;
-            }
-
-            console.log(`[RAYDIUM] Swap Sequence Complete! Final Tx: https://solscan.io/tx/${lastTxId}`);
-            return { success: true, amount: BigInt(computation.amountOut.raw.toString()) };
-
-        } catch (e: any) {
-            console.error("[RAYDIUM] Swap Failed:", e);
-            return { success: false, amount: BigInt(0), error: `Raydium Error: ${e.message}` };
-        }
-    }
-
-    async getConnectionTokenAccounts(owner: PublicKey) {
-        const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(owner, {
-            programId: TOKEN_PROGRAM_ID
-        });
-
-        return tokenAccounts.value.map(i => ({
-            pubkey: i.pubkey,
-            programId: i.account.owner,
-            accountInfo: SPL_ACCOUNT_LAYOUT.decode(i.account.data as any) // We might need raw data for decode
-            // Actually Raydium SDK expects specific format.
-            // Simplest is to pass empty and let SDK fetch, BUT IT FAILS.
-            // Alternative: Use `getTokenAccountsByOwner` with raw encoding and let SDK parse it if we pass it correctly.
-        }));
-    }
-
-    // Helper for SDK format
-    async getOwnerTokenAccounts() {
-        // Implementation that matches what Raydium expects
-        const walletTokenAccount = await this.connection.getTokenAccountsByOwner(this.wallet.publicKey, {
-            programId: TOKEN_PROGRAM_ID,
-        });
-        return walletTokenAccount.value.map((i) => ({
-            pubkey: i.pubkey,
-            programId: i.account.owner,
-            accountInfo: SPL_ACCOUNT_LAYOUT.decode(i.account.data),
-        }));
     }
 
     /**
@@ -1666,6 +1296,8 @@ export class StrategyManager {
 
             let feeA = 0;
             let feeB = 0;
+            let feeARaw = 0n;
+            let feeBRaw = 0n;
 
             try {
                 if (globalFeeA_Array.length > 0 && checkpointA_Array.length > 0) {
@@ -1680,9 +1312,9 @@ export class StrategyManager {
                     // Both deltaA and liquidity (L_user) are scaled by 2^64 in DAMM v2.
                     // Product is scaled by 2^128. Shift by 128 to get raw units.
                     const deltaA = globalA > checkA ? globalA - checkA : 0n;
-                    const pendingA_Raw = (deltaA * liquidity) >> 128n;
+                    feeARaw = (deltaA * liquidity) >> 128n;
 
-                    feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                    feeA = Number(feeARaw) / Math.pow(10, decimalsA);
                 }
 
                 if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
@@ -1694,9 +1326,9 @@ export class StrategyManager {
                         BigInt(pos.positionState.permanentLockedLiquidity.toString());
 
                     const deltaB = globalB > checkB ? globalB - checkB : 0n;
-                    const pendingB_Raw = (deltaB * liquidity) >> 128n;
+                    feeBRaw = (deltaB * liquidity) >> 128n;
 
-                    feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                    feeB = Number(feeBRaw) / Math.pow(10, decimalsB);
                 }
             } catch (err) {
                 console.warn(`[STRATEGY] Manual fee calculation failed:`, err);
@@ -1704,20 +1336,12 @@ export class StrategyManager {
 
             // Fallback to direct read if calculation yielded 0 (or failed)
             if (feeA === 0) {
-                feeA = Number(
-                    pos.positionState.feeAPending?.toString() ||
-                    pos.positionState.feeAAmount?.toString() ||
-                    pos.positionState.feeA?.toString() ||
-                    "0"
-                ) / Math.pow(10, decimalsA);
+                feeARaw = BigInt(pos.positionState.feeAPending?.toString() || pos.positionState.feeAAmount?.toString() || "0");
+                feeA = Number(feeARaw) / Math.pow(10, decimalsA);
             }
             if (feeB === 0) {
-                feeB = Number(
-                    pos.positionState.feeBPending?.toString() ||
-                    pos.positionState.feeBAmount?.toString() ||
-                    pos.positionState.feeB?.toString() ||
-                    "0"
-                ) / Math.pow(10, decimalsB);
+                feeBRaw = BigInt(pos.positionState.feeBPending?.toString() || pos.positionState.feeBAmount?.toString() || "0");
+                feeB = Number(feeBRaw) / Math.pow(10, decimalsB);
             }
 
             /* // Log calculation results for verification
@@ -1742,8 +1366,8 @@ export class StrategyManager {
                 totalSol,
                 feesBase: feesBase,
                 feesToken: feesToken,
-                feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending?.toString() || "0") : BigInt(pos.positionState.feeBPending?.toString() || "0"),
-                feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending?.toString() || "0") : BigInt(pos.positionState.feeAPending?.toString() || "0"),
+                feesBaseRaw: baseIsA ? feeARaw : feeBRaw,
+                feesTokenRaw: baseIsA ? feeBRaw : feeARaw,
                 mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
                 baseMint: baseIsA ? mintA.toBase58() : mintB.toBase58(),
                 spotPrice,
@@ -1998,30 +1622,33 @@ export class StrategyManager {
                     const checkpointB_Array = (pos.positionState as any).feeBPerTokenCheckpoint || [];
 
                     let feeA = 0, feeB = 0;
+                    let feeARaw = 0n, feeBRaw = 0n;
                     try {
                         if (globalFeeA_Array.length > 0 && checkpointA_Array.length > 0) {
                             const globalA = parseBigIntLE(globalFeeA_Array);
                             const checkA = parseBigIntLE(checkpointA_Array);
                             const deltaA = globalA > checkA ? globalA - checkA : 0n;
-                            const pendingA_Raw = (deltaA * L_user) >> 128n;
-                            feeA = Number(pendingA_Raw) / Math.pow(10, decimalsA);
+                            feeARaw = (deltaA * L_user) >> 128n;
+                            feeA = Number(feeARaw) / Math.pow(10, decimalsA);
                         }
                         if (globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
                             const globalB = parseBigIntLE(globalFeeB_Array);
                             const checkB = parseBigIntLE(checkpointB_Array);
                             const deltaB = globalB > checkB ? globalB - checkB : 0n;
-                            const pendingB_Raw = (deltaB * L_user) >> 128n;
-                            feeB = Number(pendingB_Raw) / Math.pow(10, decimalsB);
+                            feeBRaw = (deltaB * L_user) >> 128n;
+                            feeB = Number(feeBRaw) / Math.pow(10, decimalsB);
                         }
                     } catch (feeErr: any) {
                         console.warn(`[BATCH] Fee calc error for ${pool.poolAddress.slice(0, 8)}: ${feeErr.message}`);
                     }
 
                     if (feeA === 0) {
-                        feeA = Number(pos.positionState.feeAPending?.toString() || pos.positionState.feeAAmount?.toString() || pos.positionState.feeA?.toString() || "0") / Math.pow(10, decimalsA);
+                        feeARaw = BigInt(pos.positionState.feeAPending?.toString() || pos.positionState.feeAAmount?.toString() || "0");
+                        feeA = Number(feeARaw) / Math.pow(10, decimalsA);
                     }
                     if (feeB === 0) {
-                        feeB = Number(pos.positionState.feeBPending?.toString() || pos.positionState.feeBAmount?.toString() || pos.positionState.feeB?.toString() || "0") / Math.pow(10, decimalsB);
+                        feeBRaw = BigInt(pos.positionState.feeBPending?.toString() || pos.positionState.feeBAmount?.toString() || "0");
+                        feeB = Number(feeBRaw) / Math.pow(10, decimalsB);
                     }
 
                     const feesBase = baseIsA ? feeA : feeB;
@@ -2032,8 +1659,8 @@ export class StrategyManager {
                         totalSol,
                         feesBase,
                         feesToken,
-                        feesBaseRaw: baseIsA ? BigInt(pos.positionState.feeAPending?.toString() || "0") : BigInt(pos.positionState.feeBPending?.toString() || "0"),
-                        feesTokenRaw: baseIsA ? BigInt(pos.positionState.feeBPending?.toString() || "0") : BigInt(pos.positionState.feeAPending?.toString() || "0"),
+                        feesBaseRaw: baseIsA ? feeARaw : feeBRaw,
+                        feesTokenRaw: baseIsA ? feeBRaw : feeARaw,
                         mint: baseIsA ? mintB.toBase58() : mintA.toBase58(),
                         baseMint: baseIsA ? mintA.toBase58() : mintB.toBase58(),
                         spotPrice,
@@ -2131,29 +1758,6 @@ export class StrategyManager {
         }
     }
 
-    async getMeteoraFees(poolAddress: string): Promise<{ feeA: bigint; feeB: bigint }> {
-        const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
-        const { PublicKey } = require("@solana/web3.js");
-
-        try {
-            const cpAmm = new CpAmm(this.connection);
-            const userPositions = await cpAmm.getUserPositionByPool(new PublicKey(poolAddress), this.wallet.publicKey);
-
-            if (userPositions.length === 0) return { feeA: 0n, feeB: 0n };
-
-            const pos = userPositions[0];
-            return {
-                feeA: BigInt(pos.positionState.feeAPending.toString()),
-                feeB: BigInt(pos.positionState.feeBPending.toString())
-            };
-        } catch (error) {
-            return { feeA: 0n, feeB: 0n };
-        }
-    }
-
-    /**
-     * Claims accumulated fees from a Meteora position.
-     */
     /**
      * Claims accumulated fees from a Meteora position.
      * @param poolAddress The pool address.
@@ -2174,14 +1778,42 @@ export class StrategyManager {
             }
 
             const pos = userPositions[0];
+            const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
-            // Safety check: Don't claim if fees are 0
-            if (pos.positionState.feeAPending.isZero() && pos.positionState.feeBPending.isZero()) {
-                console.log(`[METEORA] Skipping claim: No pending fees found.`);
+            // Safety check: Calculate actual pending fees using accumulator math (DAMM V2)
+            // feeAPending/feeBPending on the position are NOT updated until an on-chain claim,
+            // so we must compute: (globalFeePerLiquidity - checkpoint) * liquidity >> 128
+            const parseBigIntLE = (arr: number[]): bigint => {
+                let res = 0n;
+                for (let i = 0; i < arr.length; i++) res += BigInt(arr[i]) << BigInt(i * 8);
+                return res;
+            };
+            const globalFeeA_Array = (poolState as any).feeAPerLiquidity || [];
+            const globalFeeB_Array = (poolState as any).feeBPerLiquidity || [];
+            const checkpointA_Array = (pos.positionState as any).feeAPerTokenCheckpoint || [];
+            const checkpointB_Array = (pos.positionState as any).feeBPerTokenCheckpoint || [];
+
+            const liquidity = BigInt(pos.positionState.unlockedLiquidity.toString()) +
+                BigInt(pos.positionState.vestedLiquidity.toString()) +
+                BigInt(pos.positionState.permanentLockedLiquidity.toString());
+
+            let hasFees = false;
+            if (globalFeeA_Array.length > 0 && checkpointA_Array.length > 0) {
+                const deltaA = parseBigIntLE(globalFeeA_Array) - parseBigIntLE(checkpointA_Array);
+                if (deltaA > 0n && (deltaA * liquidity) >> 128n > 0n) hasFees = true;
+            }
+            if (!hasFees && globalFeeB_Array.length > 0 && checkpointB_Array.length > 0) {
+                const deltaB = parseBigIntLE(globalFeeB_Array) - parseBigIntLE(checkpointB_Array);
+                if (deltaB > 0n && (deltaB * liquidity) >> 128n > 0n) hasFees = true;
+            }
+            // Fallback: also check the on-chain pending fields
+            if (!hasFees && !pos.positionState.feeAPending.isZero()) hasFees = true;
+            if (!hasFees && !pos.positionState.feeBPending.isZero()) hasFees = true;
+
+            if (!hasFees) {
+                console.log(`[METEORA] Skipping claim: No pending fees found (accumulator check).`);
                 return { success: false, error: "No pending fees to claim." };
             }
-
-            const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
             const tx = await cpAmm.claimPositionFee({
                 owner: this.wallet.publicKey,

@@ -42,7 +42,11 @@ export interface BotSettings {
     mode: "SCOUT" | "ANALYST" | "PREBOND" | "ALL";
     maxAgeMinutes: number;
     baseToken: string;
-    // Forensic Settings
+    // Take Profit / Stop Loss
+    tp1Multiplier: number;             // MCAP multiplier to trigger TP1 (e.g. 7 = 7x)
+    tp1WithdrawPct: number;            // % of liquidity to withdraw at TP1
+    tp2Multiplier: number;             // MCAP multiplier to trigger TP2 (e.g. 14 = 14x)
+    tp2WithdrawPct: number;            // % of liquidity to withdraw at TP2
     stopLossPct: number;
     enableStopLoss: boolean;
     enableReputation: boolean;
@@ -75,24 +79,6 @@ export interface BotSettings {
     prebondMinVolume5m: number;        // Min 5-minute volume in USD (0 = disabled)
     prebondMinVolume1h: number;        // Min 1-hour volume in USD (0 = disabled)
     prebondMinVolume24h: number;       // Min 24-hour volume in USD (0 = disabled)
-}
-
-/** @deprecated Legacy interface — prebond positions are now saved as PoolData with isPrebond=true */
-export interface PrebondPosition {
-    mint: string;
-    symbol: string;
-    buyTxId: string;
-    buyPrice: number;
-    buyAmountSol: number;
-    buyAmountTokens: string;
-    creator: string;
-    strategy: "FLIP" | "GRADUATION";
-    status: "ACTIVE" | "SOLD" | "GRADUATED" | "FAILED";
-    created: string;
-    soldTxId?: string;
-    soldAmountSol?: number;
-    pnl?: number;
-    currentPrice?: number;
 }
 
 export interface TradeHistory {

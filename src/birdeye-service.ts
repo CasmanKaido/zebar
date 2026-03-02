@@ -215,7 +215,13 @@ export class BirdeyeService {
                 symbol: d.symbol || "UNKNOWN"
             };
         } catch (e: any) {
-            console.warn(`[BIRDEYE] Token overview failed for ${mint.slice(0, 8)}: ${e.message}`);
+            if (e.response?.status === 401 || e.response?.status === 403) {
+                console.warn(`[BIRDEYE] Token overview unauthorized (401/403). Suppressing for 10 min.`);
+                this.isEnabled = false;
+                setTimeout(() => { this.isEnabled = true; }, 10 * 60 * 1000);
+            } else {
+                console.warn(`[BIRDEYE] Token overview failed for ${mint.slice(0, 8)}: ${e.message}`);
+            }
             return null;
         }
     }

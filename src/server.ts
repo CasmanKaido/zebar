@@ -7,11 +7,77 @@ import cors from "cors";
 import path from "path";
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
-import { GeckoService } from "./gecko-service";
 import { SOL_MINT, BASE_TOKENS } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { HeliusWebhookService } from "./helius-webhook-service";
 import { dbService } from "./db-service";
+
+import { BotSettings } from "./types";
+
+// ═══ Settings Validation ═══
+function sanitizeSettings(raw: any): BotSettings {
+    if (!raw || typeof raw !== "object") throw new Error("Invalid settings payload");
+
+    const num = (v: any, fallback: number, min = -Infinity, max = Infinity) => {
+        const n = Number(v);
+        return isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+    };
+    const bool = (v: any, fallback: boolean) => v !== undefined ? !!v : fallback;
+    const range = (obj: any, fallbackMin: number, fallbackMax: number) => ({
+        min: num(obj?.min, fallbackMin, 0),
+        max: num(obj?.max, fallbackMax, 0)
+    });
+    const validModes = ["SCOUT", "ANALYST", "PREBOND", "ALL"] as const;
+    const mode = validModes.includes(raw.mode) ? raw.mode : "SCOUT";
+
+    return {
+        buyAmount: num(raw.buyAmount, 0.1, 0),
+        lpppAmount: num(raw.lpppAmount, 0, 0),
+        meteoraFeeBps: num(raw.meteoraFeeBps, 200, 0, 10000),
+        maxPools: num(raw.maxPools, 5, 1, 100),
+        slippage: num(raw.slippage, 10, 0, 100),
+        volume5m: range(raw.volume5m, 0, 0),
+        volume1h: range(raw.volume1h, 0, 0),
+        volume24h: range(raw.volume24h, 0, 0),
+        liquidity: range(raw.liquidity, 0, 0),
+        mcap: range(raw.mcap, 0, 0),
+        mode,
+        maxAgeMinutes: num(raw.maxAgeMinutes, 0, 0),
+        baseToken: typeof raw.baseToken === "string" ? raw.baseToken : "LPPP",
+        tp1Multiplier: num(raw.tp1Multiplier, 7, 1, 1000),
+        tp1WithdrawPct: num(raw.tp1WithdrawPct, 30, 1, 100),
+        tp2Multiplier: num(raw.tp2Multiplier, 14, 1, 1000),
+        tp2WithdrawPct: num(raw.tp2WithdrawPct, 30, 1, 100),
+        stopLossPct: num(raw.stopLossPct, -2, -100, 0),
+        enableStopLoss: bool(raw.enableStopLoss, true),
+        enableReputation: bool(raw.enableReputation, true),
+        enableBundle: bool(raw.enableBundle, true),
+        enableInvestment: bool(raw.enableInvestment, false),
+        enableSimulation: bool(raw.enableSimulation, false),
+        minDevTxCount: num(raw.minDevTxCount, 10, 0),
+        enableAuthorityCheck: bool(raw.enableAuthorityCheck, true),
+        enableHolderAnalysis: bool(raw.enableHolderAnalysis, false),
+        enableScoring: bool(raw.enableScoring, false),
+        maxTop5HolderPct: num(raw.maxTop5HolderPct, 0, 0, 100),
+        minSafetyScore: num(raw.minSafetyScore, 0, 0, 1),
+        minTokenScore: num(raw.minTokenScore, 60, 0, 100),
+        enablePrebond: bool(raw.enablePrebond, false),
+        prebondEnableReputation: bool(raw.prebondEnableReputation, true),
+        prebondEnableBundle: bool(raw.prebondEnableBundle, true),
+        prebondEnableSimulation: bool(raw.prebondEnableSimulation, false),
+        prebondEnableAuthority: bool(raw.prebondEnableAuthority, true),
+        prebondMinDevTxCount: num(raw.prebondMinDevTxCount, 10, 0),
+        prebondMinMcap: num(raw.prebondMinMcap, 0, 0),
+        prebondMaxMcap: num(raw.prebondMaxMcap, 0, 0),
+        prebondMinHolders: num(raw.prebondMinHolders, 0, 0),
+        prebondMinOrganicScore: num(raw.prebondMinOrganicScore, 0, 0, 100),
+        prebondMaxTopHolderPct: num(raw.prebondMaxTopHolderPct, 0, 0, 100),
+        prebondMaxAgeMinutes: num(raw.prebondMaxAgeMinutes, 0, 0),
+        prebondMinVolume5m: num(raw.prebondMinVolume5m, 0, 0),
+        prebondMinVolume1h: num(raw.prebondMinVolume1h, 0, 0),
+        prebondMinVolume24h: num(raw.prebondMinVolume24h, 0, 0),
+    };
+}
 
 const app = express();
 app.use(cors());
@@ -75,7 +141,8 @@ app.get("/api/settings", (req, res) => {
 
 app.post("/api/start", async (req, res) => {
     try {
-        await botManager.start(req.body);
+        const config = req.body && Object.keys(req.body).length > 0 ? sanitizeSettings(req.body) : undefined;
+        await botManager.start(config);
         res.json({ success: true, running: true });
     } catch (error: any) {
         console.error("[API] Start failed:", error);
@@ -85,7 +152,8 @@ app.post("/api/start", async (req, res) => {
 
 app.post("/api/settings", async (req, res) => {
     try {
-        await dbService.saveSettings(req.body);
+        const validated = sanitizeSettings(req.body);
+        await dbService.saveSettings(validated);
         await botManager.loadSettings(); // Reload in-memory settings
         res.json({ success: true });
     } catch (error: any) {
@@ -97,16 +165,6 @@ app.post("/api/settings", async (req, res) => {
 app.post("/api/stop", (req, res) => {
     botManager.stop();
     res.json({ success: true, running: false });
-});
-
-// Prebond Positions API
-app.get("/api/prebond-positions", async (req, res) => {
-    try {
-        const positions = await dbService.getAllPrebondPositions();
-        res.json(positions);
-    } catch (error: any) {
-        res.status(500).json({ error: error.message });
-    }
 });
 
 // Proxy for Real-Time Price (Server-side fetch avoids CORS/Rate limits)

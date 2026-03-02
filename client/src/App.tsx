@@ -346,7 +346,11 @@ function App() {
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
     const [discoveryMode, setDiscoveryMode] = useState<'SCOUT' | 'ANALYST' | 'PREBOND' | 'ALL'>('SCOUT');
 
-    // Forensic & Risk Guard
+    // Take Profit / Stop Loss
+    const [tp1Multiplier, setTp1Multiplier] = useState(7);
+    const [tp1WithdrawPct, setTp1WithdrawPct] = useState(30);
+    const [tp2Multiplier, setTp2Multiplier] = useState(14);
+    const [tp2WithdrawPct, setTp2WithdrawPct] = useState(30);
     const [stopLossPct, setStopLossPct] = useState(-2);
     const [enableStopLoss, setEnableStopLoss] = useState(true);
     const [enableReputation, setEnableReputation] = useState(true);
@@ -539,7 +543,11 @@ function App() {
                     if (s.maxAgeMinutes !== undefined) setMaxAgeMinutes(s.maxAgeMinutes);
                     if (s.baseToken !== undefined) setSelectedBaseToken(s.baseToken);
 
-                    // Forensic Settings
+                    // TP/SL Settings
+                    if (s.tp1Multiplier !== undefined) setTp1Multiplier(s.tp1Multiplier);
+                    if (s.tp1WithdrawPct !== undefined) setTp1WithdrawPct(s.tp1WithdrawPct);
+                    if (s.tp2Multiplier !== undefined) setTp2Multiplier(s.tp2Multiplier);
+                    if (s.tp2WithdrawPct !== undefined) setTp2WithdrawPct(s.tp2WithdrawPct);
                     if (s.stopLossPct !== undefined) setStopLossPct(s.stopLossPct);
                     if (s.enableStopLoss !== undefined) setEnableStopLoss(s.enableStopLoss);
                     if (s.enableReputation !== undefined) setEnableReputation(s.enableReputation);
@@ -608,6 +616,7 @@ function App() {
                     mode: discoveryMode,
                     maxAgeMinutes,
                     baseToken: selectedBaseToken,
+                    tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
                     stopLossPct,
                     enableStopLoss,
                     enableReputation,
@@ -668,6 +677,7 @@ function App() {
                     mode: discoveryMode,
                     maxAgeMinutes,
                     baseToken: selectedBaseToken,
+                    tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
                     stopLossPct,
                     enableStopLoss,
                     enableReputation,
@@ -1242,6 +1252,15 @@ function App() {
                                         <h2 className="text-sm font-bold uppercase tracking-widest text-primary">Forensic Guard & Risk</h2>
                                     </div>
                                     <div className="space-y-4">
+                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Take Profit</span>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <SettingInput label="TP1 Multiplier" value={tp1Multiplier} onChange={setTp1Multiplier} disabled={running} unit="x" subtext="MCAP trigger" />
+                                                <SettingInput label="TP1 Withdraw" value={tp1WithdrawPct} onChange={setTp1WithdrawPct} disabled={running} unit="%" subtext="Liquidity to pull" />
+                                                <SettingInput label="TP2 Multiplier" value={tp2Multiplier} onChange={setTp2Multiplier} disabled={running} unit="x" subtext="MCAP trigger" />
+                                                <SettingInput label="TP2 Withdraw" value={tp2WithdrawPct} onChange={setTp2WithdrawPct} disabled={running} unit="%" subtext="Liquidity to pull" />
+                                            </div>
+                                        </div>
                                         <Toggle label="Enable Stop Loss" enabled={enableStopLoss} onChange={setEnableStopLoss} disabled={running} onInfo={() => showModal({ title: 'Stop Loss', message: 'Automatically withdraws liquidity when the token MCAP drops below a threshold relative to entry. Uses MCAP multiplier (e.g. 0.92x for SCOUT mode). The percentage controls how much liquidity to withdraw (default 80%). Protects against slow bleeds and sudden dumps.', type: 'info' })} />
                                         {enableStopLoss && (
                                             <div className="animate-in fade-in slide-in-from-top-2 duration-200">
