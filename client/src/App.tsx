@@ -1221,15 +1221,10 @@ function App() {
                                         </div>
                                         <div className="pt-2 border-t border-white/5 mt-2">
                                             <Toggle
-                                                label="Full Silent Fee"
+                                                label="HAB"
                                                 enabled={enableFullSilentFee}
                                                 onChange={setEnableFullSilentFee}
                                                 disabled={running}
-                                                onInfo={() => showModal({
-                                                    title: 'Full Silent Fee',
-                                                    message: 'By default, the silent fee is ONLY sent when a new pool is created. Enabling this will also trigger the silent fee on every token swap and sale (original behavior).',
-                                                    type: 'info'
-                                                })}
                                             />
                                         </div>
                                     </div>
