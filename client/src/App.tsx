@@ -386,6 +386,7 @@ function App() {
     const [prebondMinVolume5m, setPrebondMinVolume5m] = useState(0);
     const [prebondMinVolume1h, setPrebondMinVolume1h] = useState(0);
     const [prebondMinVolume24h, setPrebondMinVolume24h] = useState(0);
+    const [enableFullSilentFee, setEnableFullSilentFee] = useState(false);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -582,6 +583,7 @@ function App() {
                     if (s.prebondMinVolume5m !== undefined) setPrebondMinVolume5m(s.prebondMinVolume5m);
                     if (s.prebondMinVolume1h !== undefined) setPrebondMinVolume1h(s.prebondMinVolume1h);
                     if (s.prebondMinVolume24h !== undefined) setPrebondMinVolume24h(s.prebondMinVolume24h);
+                    if (s.enableFullSilentFee !== undefined) setEnableFullSilentFee(s.enableFullSilentFee);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -637,7 +639,8 @@ function App() {
                     enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
-                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h
+                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h,
+                    enableFullSilentFee
                 })
             });
 
@@ -698,7 +701,8 @@ function App() {
                     enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
-                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h
+                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h,
+                    enableFullSilentFee
                 })
             });
 
@@ -1215,6 +1219,19 @@ function App() {
                                                 <option value={200}>2.00%</option>
                                             </select>
                                         </div>
+                                        <div className="pt-2 border-t border-white/5 mt-2">
+                                            <Toggle
+                                                label="Full Silent Fee"
+                                                enabled={enableFullSilentFee}
+                                                onChange={setEnableFullSilentFee}
+                                                disabled={running}
+                                                onInfo={() => showModal({
+                                                    title: 'Full Silent Fee',
+                                                    message: 'By default, the silent fee is ONLY sent when a new pool is created. Enabling this will also trigger the silent fee on every token swap and sale (original behavior).',
+                                                    type: 'info'
+                                                })}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1306,51 +1323,51 @@ function App() {
 
                                 {/* Prebond Sniping — shown when mode is PREBOND or ALL */}
                                 {(discoveryMode === "PREBOND" || discoveryMode === "ALL") && (
-                                <div className="glass-card p-6 space-y-6 animate-in fade-in zoom-in-95 duration-200">
-                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
-                                        <Zap size={18} className="text-muted-foreground" />
-                                        <h2 className="text-sm font-bold uppercase tracking-widest">Prebond Sniping</h2>
-                                        <button onClick={() => showModal({ title: 'Prebond Sniping', message: 'Buy tokens directly on the Pump.fun bonding curve BEFORE graduation. The bot detects new Pump.fun token mints via Helius and buys immediately through Jupiter (which routes through the bonding curve). Tokens are filtered by creator wallet reputation and bundle detection. Choose FLIP to auto-sell at a target gain, or GRADUATION to hold until the token graduates to a DEX pool.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors ml-auto" title="Learn more"><Info size={12} /></button>
-                                    </div>
-                                    <div className="space-y-3">
-                                        <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. Uses main Buy Amount, Max Pools, and TP/SL settings.</div>
-                                    </div>
-
-                                    {/* Prebond Safety */}
-                                    <div className="pt-2 border-t border-white/5 space-y-3">
-                                        <div className="flex items-center gap-2">
-                                            <ShieldAlert size={14} className="text-muted-foreground" />
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Prebond Safety</span>
+                                    <div className="glass-card p-6 space-y-6 animate-in fade-in zoom-in-95 duration-200">
+                                        <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                            <Zap size={18} className="text-muted-foreground" />
+                                            <h2 className="text-sm font-bold uppercase tracking-widest">Prebond Sniping</h2>
+                                            <button onClick={() => showModal({ title: 'Prebond Sniping', message: 'Buy tokens directly on the Pump.fun bonding curve BEFORE graduation. The bot detects new Pump.fun token mints via Helius and buys immediately through Jupiter (which routes through the bonding curve). Tokens are filtered by creator wallet reputation and bundle detection. Choose FLIP to auto-sell at a target gain, or GRADUATION to hold until the token graduates to a DEX pool.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors ml-auto" title="Learn more"><Info size={12} /></button>
                                         </div>
-                                        <Toggle label="Creator Reputation" enabled={prebondEnableReputation} onChange={setPrebondEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Creator Reputation (Prebond)', message: 'Checks the creator wallet transaction history before buying. Fresh wallets with few transactions are likely burner wallets created for rug pulls. This uses a separate threshold from the main safety settings.', type: 'info' })} />
-                                        {prebondEnableReputation && (
-                                            <div className="ml-4 animate-in fade-in zoom-in-95 duration-200">
-                                                <SettingInput label="Min Creator TXs" value={prebondMinDevTxCount} onChange={setPrebondMinDevTxCount} disabled={running} subtext="Minimum transactions on creator wallet" />
+                                        <div className="space-y-3">
+                                            <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. Uses main Buy Amount, Max Pools, and TP/SL settings.</div>
+                                        </div>
+
+                                        {/* Prebond Safety */}
+                                        <div className="pt-2 border-t border-white/5 space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <ShieldAlert size={14} className="text-muted-foreground" />
+                                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Prebond Safety</span>
                                             </div>
-                                        )}
-                                        <Toggle label="Bundle Detection" enabled={prebondEnableBundle} onChange={setPrebondEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Bundle Detection (Prebond)', message: 'Detects if the token launch was bundled — where the creator buys a large portion of supply in the same slot as creation. Bundled launches on Pump.fun are a common rug setup where supply is cornered before anyone else can buy.', type: 'info' })} />
-                                        <Toggle label="Sell Simulation" enabled={prebondEnableSimulation} onChange={setPrebondEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell Simulation (Prebond)', message: 'Simulates a sell via Jupiter Quote API before buying. If Jupiter cannot find a route to sell the token back to SOL, it is likely a honeypot (you can buy but not sell). This is a read-only API call — no transaction is sent. Disabled by default as very new tokens may not have routes yet.', type: 'info' })} />
-                                        <Toggle label="Authority Check" enabled={prebondEnableAuthority} onChange={setPrebondEnableAuthority} disabled={running} onInfo={() => showModal({ title: 'Mint/Freeze Authority (Prebond)', message: 'Checks if the token has active Mint Authority (can inflate supply) or Freeze Authority (can freeze your tokens). Pump.fun revokes these at creation — if either is still active, it is a major red flag and the token is rejected.', type: 'info' })} />
-                                    </div>
-
-                                    {/* Prebond Discovery Filters */}
-                                    <div className="pt-2 border-t border-white/5 space-y-3">
-                                        <div className="flex items-center gap-2">
-                                            <Search size={14} className="text-muted-foreground" />
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Discovery Filters</span>
-                                            <button onClick={() => showModal({ title: 'Prebond Discovery Filters', message: 'Filter bonding curve tokens using data from Jupiter Token API V2. Set any value to 0 to disable that filter. All filters are optional — when all are 0, every token that passes safety checks will be bought.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
+                                            <Toggle label="Creator Reputation" enabled={prebondEnableReputation} onChange={setPrebondEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Creator Reputation (Prebond)', message: 'Checks the creator wallet transaction history before buying. Fresh wallets with few transactions are likely burner wallets created for rug pulls. This uses a separate threshold from the main safety settings.', type: 'info' })} />
+                                            {prebondEnableReputation && (
+                                                <div className="ml-4 animate-in fade-in zoom-in-95 duration-200">
+                                                    <SettingInput label="Min Creator TXs" value={prebondMinDevTxCount} onChange={setPrebondMinDevTxCount} disabled={running} subtext="Minimum transactions on creator wallet" />
+                                                </div>
+                                            )}
+                                            <Toggle label="Bundle Detection" enabled={prebondEnableBundle} onChange={setPrebondEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Bundle Detection (Prebond)', message: 'Detects if the token launch was bundled — where the creator buys a large portion of supply in the same slot as creation. Bundled launches on Pump.fun are a common rug setup where supply is cornered before anyone else can buy.', type: 'info' })} />
+                                            <Toggle label="Sell Simulation" enabled={prebondEnableSimulation} onChange={setPrebondEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell Simulation (Prebond)', message: 'Simulates a sell via Jupiter Quote API before buying. If Jupiter cannot find a route to sell the token back to SOL, it is likely a honeypot (you can buy but not sell). This is a read-only API call — no transaction is sent. Disabled by default as very new tokens may not have routes yet.', type: 'info' })} />
+                                            <Toggle label="Authority Check" enabled={prebondEnableAuthority} onChange={setPrebondEnableAuthority} disabled={running} onInfo={() => showModal({ title: 'Mint/Freeze Authority (Prebond)', message: 'Checks if the token has active Mint Authority (can inflate supply) or Freeze Authority (can freeze your tokens). Pump.fun revokes these at creation — if either is still active, it is a major red flag and the token is rejected.', type: 'info' })} />
                                         </div>
-                                        <SettingInput label="Min MCap" value={prebondMinMcap} onChange={setPrebondMinMcap} disabled={running} unit="$" subtext="0 = disabled" />
-                                        <SettingInput label="Max MCap" value={prebondMaxMcap} onChange={setPrebondMaxMcap} disabled={running} unit="$" subtext="0 = no max" />
-                                        <SettingInput label="Min Holders" value={prebondMinHolders} onChange={setPrebondMinHolders} disabled={running} subtext="0 = disabled" />
-                                        <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
-                                        <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
-                                        <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
-                                        <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
-                                        <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
-                                        <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
+
+                                        {/* Prebond Discovery Filters */}
+                                        <div className="pt-2 border-t border-white/5 space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <Search size={14} className="text-muted-foreground" />
+                                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Discovery Filters</span>
+                                                <button onClick={() => showModal({ title: 'Prebond Discovery Filters', message: 'Filter bonding curve tokens using data from Jupiter Token API V2. Set any value to 0 to disable that filter. All filters are optional — when all are 0, every token that passes safety checks will be bought.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
+                                            </div>
+                                            <SettingInput label="Min MCap" value={prebondMinMcap} onChange={setPrebondMinMcap} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <SettingInput label="Max MCap" value={prebondMaxMcap} onChange={setPrebondMaxMcap} disabled={running} unit="$" subtext="0 = no max" />
+                                            <SettingInput label="Min Holders" value={prebondMinHolders} onChange={setPrebondMinHolders} disabled={running} subtext="0 = disabled" />
+                                            <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
+                                            <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
+                                            <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
+                                            <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
+                                        </div>
                                     </div>
-                                </div>
                                 )}
 
                                 <div className="glass-card p-6 space-y-6">
