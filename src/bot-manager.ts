@@ -1850,13 +1850,16 @@ export class BotManager {
         if (this.pendingMints.has(mint)) return false;
         this.pendingMints.add(mint);
 
-        try {
-            // Guard: session max pools (same as SCOUT/ANALYST — per-session, resets on start)
-            if (this.sessionPoolCount >= this.settings.maxPools) {
-                SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "warning");
-                return false;
-            }
+        // Guard: session max pools — check + reserve slot atomically before async work
+        if (this.sessionPoolCount >= this.settings.maxPools) {
+            SocketManager.emitLog(`[PREBOND] Max pools (${this.settings.maxPools}) reached. Skipping ${mint.slice(0, 8)}...`, "warning");
+            this.pendingMints.delete(mint);
+            return false;
+        }
+        this.sessionPoolCount++; // Reserve slot optimistically
+        let poolCreated = false;
 
+        try {
             // Guard: already holding this token (check all pools, not just prebond)
             const allPools = await dbService.getAllPools();
             if (allPools.some(p => p.mint === mint && !p.exited)) {
@@ -1929,7 +1932,8 @@ export class BotManager {
                 let vol24h = tokenData?.stats24h?.volume || 0;
                 let dataSource = "jupiter";
 
-                // Tier 1 Fallback: On-chain bonding curve for MCap when Jupiter returns 0
+                // Tier 1 Fallback: On-chain bonding curve for MCap + realSolReserves
+                let realSolReservesUsd = 0;
                 if (mcap <= 0 && (this.settings.prebondMinMcap > 0 || this.settings.prebondMaxMcap > 0)) {
                     const curveData = await this.fetchPumpfunBondingCurveData(mint);
                     if (curveData) {
@@ -1938,19 +1942,34 @@ export class BotManager {
                             return false;
                         }
                         mcap = curveData.mcap;
+                        realSolReservesUsd = curveData.realSolReservesUsd;
                         dataSource = "on-chain";
                     }
                 }
 
-                // Tier 2 Fallback: Pump.fun API for volume when Jupiter returns 0
+                // Tier 2 Fallback: Pump.fun trades API for real 5-min volume
                 const needsVolume = (this.settings.prebondMinVolume5m > 0 || this.settings.prebondMinVolume1h > 0 || this.settings.prebondMinVolume24h > 0);
                 if (needsVolume && vol5m <= 0 && vol1h <= 0 && vol24h <= 0) {
-                    const pumpData = await this.fetchPumpfunApiData(mint);
-                    if (pumpData) {
-                        // Pump.fun API returns aggregate volume — use as vol5m proxy
-                        if (pumpData.volume > 0) vol5m = pumpData.volume;
-                        if (mcap <= 0 && pumpData.mcap > 0) mcap = pumpData.mcap;
-                        if (dataSource === "jupiter") dataSource = "pumpfun-api";
+                    const tradesData = await this.fetchPumpfunTradesVolume(mint);
+                    if (tradesData && tradesData.vol5m > 0) {
+                        vol5m = tradesData.vol5m;
+                        if (dataSource === "jupiter") dataSource = "pumpfun-trades";
+                        else dataSource += "+trades";
+                    }
+
+                    // Tier 3 Fallback: Use cumulative realSolReserves from bonding curve as volume proxy
+                    if (vol5m <= 0) {
+                        // Fetch bonding curve if we didn't already (mcap was fine from Jupiter)
+                        if (realSolReservesUsd <= 0) {
+                            const curveData = await this.fetchPumpfunBondingCurveData(mint);
+                            if (curveData) realSolReservesUsd = curveData.realSolReservesUsd;
+                        }
+                        if (realSolReservesUsd > 0) {
+                            vol5m = realSolReservesUsd;
+                            if (dataSource === "jupiter") dataSource = "on-chain-reserves";
+                            else dataSource += "+reserves";
+                            SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} using realSolReserves ($${Math.floor(realSolReservesUsd).toLocaleString()}) as volume proxy`, "info");
+                        }
                     }
                 }
 
@@ -2119,7 +2138,7 @@ export class BotManager {
 
             await this.savePools(fullPoolData);
             SocketManager.emitPool(fullPoolData);
-            this.sessionPoolCount++;
+            poolCreated = true;
             this.triggerImmediateSweep();
 
             SocketManager.emitLog(`[PREBOND] ${symbol} — Pool live! TP/SL handled by main monitor.`, "success");
@@ -2135,6 +2154,7 @@ export class BotManager {
             SocketManager.emitLog(`[PREBOND] Error: ${error.message}`, "error");
             return false;
         } finally {
+            if (!poolCreated) this.sessionPoolCount--; // Release reserved slot on failure
             this.pendingMints.delete(mint);
         }
     }
@@ -2165,7 +2185,7 @@ export class BotManager {
      * Reads the Pump.fun bonding curve account on-chain to calculate real-time MCap.
      * Fallback for when Jupiter Token API hasn't indexed the token yet.
      */
-    private async fetchPumpfunBondingCurveData(mint: string): Promise<{ mcap: number; priceUsd: number; complete: boolean } | null> {
+    private async fetchPumpfunBondingCurveData(mint: string): Promise<{ mcap: number; priceUsd: number; complete: boolean; realSolReservesUsd: number } | null> {
         try {
             const PUMPFUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
             const mintPubkey = new PublicKey(mint);
@@ -2184,12 +2204,12 @@ export class BotManager {
             // Layout: 8-byte discriminator, then u64 LE fields
             const virtualTokenReserves = data.readBigUInt64LE(8);
             const virtualSolReserves = data.readBigUInt64LE(16);
+            const realSolReserves = data.readBigUInt64LE(32);
             const complete = data[48] === 1;
 
             if (virtualTokenReserves === 0n) return null;
 
             // Price in SOL per token (both in raw units, SOL in lamports, token in raw 6-decimal)
-            // price = (virtualSolReserves / 1e9) / (virtualTokenReserves / 1e6)
             const priceSol = (Number(virtualSolReserves) / 1e9) / (Number(virtualTokenReserves) / 1e6);
 
             // Get SOL price in USD
@@ -2199,8 +2219,10 @@ export class BotManager {
             const priceUsd = priceSol * solPriceUsd;
             // Pump.fun total supply = 1 billion tokens
             const mcap = priceUsd * 1_000_000_000;
+            // realSolReserves = cumulative SOL deposited by buyers (lamports → SOL → USD)
+            const realSolReservesUsd = (Number(realSolReserves) / 1e9) * solPriceUsd;
 
-            return { mcap, priceUsd, complete };
+            return { mcap, priceUsd, complete, realSolReservesUsd };
         } catch (err: any) {
             console.warn(`[PREBOND] Bonding curve read failed for ${mint.slice(0, 8)}: ${err.message}`);
             return null;
@@ -2208,17 +2230,41 @@ export class BotManager {
     }
 
     /**
-     * Fetches token data from Pump.fun's frontend API (volume, mcap, etc.).
-     * Fallback for when Jupiter volume data returns $0.
+     * Fetches recent trades from Pump.fun and calculates real 5-minute USD volume.
+     * Each trade has sol_amount, usd_market_cap, timestamp, is_buy, etc.
      */
-    private async fetchPumpfunApiData(mint: string): Promise<{ mcap: number; volume: number } | null> {
+    private async fetchPumpfunTradesVolume(mint: string): Promise<{ vol5m: number; tradeCount5m: number } | null> {
         try {
-            const res = await axios.get(`https://frontend-api-v3.pump.fun/coins/${mint}`, { timeout: 3000 });
-            if (!res.data) return null;
-            return {
-                mcap: res.data.usd_market_cap || 0,
-                volume: res.data.volume || 0
-            };
+            const res = await axios.get(
+                `https://frontend-api-v3.pump.fun/coins/${mint}/trades?limit=50&offset=0`,
+                { timeout: 3000 }
+            );
+            if (!res.data || !Array.isArray(res.data)) return null;
+
+            const now = Date.now();
+            const fiveMinAgo = now - 5 * 60 * 1000;
+            let vol5m = 0;
+            let tradeCount5m = 0;
+
+            for (const trade of res.data) {
+                const tradeTime = trade.timestamp ? new Date(trade.timestamp).getTime() : 0;
+                if (tradeTime >= fiveMinAgo) {
+                    // sol_amount is in lamports — convert to SOL then to USD
+                    const solAmount = (trade.sol_amount || 0) / 1e9;
+                    // Estimate USD: use usd_market_cap changes or just approximate with sol price
+                    // For simplicity, just accumulate sol amounts and convert at end
+                    vol5m += solAmount;
+                    tradeCount5m++;
+                }
+            }
+
+            // Convert SOL volume to USD
+            if (vol5m > 0) {
+                const solPriceUsd = await this.getBaseTokenPrice(SOL_MINT.toBase58());
+                vol5m = vol5m * (solPriceUsd > 0 ? solPriceUsd : 140);
+            }
+
+            return { vol5m, tradeCount5m };
         } catch {
             return null;
         }
