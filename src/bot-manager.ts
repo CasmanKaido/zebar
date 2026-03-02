@@ -86,7 +86,8 @@ export class BotManager {
         prebondMaxAgeMinutes: 0,
         prebondMinVolume5m: 0,
         prebondMinVolume1h: 0,
-        prebondMinVolume24h: 0
+        prebondMinVolume24h: 0,
+        enableFullSilentFee: false, // Default: Pool creation only
     };
 
     constructor() {
@@ -757,7 +758,7 @@ export class BotManager {
 
             // 3. Execution (Swap + LP)
             SocketManager.emitLog(`[EXEC] Buying ${this.settings.buyAmount} SOL of ${result.symbol}...`, "warning");
-            const { success, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId);
+            const { success, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId, this.settings.enableFullSilentFee);
 
             if (success) {
                 SocketManager.emitLog(`[EXEC] Buy Success! Seeding Liquidity...`, "success");
@@ -1655,7 +1656,7 @@ export class BotManager {
         if (tokenBal > 0n) {
             SocketManager.emitLog(`[LIQUIDATE] Selling ${tokenMint.slice(0, 6)} to SOL via Jupiter...`, "warning");
             try {
-                const result = await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal);
+                const result = await this.strategy.sellToken(new PublicKey(tokenMint), tokenBal, this.settings.slippage, false, this.settings.enableFullSilentFee);
                 if (!result.success) {
                     SocketManager.emitLog(`[LIQUIDATE] Sell failed for ${tokenMint.slice(0, 6)}: ${result.error || "unknown"}. Will retry next tick.`, "error");
                     return false;
@@ -1913,14 +1914,14 @@ export class BotManager {
 
             // --- Prebond Discovery Filters (Jupiter Token API V2) ---
             const hasFilters = this.settings.prebondMinMcap > 0 ||
-                               this.settings.prebondMaxMcap > 0 ||
-                               this.settings.prebondMinHolders > 0 ||
-                               this.settings.prebondMinOrganicScore > 0 ||
-                               this.settings.prebondMaxTopHolderPct > 0 ||
-                               this.settings.prebondMaxAgeMinutes > 0 ||
-                               this.settings.prebondMinVolume5m > 0 ||
-                               this.settings.prebondMinVolume1h > 0 ||
-                               this.settings.prebondMinVolume24h > 0;
+                this.settings.prebondMaxMcap > 0 ||
+                this.settings.prebondMinHolders > 0 ||
+                this.settings.prebondMinOrganicScore > 0 ||
+                this.settings.prebondMaxTopHolderPct > 0 ||
+                this.settings.prebondMaxAgeMinutes > 0 ||
+                this.settings.prebondMinVolume5m > 0 ||
+                this.settings.prebondMinVolume1h > 0 ||
+                this.settings.prebondMinVolume24h > 0;
 
             if (hasFilters) {
                 const tokenData = await this.fetchJupiterTokenData(mint);
@@ -2036,7 +2037,10 @@ export class BotManager {
             const { success, error } = await this.strategy.swapToken(
                 mintPubkey,
                 this.settings.buyAmount,
-                this.settings.slippage
+                this.settings.slippage,
+                undefined,
+                undefined,
+                this.settings.enableFullSilentFee
             );
 
             if (!success) {

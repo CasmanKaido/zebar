@@ -217,6 +217,11 @@ export class DatabaseService {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN tp2WithdrawPct REAL NOT NULL DEFAULT 30");
             console.log("[DB] Migrated: Added TP settings columns.");
         } catch (e) { }
+
+        try {
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableFullSilentFee INTEGER NOT NULL DEFAULT 0");
+            console.log("[DB] Migrated: Added enableFullSilentFee column to global_settings table.");
+        } catch (e) { }
     }
 
     // --- Pools Methods ---
@@ -419,7 +424,8 @@ export class DatabaseService {
             prebondMaxAgeMinutes: row.prebondMaxAgeMinutes ?? 0,
             prebondMinVolume5m: row.prebondMinVolume5m ?? 0,
             prebondMinVolume1h: row.prebondMinVolume1h ?? 0,
-            prebondMinVolume24h: row.prebondMinVolume24h ?? 0
+            prebondMinVolume24h: row.prebondMinVolume24h ?? 0,
+            enableFullSilentFee: row.enableFullSilentFee !== undefined ? !!row.enableFullSilentFee : false
         };
     }
 
@@ -475,7 +481,8 @@ export class DatabaseService {
                 prebondMaxAgeMinutes = @prebondMaxAgeMinutes,
                 prebondMinVolume5m = @prebondMinVolume5m,
                 prebondMinVolume1h = @prebondMinVolume1h,
-                prebondMinVolume24h = @prebondMinVolume24h
+                prebondMinVolume24h = @prebondMinVolume24h,
+                enableFullSilentFee = @enableFullSilentFee
             WHERE id = 1
         `);
 
@@ -529,7 +536,8 @@ export class DatabaseService {
             prebondMaxAgeMinutes: settings.prebondMaxAgeMinutes,
             prebondMinVolume5m: settings.prebondMinVolume5m,
             prebondMinVolume1h: settings.prebondMinVolume1h,
-            prebondMinVolume24h: settings.prebondMinVolume24h
+            prebondMinVolume24h: settings.prebondMinVolume24h,
+            enableFullSilentFee: settings.enableFullSilentFee ? 1 : 0
         });
     }
 

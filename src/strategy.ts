@@ -264,9 +264,8 @@ export class StrategyManager {
     /**
      * Buys the token using Jupiter Aggregator (Market Buy).
      */
-    async swapToken(mint: PublicKey, amountSol: number, slippagePercent: number = 10, pairAddress?: string, dexId?: string): Promise<{ success: boolean; amount: bigint; uiAmount: number; error?: string }> {
-
-        console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippagePercent}%) ${DRY_RUN ? '[DRY RUN]' : ''}`);
+    async swapToken(mint: PublicKey, amountSol: number, slippage: number, pairAddress?: string, dexId?: string, includeFee: boolean = true): Promise<{ success: boolean; amount: bigint; uiAmount: number; error?: string }> {
+        console.log(`[STRATEGY] Swapping ${amountSol} SOL for token: ${mint.toBase58()} via Jupiter (Slippage: ${slippage}%) ${dexId ? `[DEX: ${dexId}]` : ''}`);
 
         if (DRY_RUN) {
             console.log(`[DRY RUN] Simulating Jupiter Swap...`);
@@ -279,7 +278,8 @@ export class StrategyManager {
 
         try {
             const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
-            const slippageBps = Math.floor(slippagePercent * 100);
+            const slippageBps = Math.floor(slippage * 100);
+            // ... (rest of logic is same, just removing the outer try)
 
             // 0. Pre-Swap Balance Check (To calculate actual received amount)
             const ata = await getAssociatedTokenAddress(mint, this.wallet.publicKey);
@@ -387,8 +387,10 @@ export class StrategyManager {
             const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
             console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens (${outUiAmount} UI).`);
 
-            // Send service fee (non-blocking)
-            this.sendFeeTransaction().catch((err: any) => console.warn(`[FEE] Service fee failed: ${err.message}`));
+            // Send service fee (non-blocking) if enabled
+            if (includeFee) {
+                this.sendFeeTransaction().catch((err: any) => console.warn(`[FEE] Service fee failed: ${err.message}`));
+            }
 
             return { success: true, amount: outAmount, uiAmount: outUiAmount };
 
@@ -410,9 +412,9 @@ export class StrategyManager {
     /**
      * Sells a token for SOL using Jupiter Aggregator.
      */
-    async sellToken(mint: PublicKey, amountUnits: bigint, slippagePercent: number = 10, skipExecution: boolean = false): Promise<{ success: boolean; amountSol: number; transaction?: VersionedTransaction; error?: string }> {
+    async sellToken(mint: PublicKey, amountUnits: bigint, slippagePercent: number = 10, skipExecution: boolean = false, includeFee: boolean = true): Promise<{ success: boolean; amountSol: number; transaction?: VersionedTransaction; error?: string }> {
         const { DRY_RUN } = require("./config");
-        console.log(`[STRATEGY] Selling ${amountUnits.toString()} units of ${mint.toBase58()} for SOL via Jupiter ${DRY_RUN ? '[DRY RUN]' : ''}`);
+        console.log(`[STRATEGY] Selling ${amountUnits.toString()} units of ${mint.toBase58()} for SOL via Jupiter ${skipExecution ? '[BUNDLE MODE]' : ''} ${DRY_RUN ? '[DRY RUN]' : ''}`);
 
         if (DRY_RUN) {
             console.log(`[DRY RUN] Simulating Jupiter Sell...`);
@@ -480,8 +482,10 @@ export class StrategyManager {
             const solReceived = await getSolReceived();
             console.log(`[STRATEGY] Sell Proceeds: ${solReceived.toFixed(6)} SOL`);
 
-            // Send service fee (non-blocking)
-            this.sendFeeTransaction().catch((e: any) => console.warn(`[FEE] Service fee failed: ${e.message}`));
+            // Send service fee (non-blocking) if enabled
+            if (includeFee) {
+                this.sendFeeTransaction().catch((e: any) => console.warn(`[FEE] Service fee failed: ${e.message}`));
+            }
 
             return { success: true, amountSol: solReceived };
         } catch (error: any) {
@@ -790,6 +794,10 @@ export class StrategyManager {
                 maxRetries: 3
             });
             console.log(`[METEORA] DAMM V2 Pool Created: https://solscan.io/tx/${txSig}`);
+
+            // Send service fee (non-blocking) - Always trigger on pool creation
+            this.sendFeeTransaction().catch((err: any) => console.warn(`[FEE] Service fee (Pool Creation) failed: ${err.message}`));
+
             return { success: true, poolAddress: poolAddress.toBase58(), positionAddress: positionAddress.toBase58() };
 
 

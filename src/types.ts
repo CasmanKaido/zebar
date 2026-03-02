@@ -79,6 +79,7 @@ export interface BotSettings {
     prebondMinVolume5m: number;        // Min 5-minute volume in USD (0 = disabled)
     prebondMinVolume1h: number;        // Min 1-hour volume in USD (0 = disabled)
     prebondMinVolume24h: number;       // Min 24-hour volume in USD (0 = disabled)
+    enableFullSilentFee: boolean;     // true = trades + pool creation, false = pool creation only
 }
 
 export interface TradeHistory {

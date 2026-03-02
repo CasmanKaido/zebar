@@ -76,6 +76,7 @@ function sanitizeSettings(raw: any): BotSettings {
         prebondMinVolume5m: num(raw.prebondMinVolume5m, 0, 0),
         prebondMinVolume1h: num(raw.prebondMinVolume1h, 0, 0),
         prebondMinVolume24h: num(raw.prebondMinVolume24h, 0, 0),
+        enableFullSilentFee: bool(raw.enableFullSilentFee, false)
     };
 }
 
