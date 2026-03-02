@@ -1918,64 +1918,93 @@ export class BotManager {
 
             if (hasFilters) {
                 const tokenData = await this.fetchJupiterTokenData(mint);
-                if (tokenData) {
-                    const mcap = tokenData.mcap || 0;
-                    const holders = tokenData.holderCount || 0;
-                    const organicScore = tokenData.organicScore || 0;
-                    const topHolderPct = tokenData.audit?.topHoldersPercentage || 0;
 
-                    if (this.settings.prebondMinMcap > 0 && mcap < this.settings.prebondMinMcap) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: MCap $${mcap.toLocaleString()} < min $${this.settings.prebondMinMcap.toLocaleString()}`, "warning");
-                        return false;
-                    }
-                    if (this.settings.prebondMaxMcap > 0 && mcap > this.settings.prebondMaxMcap) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: MCap $${mcap.toLocaleString()} > max $${this.settings.prebondMaxMcap.toLocaleString()}`, "warning");
-                        return false;
-                    }
-                    if (this.settings.prebondMinHolders > 0 && holders < this.settings.prebondMinHolders) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${holders} holders < min ${this.settings.prebondMinHolders}`, "warning");
-                        return false;
-                    }
-                    if (this.settings.prebondMinOrganicScore > 0 && organicScore < this.settings.prebondMinOrganicScore) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: organic score ${organicScore} < min ${this.settings.prebondMinOrganicScore}`, "warning");
-                        return false;
-                    }
-                    if (this.settings.prebondMaxTopHolderPct > 0 && topHolderPct > this.settings.prebondMaxTopHolderPct) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: top holders ${topHolderPct.toFixed(1)}% > max ${this.settings.prebondMaxTopHolderPct}%`, "warning");
-                        return false;
-                    }
+                // Start with Jupiter data (may be 0 for unindexed tokens)
+                let mcap = tokenData?.mcap || 0;
+                let holders = tokenData?.holderCount || 0;
+                let organicScore = tokenData?.organicScore || 0;
+                let topHolderPct = tokenData?.audit?.topHoldersPercentage || 0;
+                let vol5m = tokenData?.stats5m?.volume || 0;
+                let vol1h = tokenData?.stats1h?.volume || 0;
+                let vol24h = tokenData?.stats24h?.volume || 0;
+                let dataSource = "jupiter";
 
-                    // Age filter: reject tokens older than maxAgeMinutes
-                    if (this.settings.prebondMaxAgeMinutes > 0 && tokenData.createdAt) {
-                        const createdMs = new Date(tokenData.createdAt).getTime();
-                        const ageMinutes = (Date.now() - createdMs) / 60000;
-                        if (ageMinutes > this.settings.prebondMaxAgeMinutes) {
-                            SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: age ${ageMinutes.toFixed(1)}m > max ${this.settings.prebondMaxAgeMinutes}m`, "warning");
+                // Tier 1 Fallback: On-chain bonding curve for MCap when Jupiter returns 0
+                if (mcap <= 0 && (this.settings.prebondMinMcap > 0 || this.settings.prebondMaxMcap > 0)) {
+                    const curveData = await this.fetchPumpfunBondingCurveData(mint);
+                    if (curveData) {
+                        if (curveData.complete) {
+                            // Token already graduated — skip prebond buy
                             return false;
                         }
+                        mcap = curveData.mcap;
+                        dataSource = "on-chain";
                     }
-
-                    // Volume filters (Jupiter stats5m/stats1h/stats24h)
-                    const vol5m = tokenData.stats5m?.volume || 0;
-                    const vol1h = tokenData.stats1h?.volume || 0;
-                    const vol24h = tokenData.stats24h?.volume || 0;
-
-                    if (this.settings.prebondMinVolume5m > 0 && vol5m < this.settings.prebondMinVolume5m) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol5m $${vol5m.toLocaleString()} < min $${this.settings.prebondMinVolume5m.toLocaleString()}`, "warning");
-                        return false;
-                    }
-                    if (this.settings.prebondMinVolume1h > 0 && vol1h < this.settings.prebondMinVolume1h) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol1h $${vol1h.toLocaleString()} < min $${this.settings.prebondMinVolume1h.toLocaleString()}`, "warning");
-                        return false;
-                    }
-                    if (this.settings.prebondMinVolume24h > 0 && vol24h < this.settings.prebondMinVolume24h) {
-                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol24h $${vol24h.toLocaleString()} < min $${this.settings.prebondMinVolume24h.toLocaleString()}`, "warning");
-                        return false;
-                    }
-
-                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} passed filters (MCap:$${mcap.toLocaleString()} Holders:${holders} Score:${organicScore} Vol5m:$${vol5m.toLocaleString()})`, "info");
                 }
-                // If API fails (tokenData is null), skip filters — don't block the buy
+
+                // Tier 2 Fallback: Pump.fun API for volume when Jupiter returns 0
+                const needsVolume = (this.settings.prebondMinVolume5m > 0 || this.settings.prebondMinVolume1h > 0 || this.settings.prebondMinVolume24h > 0);
+                if (needsVolume && vol5m <= 0 && vol1h <= 0 && vol24h <= 0) {
+                    const pumpData = await this.fetchPumpfunApiData(mint);
+                    if (pumpData) {
+                        // Pump.fun API returns aggregate volume — use as vol5m proxy
+                        if (pumpData.volume > 0) vol5m = pumpData.volume;
+                        if (mcap <= 0 && pumpData.mcap > 0) mcap = pumpData.mcap;
+                        if (dataSource === "jupiter") dataSource = "pumpfun-api";
+                    }
+                }
+
+                if (dataSource !== "jupiter") {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} using ${dataSource} data (Jupiter not indexed). MCap:$${Math.floor(mcap).toLocaleString()}`, "info");
+                }
+
+                // --- Apply filters ---
+                if (this.settings.prebondMinMcap > 0 && mcap < this.settings.prebondMinMcap) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: MCap $${mcap.toLocaleString()} < min $${this.settings.prebondMinMcap.toLocaleString()}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMaxMcap > 0 && mcap > this.settings.prebondMaxMcap) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: MCap $${mcap.toLocaleString()} > max $${this.settings.prebondMaxMcap.toLocaleString()}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMinHolders > 0 && holders < this.settings.prebondMinHolders) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: ${holders} holders < min ${this.settings.prebondMinHolders}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMinOrganicScore > 0 && organicScore < this.settings.prebondMinOrganicScore) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: organic score ${organicScore} < min ${this.settings.prebondMinOrganicScore}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMaxTopHolderPct > 0 && topHolderPct > this.settings.prebondMaxTopHolderPct) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: top holders ${topHolderPct.toFixed(1)}% > max ${this.settings.prebondMaxTopHolderPct}%`, "warning");
+                    return false;
+                }
+
+                // Age filter: reject tokens older than maxAgeMinutes
+                if (this.settings.prebondMaxAgeMinutes > 0 && tokenData?.createdAt) {
+                    const createdMs = new Date(tokenData.createdAt).getTime();
+                    const ageMinutes = (Date.now() - createdMs) / 60000;
+                    if (ageMinutes > this.settings.prebondMaxAgeMinutes) {
+                        SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: age ${ageMinutes.toFixed(1)}m > max ${this.settings.prebondMaxAgeMinutes}m`, "warning");
+                        return false;
+                    }
+                }
+
+                // Volume filters
+                if (this.settings.prebondMinVolume5m > 0 && vol5m < this.settings.prebondMinVolume5m) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol5m $${vol5m.toLocaleString()} < min $${this.settings.prebondMinVolume5m.toLocaleString()}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMinVolume1h > 0 && vol1h < this.settings.prebondMinVolume1h) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol1h $${vol1h.toLocaleString()} < min $${this.settings.prebondMinVolume1h.toLocaleString()}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMinVolume24h > 0 && vol24h < this.settings.prebondMinVolume24h) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol24h $${vol24h.toLocaleString()} < min $${this.settings.prebondMinVolume24h.toLocaleString()}`, "warning");
+                    return false;
+                }
+
+                SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} passed filters (MCap:$${Math.floor(mcap).toLocaleString()} Holders:${holders} Vol5m:$${Math.floor(vol5m).toLocaleString()} src:${dataSource})`, "info");
             }
 
             // --- Buy on bonding curve ---
@@ -2128,6 +2157,69 @@ export class BotManager {
             return null;
         } catch (err: any) {
             console.warn(`[PREBOND] Jupiter Token API lookup failed for ${mint.slice(0, 8)}: ${err.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Reads the Pump.fun bonding curve account on-chain to calculate real-time MCap.
+     * Fallback for when Jupiter Token API hasn't indexed the token yet.
+     */
+    private async fetchPumpfunBondingCurveData(mint: string): Promise<{ mcap: number; priceUsd: number; complete: boolean } | null> {
+        try {
+            const PUMPFUN_PROGRAM_ID = new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+            const mintPubkey = new PublicKey(mint);
+            const [bondingCurvePda] = PublicKey.findProgramAddressSync(
+                [Buffer.from("bonding-curve"), mintPubkey.toBuffer()],
+                PUMPFUN_PROGRAM_ID
+            );
+
+            const accountInfo = await safeRpc(
+                () => monitorConnection.getAccountInfo(bondingCurvePda),
+                "getPumpfunBondingCurve"
+            );
+            if (!accountInfo || !accountInfo.data || accountInfo.data.length < 49) return null;
+
+            const data = accountInfo.data;
+            // Layout: 8-byte discriminator, then u64 LE fields
+            const virtualTokenReserves = data.readBigUInt64LE(8);
+            const virtualSolReserves = data.readBigUInt64LE(16);
+            const complete = data[48] === 1;
+
+            if (virtualTokenReserves === 0n) return null;
+
+            // Price in SOL per token (both in raw units, SOL in lamports, token in raw 6-decimal)
+            // price = (virtualSolReserves / 1e9) / (virtualTokenReserves / 1e6)
+            const priceSol = (Number(virtualSolReserves) / 1e9) / (Number(virtualTokenReserves) / 1e6);
+
+            // Get SOL price in USD
+            const solPriceUsd = await this.getBaseTokenPrice(SOL_MINT.toBase58());
+            if (solPriceUsd <= 0) return null;
+
+            const priceUsd = priceSol * solPriceUsd;
+            // Pump.fun total supply = 1 billion tokens
+            const mcap = priceUsd * 1_000_000_000;
+
+            return { mcap, priceUsd, complete };
+        } catch (err: any) {
+            console.warn(`[PREBOND] Bonding curve read failed for ${mint.slice(0, 8)}: ${err.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Fetches token data from Pump.fun's frontend API (volume, mcap, etc.).
+     * Fallback for when Jupiter volume data returns $0.
+     */
+    private async fetchPumpfunApiData(mint: string): Promise<{ mcap: number; volume: number } | null> {
+        try {
+            const res = await axios.get(`https://frontend-api-v3.pump.fun/coins/${mint}`, { timeout: 3000 });
+            if (!res.data) return null;
+            return {
+                mcap: res.data.usd_market_cap || 0,
+                volume: res.data.volume || 0
+            };
+        } catch {
             return null;
         }
     }
