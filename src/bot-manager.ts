@@ -2118,8 +2118,16 @@ export class BotManager {
             // Calculate initial price (base tokens per token)
             const initialPrice = tokenUiAmountChecked > 0 ? (Number(lpppAmountBase) / baseScale) / tokenUiAmountChecked : 0;
 
-            const supplyRes = await safeRpc(() => monitorConnection.getTokenSupply(mintPubkey), "getPrebondTokenSupply");
-            const totalSupply = supplyRes.value.uiAmount || 0;
+            let totalSupply = 0;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const supplyRes = await safeRpc(() => monitorConnection.getTokenSupply(mintPubkey), "getPrebondTokenSupply");
+                totalSupply = supplyRes?.value?.uiAmount || 0;
+                if (totalSupply > 0) break;
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            if (totalSupply <= 0) {
+                console.warn(`[PREBOND] Failed to fetch totalSupply for ${mint.slice(0, 8)} after 3 attempts — SL/TP may not trigger until backfilled.`);
+            }
             const trueInitialUsdPrice = initialPrice * basePrice;
             const initialMcap = totalSupply * (trueInitialUsdPrice > 0 ? trueInitialUsdPrice : 0);
 
