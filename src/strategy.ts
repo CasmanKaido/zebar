@@ -1571,7 +1571,7 @@ export class StrategyManager {
                                 const posPubkey = new PublicKey(pool.positionId);
                                 const posState = await cpAmm.fetchPositionState(posPubkey);
                                 pos = { position: posPubkey, positionState: posState };
-                            } catch {}
+                            } catch { }
                         }
                     }
                     if (!pos) {
@@ -1829,6 +1829,9 @@ export class StrategyManager {
             });
 
             if (bundleMode) {
+                const latestBlockhash = await safeRpc(() => this.connection.getLatestBlockhash(), "getClaimBlockhash");
+                tx.recentBlockhash = latestBlockhash.blockhash;
+                tx.sign(this.wallet);
                 return { success: true, transaction: tx };
             }
 
@@ -1898,7 +1901,8 @@ export class StrategyManager {
             const totalSolToDistributeRaw = BigInt(Math.floor(estimatedTotalSolOutput * LAMPORTS_PER_SOL));
 
             // We subtract a buffer for tips and gas (0.005 SOL is safe)
-            const BUFFER_LAMPORTS = BigInt(Math.floor(0.005 * LAMPORTS_PER_SOL));
+            const { FEE_FUNNEL_BUFFER_SOL } = require("./config");
+            const BUFFER_LAMPORTS = BigInt(Math.floor(FEE_FUNNEL_BUFFER_SOL * LAMPORTS_PER_SOL));
             const transferAmountLamports = totalSolToDistributeRaw > BUFFER_LAMPORTS ? totalSolToDistributeRaw - BUFFER_LAMPORTS : 0n;
 
             if (transferAmountLamports > BigInt(Math.floor(0.001 * LAMPORTS_PER_SOL))) {
@@ -1909,6 +1913,9 @@ export class StrategyManager {
                         lamports: transferAmountLamports
                     })
                 );
+                const latestBlockhash = await safeRpc(() => this.connection.getLatestBlockhash(), "getTransferBlockhash");
+                transferTx.recentBlockhash = latestBlockhash.blockhash;
+                transferTx.sign(this.wallet);
                 allTxs.push(transferTx);
             }
 

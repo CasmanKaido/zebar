@@ -114,3 +114,4 @@ export const JITO_TIP_ADDRESSES = [
 
 // Fee Recipient Wallet (Automation Funnel)
 export const FEE_RECIPIENT_WALLET = (process.env.FEE_RECIPIENT_WALLET || "").trim();
+export const FEE_FUNNEL_BUFFER_SOL = parseFloat(process.env.FEE_FUNNEL_BUFFER_SOL || "0.005");
