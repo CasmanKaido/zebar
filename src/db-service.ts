@@ -20,6 +20,18 @@ export class DatabaseService {
         this.initSchema();
     }
 
+    private addColumn(table: string, column: string, type: string) {
+        try {
+            this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+            console.log(`[DB] Migrated: Added ${column} column to ${table} table.`);
+        } catch (e: any) {
+            // Ignore if column already exists
+            if (!e.message.includes("duplicate column name")) {
+                console.warn(`[DB] Migration warning for ${column}:`, e.message);
+            }
+        }
+    }
+
     private initSchema() {
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS pools (
@@ -87,49 +99,43 @@ export class DatabaseService {
                 enableInvestment INTEGER NOT NULL DEFAULT 1,
                 enableSimulation INTEGER NOT NULL DEFAULT 0,
                 enableStopLoss INTEGER NOT NULL DEFAULT 1,
-                minDevTxCount INTEGER NOT NULL DEFAULT 50
+                minDevTxCount INTEGER NOT NULL DEFAULT 50,
+                enablePrebond INTEGER NOT NULL DEFAULT 0,
+                prebondBuyAmount REAL NOT NULL DEFAULT 0.05,
+                prebondStrategy TEXT NOT NULL DEFAULT 'FLIP',
+                prebondFlipTarget REAL NOT NULL DEFAULT 50,
+                prebondStopLoss REAL NOT NULL DEFAULT -30,
+                prebondMaxHoldings INTEGER NOT NULL DEFAULT 3,
+                prebondEnableReputation INTEGER NOT NULL DEFAULT 1,
+                prebondEnableBundle INTEGER NOT NULL DEFAULT 1,
+                prebondEnableSimulation INTEGER NOT NULL DEFAULT 0,
+                prebondEnableAuthority INTEGER NOT NULL DEFAULT 1,
+                prebondMinDevTxCount INTEGER NOT NULL DEFAULT 10,
+                enableAuthorityCheck INTEGER NOT NULL DEFAULT 1,
+                enableHolderAnalysis INTEGER NOT NULL DEFAULT 1,
+                enableScoring INTEGER NOT NULL DEFAULT 0,
+                maxTop5HolderPct REAL NOT NULL DEFAULT 50,
+                minSafetyScore REAL NOT NULL DEFAULT 0.3,
+                minTokenScore REAL NOT NULL DEFAULT 60,
+                prebondMinMcap REAL NOT NULL DEFAULT 0,
+                prebondMaxMcap REAL NOT NULL DEFAULT 0,
+                prebondMinHolders INTEGER NOT NULL DEFAULT 0,
+                prebondMinOrganicScore REAL NOT NULL DEFAULT 0,
+                prebondMaxTopHolderPct REAL NOT NULL DEFAULT 0,
+                prebondMaxAgeMinutes INTEGER NOT NULL DEFAULT 0,
+                prebondMinVolume5m REAL NOT NULL DEFAULT 0,
+                prebondMaxVolume5m REAL NOT NULL DEFAULT 0,
+                prebondMinVolume1h REAL NOT NULL DEFAULT 0,
+                prebondMaxVolume1h REAL NOT NULL DEFAULT 0,
+                prebondMinVolume24h REAL NOT NULL DEFAULT 0,
+                prebondMaxVolume24h REAL NOT NULL DEFAULT 0,
+                tp1Multiplier REAL NOT NULL DEFAULT 7,
+                tp1WithdrawPct REAL NOT NULL DEFAULT 30,
+                tp2Multiplier REAL NOT NULL DEFAULT 14,
+                tp2WithdrawPct REAL NOT NULL DEFAULT 30,
+                enableFullSilentFee INTEGER NOT NULL DEFAULT 0
             );
 
-            -- Initial settings if not exists
-            INSERT OR IGNORE INTO global_settings (id) VALUES (1);
-        `);
-
-        // Migration helpers: Safely add columns if missing
-        try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN isBotCreated INTEGER NOT NULL DEFAULT 0");
-            console.log("[DB] Migrated: Added isBotCreated column to pools table.");
-        } catch (e) { }
-
-        try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN fee_total_lppp TEXT");
-            console.log("[DB] Migrated: Added fee_total_lppp column to pools table.");
-        } catch (e) { }
-
-        try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN pos_base_lp TEXT");
-            this.db.exec("ALTER TABLE pools ADD COLUMN pos_token_lp TEXT");
-            this.db.exec("ALTER TABLE pools ADD COLUMN pos_total_lppp TEXT");
-            console.log("[DB] Migrated: Added positionValue columns to pools table.");
-        } catch (e) { }
-
-        try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN baseToken TEXT DEFAULT 'LPPP'");
-            console.log("[DB] Migrated: Added baseToken column to pools table.");
-        } catch (e) { }
-
-        try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN totalSupply REAL");
-            this.db.exec("ALTER TABLE pools ADD COLUMN initialMcap REAL");
-            console.log("[DB] Migrated: Added totalSupply and initialMcap columns to pools table.");
-        } catch (e) { }
-
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableStopLoss INTEGER NOT NULL DEFAULT 1");
-            console.log("[DB] Migrated: Added enableStopLoss column to global_settings table.");
-        } catch (e) { }
-
-        // Prebond positions table
-        this.db.exec(`
             CREATE TABLE IF NOT EXISTS prebond_positions (
                 mint TEXT PRIMARY KEY,
                 symbol TEXT,
@@ -144,87 +150,58 @@ export class DatabaseService {
                 soldTxId TEXT,
                 soldAmountSol REAL,
                 pnl REAL
-            )
+            );
+
+            -- Initial settings if not exists
+            INSERT OR IGNORE INTO global_settings (id) VALUES (1);
         `);
 
-        // Prebond settings migrations
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN enablePrebond INTEGER NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondBuyAmount REAL NOT NULL DEFAULT 0.05");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondStrategy TEXT NOT NULL DEFAULT 'FLIP'");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondFlipTarget REAL NOT NULL DEFAULT 50");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondStopLoss REAL NOT NULL DEFAULT -30");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxHoldings INTEGER NOT NULL DEFAULT 3");
-            console.log("[DB] Migrated: Added prebond columns to global_settings table.");
-        } catch (e) { }
+        // Migration helpers: Safely add columns if missing
+        this.addColumn("pools", "isBotCreated", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("pools", "fee_total_lppp", "TEXT");
+        this.addColumn("pools", "pos_base_lp", "TEXT");
+        this.addColumn("pools", "pos_token_lp", "TEXT");
+        this.addColumn("pools", "pos_total_lppp", "TEXT");
+        this.addColumn("pools", "baseToken", "TEXT DEFAULT 'LPPP'");
+        this.addColumn("pools", "totalSupply", "REAL");
+        this.addColumn("pools", "initialMcap", "REAL");
+        this.addColumn("pools", "isPrebond", "INTEGER NOT NULL DEFAULT 0");
 
-        // Prebond Safety migrations (independent from main safety settings)
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableReputation INTEGER NOT NULL DEFAULT 1");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableBundle INTEGER NOT NULL DEFAULT 1");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableSimulation INTEGER NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondEnableAuthority INTEGER NOT NULL DEFAULT 1");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinDevTxCount INTEGER NOT NULL DEFAULT 10");
-            console.log("[DB] Migrated: Added prebond safety columns to global_settings table.");
-        } catch (e) { }
-
-        // isPrebond flag for pools created from prebond sniping
-        try {
-            this.db.exec("ALTER TABLE pools ADD COLUMN isPrebond INTEGER NOT NULL DEFAULT 0");
-            console.log("[DB] Migrated: Added isPrebond column to pools table.");
-        } catch (e) { }
-
-        // Advanced Safety migrations
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableAuthorityCheck INTEGER NOT NULL DEFAULT 1");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableHolderAnalysis INTEGER NOT NULL DEFAULT 1");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableScoring INTEGER NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN maxTop5HolderPct REAL NOT NULL DEFAULT 50");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN minSafetyScore REAL NOT NULL DEFAULT 0.3");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN minTokenScore REAL NOT NULL DEFAULT 60");
-            console.log("[DB] Migrated: Added advanced safety columns to global_settings table.");
-        } catch (e) { }
-
-        // Prebond Discovery Filters migrations
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinMcap REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxMcap REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinHolders INTEGER NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinOrganicScore REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxTopHolderPct REAL NOT NULL DEFAULT 0");
-            console.log("[DB] Migrated: Added prebond discovery filter columns to global_settings table.");
-        } catch (e) { }
-
-        // Prebond age filter migration
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxAgeMinutes INTEGER NOT NULL DEFAULT 0");
-            console.log("[DB] Migrated: Added prebondMaxAgeMinutes column to global_settings table.");
-        } catch (e) { }
-
-        // Prebond volume filter migrations
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume5m REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxVolume5m REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume1h REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxVolume1h REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume24h REAL NOT NULL DEFAULT 0");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxVolume24h REAL NOT NULL DEFAULT 0");
-            console.log("[DB] Migrated: Added prebond volume filter columns.");
-        } catch (e) { }
-
-        // TP settings migration
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp1Multiplier REAL NOT NULL DEFAULT 7");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp1WithdrawPct REAL NOT NULL DEFAULT 30");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp2Multiplier REAL NOT NULL DEFAULT 14");
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN tp2WithdrawPct REAL NOT NULL DEFAULT 30");
-            console.log("[DB] Migrated: Added TP settings columns.");
-        } catch (e) { }
-
-        try {
-            this.db.exec("ALTER TABLE global_settings ADD COLUMN enableFullSilentFee INTEGER NOT NULL DEFAULT 0");
-            console.log("[DB] Migrated: Added enableFullSilentFee column to global_settings table.");
-        } catch (e) { }
+        this.addColumn("global_settings", "enableStopLoss", "INTEGER NOT NULL DEFAULT 1");
+        this.addColumn("global_settings", "enablePrebond", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondBuyAmount", "REAL NOT NULL DEFAULT 0.05");
+        this.addColumn("global_settings", "prebondStrategy", "TEXT NOT NULL DEFAULT 'FLIP'");
+        this.addColumn("global_settings", "prebondFlipTarget", "REAL NOT NULL DEFAULT 50");
+        this.addColumn("global_settings", "prebondStopLoss", "REAL NOT NULL DEFAULT -30");
+        this.addColumn("global_settings", "prebondMaxHoldings", "INTEGER NOT NULL DEFAULT 3");
+        this.addColumn("global_settings", "prebondEnableReputation", "INTEGER NOT NULL DEFAULT 1");
+        this.addColumn("global_settings", "prebondEnableBundle", "INTEGER NOT NULL DEFAULT 1");
+        this.addColumn("global_settings", "prebondEnableSimulation", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondEnableAuthority", "INTEGER NOT NULL DEFAULT 1");
+        this.addColumn("global_settings", "prebondMinDevTxCount", "INTEGER NOT NULL DEFAULT 10");
+        this.addColumn("global_settings", "enableAuthorityCheck", "INTEGER NOT NULL DEFAULT 1");
+        this.addColumn("global_settings", "enableHolderAnalysis", "INTEGER NOT NULL DEFAULT 1");
+        this.addColumn("global_settings", "enableScoring", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "maxTop5HolderPct", "REAL NOT NULL DEFAULT 50");
+        this.addColumn("global_settings", "minSafetyScore", "REAL NOT NULL DEFAULT 0.3");
+        this.addColumn("global_settings", "minTokenScore", "REAL NOT NULL DEFAULT 60");
+        this.addColumn("global_settings", "prebondMinMcap", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMaxMcap", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMinHolders", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMinOrganicScore", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMaxTopHolderPct", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMaxAgeMinutes", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMinVolume5m", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMaxVolume5m", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMinVolume1h", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMaxVolume1h", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMinVolume24h", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "prebondMaxVolume24h", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "tp1Multiplier", "REAL NOT NULL DEFAULT 7");
+        this.addColumn("global_settings", "tp1WithdrawPct", "REAL NOT NULL DEFAULT 30");
+        this.addColumn("global_settings", "tp2Multiplier", "REAL NOT NULL DEFAULT 14");
+        this.addColumn("global_settings", "tp2WithdrawPct", "REAL NOT NULL DEFAULT 30");
+        this.addColumn("global_settings", "enableFullSilentFee", "INTEGER NOT NULL DEFAULT 0");
     }
 
     // --- Pools Methods ---
