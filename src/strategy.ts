@@ -385,6 +385,12 @@ export class StrategyManager {
 
             const outAmount = postBalance > preBalance ? (postBalance - preBalance) : BigInt(0);
             const outUiAmount = postUiAmount > preUiAmount ? (postUiAmount - preUiAmount) : 0;
+
+            if (outAmount === 0n) {
+                console.warn(`[STRATEGY] Swap Success reported by RPC but 0 tokens received (Slippage/MEV?).`);
+                return { success: false, amount: BigInt(0), uiAmount: 0, error: "Zero tokens received" };
+            }
+
             console.log(`[STRATEGY] Swap Complete. Received: ${outAmount.toString()} tokens (${outUiAmount} UI).`);
 
             // Send service fee (non-blocking) if enabled
@@ -721,11 +727,24 @@ export class StrategyManager {
 
             console.log(`[METEORA] Config: ${configAddress.toBase58()} | Init Price: ${poolParams.initSqrtPrice.toString()}`);
 
-            // 8. Create Transaction
+            // 8. Create Transaction or Return Existing
+            const targetBps = feeBps || METEORA_POOL_FEE_BPS;
+            const { derivePoolAddress, derivePositionAddress } = require("@meteora-ag/cp-amm-sdk");
+
+            // Deterministic pool address derivation
+            const derivedPoolAddress = derivePoolAddress(configAddress, tokenA, tokenB);
+            const poolAccountInfo = await safeRpc(() => this.connection.getAccountInfo(derivedPoolAddress), "checkPoolExists");
+
+            if (poolAccountInfo) {
+                console.log(`[METEORA] Pool already exists for this pair: ${derivedPoolAddress.toBase58()}. Skipping creation.`);
+                // We don't have the position address easily without looking up all positions, 
+                // but since pool exists, we can return success and the bot will likely detect it.
+                return { success: true, poolAddress: derivedPoolAddress.toBase58() };
+            }
+
             let transaction;
             let poolAddress: PublicKey = PublicKey.default;
             let positionAddress: PublicKey = PublicKey.default;
-            const targetBps = feeBps || METEORA_POOL_FEE_BPS;
 
             if (targetBps === 20) {
                 // Use Standard Permissionless Pool (Config Index 0 - 0.2%)

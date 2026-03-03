@@ -2078,9 +2078,18 @@ export class BotManager {
             await new Promise(r => setTimeout(r, 2000)); // Wait for settlement
 
             // --- Create Meteora Pool (same flow as SCOUT) ---
-            const tokenAccounts = await safeRpc(() => monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: mintPubkey }), "getPrebondPostSwapBalance");
-            const actualAmountRaw = tokenAccounts.value.reduce((acc: bigint, account: any) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
-            const actualUiAmount = tokenAccounts.value.reduce((acc: number, account: any) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+            let actualAmountRaw = 0n;
+            let actualUiAmount = 0;
+
+            // Retry loop for balance fetching — indexers might be slow after swap
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const tokenAccounts = await safeRpc(() => monitorConnection.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: mintPubkey }), "getPrebondPostSwapBalance");
+                actualAmountRaw = tokenAccounts.value.reduce((acc: bigint, account: any) => acc + BigInt(account.account.data.parsed.info.tokenAmount.amount), 0n);
+                actualUiAmount = tokenAccounts.value.reduce((acc: number, account: any) => acc + (account.account.data.parsed.info.tokenAmount.uiAmount || 0), 0);
+
+                if (actualAmountRaw > 0n) break;
+                if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
+            }
 
             if (actualAmountRaw === 0n) {
                 SocketManager.emitLog(`[PREBOND] No token balance found after buy. Aborting pool creation.`, "error");
