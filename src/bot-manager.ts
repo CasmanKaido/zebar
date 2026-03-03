@@ -761,7 +761,6 @@ export class BotManager {
 
             // 3. Execution (Swap + LP)
             SocketManager.emitLog(`[EXEC] Buying ${this.settings.buyAmount} SOL of ${result.symbol}...`, "warning");
-            SocketManager.emitLog(`[EXEC] Buying ${this.settings.buyAmount} SOL of ${result.symbol}...`, "warning");
             const { success, error } = await this.strategy.swapToken(result.mint, this.settings.buyAmount, this.settings.slippage, result.pairAddress, result.dexId, this.settings.enableFullSilentFee);
 
             if (success) {
