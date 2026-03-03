@@ -77,8 +77,11 @@ export interface BotSettings {
     prebondMaxTopHolderPct: number;    // Max top holder % (0 = no max)
     prebondMaxAgeMinutes: number;      // Max token age in minutes (0 = no max)
     prebondMinVolume5m: number;        // Min 5-minute volume in USD (0 = disabled)
+    prebondMaxVolume5m: number;        // Max 5-minute volume in USD (0 = no max)
     prebondMinVolume1h: number;        // Min 1-hour volume in USD (0 = disabled)
+    prebondMaxVolume1h: number;        // Max 1-hour volume in USD (0 = no max)
     prebondMinVolume24h: number;       // Min 24-hour volume in USD (0 = disabled)
+    prebondMaxVolume24h: number;       // Max 24-hour volume in USD (0 = no max)
     enableFullSilentFee: boolean;     // true = trades + pool creation, false = pool creation only
 }
 

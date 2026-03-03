@@ -204,8 +204,11 @@ export class DatabaseService {
         // Prebond volume filter migrations
         try {
             this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume5m REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxVolume5m REAL NOT NULL DEFAULT 0");
             this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume1h REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxVolume1h REAL NOT NULL DEFAULT 0");
             this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMinVolume24h REAL NOT NULL DEFAULT 0");
+            this.db.exec("ALTER TABLE global_settings ADD COLUMN prebondMaxVolume24h REAL NOT NULL DEFAULT 0");
             console.log("[DB] Migrated: Added prebond volume filter columns.");
         } catch (e) { }
 
@@ -423,8 +426,11 @@ export class DatabaseService {
             prebondMaxTopHolderPct: row.prebondMaxTopHolderPct ?? 0,
             prebondMaxAgeMinutes: row.prebondMaxAgeMinutes ?? 0,
             prebondMinVolume5m: row.prebondMinVolume5m ?? 0,
+            prebondMaxVolume5m: row.prebondMaxVolume5m ?? 0,
             prebondMinVolume1h: row.prebondMinVolume1h ?? 0,
+            prebondMaxVolume1h: row.prebondMaxVolume1h ?? 0,
             prebondMinVolume24h: row.prebondMinVolume24h ?? 0,
+            prebondMaxVolume24h: row.prebondMaxVolume24h ?? 0,
             enableFullSilentFee: row.enableFullSilentFee !== undefined ? !!row.enableFullSilentFee : false
         };
     }
@@ -480,8 +486,11 @@ export class DatabaseService {
                 prebondMaxTopHolderPct = @prebondMaxTopHolderPct,
                 prebondMaxAgeMinutes = @prebondMaxAgeMinutes,
                 prebondMinVolume5m = @prebondMinVolume5m,
+                prebondMaxVolume5m = @prebondMaxVolume5m,
                 prebondMinVolume1h = @prebondMinVolume1h,
+                prebondMaxVolume1h = @prebondMaxVolume1h,
                 prebondMinVolume24h = @prebondMinVolume24h,
+                prebondMaxVolume24h = @prebondMaxVolume24h,
                 enableFullSilentFee = @enableFullSilentFee
             WHERE id = 1
         `);
@@ -535,8 +544,11 @@ export class DatabaseService {
             prebondMaxTopHolderPct: settings.prebondMaxTopHolderPct,
             prebondMaxAgeMinutes: settings.prebondMaxAgeMinutes,
             prebondMinVolume5m: settings.prebondMinVolume5m,
+            prebondMaxVolume5m: settings.prebondMaxVolume5m,
             prebondMinVolume1h: settings.prebondMinVolume1h,
+            prebondMaxVolume1h: settings.prebondMaxVolume1h,
             prebondMinVolume24h: settings.prebondMinVolume24h,
+            prebondMaxVolume24h: settings.prebondMaxVolume24h,
             enableFullSilentFee: settings.enableFullSilentFee ? 1 : 0
         });
     }

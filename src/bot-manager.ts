@@ -85,8 +85,11 @@ export class BotManager {
         prebondMaxTopHolderPct: 0,
         prebondMaxAgeMinutes: 0,
         prebondMinVolume5m: 0,
+        prebondMaxVolume5m: 0,
         prebondMinVolume1h: 0,
+        prebondMaxVolume1h: 0,
         prebondMinVolume24h: 0,
+        prebondMaxVolume24h: 0,
         enableFullSilentFee: false, // Default: Pool creation only
     };
 
@@ -1911,15 +1914,22 @@ export class BotManager {
             }
 
             // --- Prebond Discovery Filters (Jupiter Token API V2) ---
+            const needsVolume = (
+                this.settings.prebondMinVolume5m > 0 ||
+                this.settings.prebondMaxVolume5m > 0 ||
+                this.settings.prebondMinVolume1h > 0 ||
+                this.settings.prebondMaxVolume1h > 0 ||
+                this.settings.prebondMinVolume24h > 0 ||
+                this.settings.prebondMaxVolume24h > 0
+            );
+
             const hasFilters = this.settings.prebondMinMcap > 0 ||
                 this.settings.prebondMaxMcap > 0 ||
                 this.settings.prebondMinHolders > 0 ||
                 this.settings.prebondMinOrganicScore > 0 ||
                 this.settings.prebondMaxTopHolderPct > 0 ||
                 this.settings.prebondMaxAgeMinutes > 0 ||
-                this.settings.prebondMinVolume5m > 0 ||
-                this.settings.prebondMinVolume1h > 0 ||
-                this.settings.prebondMinVolume24h > 0;
+                needsVolume;
 
             if (hasFilters) {
                 const tokenData = await this.fetchJupiterTokenData(mint);
@@ -1950,8 +1960,15 @@ export class BotManager {
                 }
 
                 // Tier 2 Fallback: Pump.fun trades API for real 5-min volume
-                const needsVolume = (this.settings.prebondMinVolume5m > 0 || this.settings.prebondMinVolume1h > 0 || this.settings.prebondMinVolume24h > 0);
-                if (needsVolume && vol5m <= 0 && vol1h <= 0 && vol24h <= 0) {
+                const needsVolumeFallback = (
+                    this.settings.prebondMinVolume5m > 0 ||
+                    this.settings.prebondMaxVolume5m > 0 ||
+                    this.settings.prebondMinVolume1h > 0 ||
+                    this.settings.prebondMaxVolume1h > 0 ||
+                    this.settings.prebondMinVolume24h > 0 ||
+                    this.settings.prebondMaxVolume24h > 0
+                );
+                if (needsVolumeFallback && vol5m <= 0 && vol1h <= 0 && vol24h <= 0) {
                     const tradesData = await this.fetchPumpfunTradesVolume(mint);
                     if (tradesData && tradesData.vol5m > 0) {
                         vol5m = tradesData.vol5m;
@@ -2016,12 +2033,24 @@ export class BotManager {
                     SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol5m $${vol5m.toLocaleString()} < min $${this.settings.prebondMinVolume5m.toLocaleString()}`, "warning");
                     return false;
                 }
+                if (this.settings.prebondMaxVolume5m > 0 && vol5m > this.settings.prebondMaxVolume5m) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol5m $${vol5m.toLocaleString()} > max $${this.settings.prebondMaxVolume5m.toLocaleString()}`, "warning");
+                    return false;
+                }
                 if (this.settings.prebondMinVolume1h > 0 && vol1h < this.settings.prebondMinVolume1h) {
                     SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol1h $${vol1h.toLocaleString()} < min $${this.settings.prebondMinVolume1h.toLocaleString()}`, "warning");
                     return false;
                 }
+                if (this.settings.prebondMaxVolume1h > 0 && vol1h > this.settings.prebondMaxVolume1h) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol1h $${vol1h.toLocaleString()} > max $${this.settings.prebondMaxVolume1h.toLocaleString()}`, "warning");
+                    return false;
+                }
                 if (this.settings.prebondMinVolume24h > 0 && vol24h < this.settings.prebondMinVolume24h) {
                     SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol24h $${vol24h.toLocaleString()} < min $${this.settings.prebondMinVolume24h.toLocaleString()}`, "warning");
+                    return false;
+                }
+                if (this.settings.prebondMaxVolume24h > 0 && vol24h > this.settings.prebondMaxVolume24h) {
+                    SocketManager.emitLog(`[PREBOND] ${mint.slice(0, 8)} rejected: vol24h $${vol24h.toLocaleString()} > max $${this.settings.prebondMaxVolume24h.toLocaleString()}`, "warning");
                     return false;
                 }
 
