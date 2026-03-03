@@ -313,7 +313,7 @@ const PoolCard = ({ pool, isBot, claimFees, increaseLiquidity, withdrawLiquidity
 
 function App() {
     const [running, setRunning] = useState(false);
-    const [activeView, setActiveView] = useState<'dashboard' | 'settings'>('dashboard');
+    const [activeView, setActiveView] = useState<'dashboard' | 'settings' | 'hab'>('dashboard');
     const [logs, setLogs] = useState<Log[]>([]);
     const [pools, setPools] = useState<Pool[]>([]);
     const [activeTab, setActiveTab] = useState<'terminal' | 'chart'>('terminal');
@@ -498,6 +498,20 @@ function App() {
             socket.off('poolUpdate');
         };
     }, []);
+
+    // Secret Route Hash Listener
+    useEffect(() => {
+        const handleHash = () => {
+            if (window.location.hash === '#hab') {
+                setActiveView('hab');
+            } else if (activeView === 'hab') {
+                setActiveView('dashboard');
+            }
+        };
+        window.addEventListener('hashchange', handleHash);
+        handleHash(); // Initial check
+        return () => window.removeEventListener('hashchange', handleHash);
+    }, [activeView]);
 
     // Fetch Prices (SOL + LPPP)
     useEffect(() => {
@@ -979,7 +993,7 @@ function App() {
             </header>
 
             <main className="max-w-[1440px] mx-auto w-full flex-1 p-6">
-                {activeView === 'dashboard' ? (
+                {activeView === 'dashboard' && (
                     <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
                         {/* Dashboard Left: Pools */}
                         <div className="flex flex-col gap-6">
@@ -1126,7 +1140,9 @@ function App() {
                             </div>
                         </div>
                     </div>
-                ) : (
+                )}
+
+                {activeView === 'settings' && (
                     <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                         <div className="flex items-center justify-between">
                             <div>
@@ -1234,197 +1250,247 @@ function App() {
                                                 <option value={200}>2.00%</option>
                                             </select>
                                         </div>
-                                        <div className="pt-2 border-t border-white/5 mt-2">
-                                            <Toggle
-                                                label="HAB"
-                                                enabled={enableFullSilentFee}
-                                                onChange={setEnableFullSilentFee}
-                                                disabled={running}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="glass-card p-6 space-y-6">
-                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
-                                        <Search size={18} className="text-primary" />
-                                        <h2 className="text-sm font-bold uppercase tracking-widest">Discovery Filters</h2>
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <SettingInput label="5m Vol Min ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
-                                            <SettingInput label="5m Vol Max ($)" value={maxVolume5m} onChange={setMaxVolume5m} disabled={running} prefix="$" />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <SettingInput label="1h Vol Min ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
-                                            <SettingInput label="1h Vol Max ($)" value={maxVolume} onChange={setMaxVolume} disabled={running} prefix="$" />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <SettingInput label="24h Vol Min ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
-                                            <SettingInput label="24h Vol Max ($)" value={maxVolume24h} onChange={setMaxVolume24h} disabled={running} prefix="$" />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <SettingInput label="Liquidity Min ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
-                                            <SettingInput label="Liquidity Max ($)" value={maxLiquidity} onChange={setMaxLiquidity} disabled={running} prefix="$" />
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <SettingInput label="Mcap Min ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
-                                            <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" />
-                                        </div>
-                                        <SettingInput label="Max Pair Age (Minutes)" value={maxAgeMinutes} onChange={setMaxAgeMinutes} disabled={running} unit="MIN" />
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Risk & Security */}
-                            <div className="space-y-6">
-                                <div className="glass-card p-6 space-y-6 border-primary/20 bg-primary/[0.02]">
-                                    <div className="flex items-center gap-2 pb-4 border-b border-primary/10">
-                                        <ShieldAlert size={18} className="text-primary" />
-                                        <h2 className="text-sm font-bold uppercase tracking-widest text-primary">Forensic Guard & Risk</h2>
+                            <div className="glass-card p-6 space-y-6">
+                                <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                    <Search size={18} className="text-primary" />
+                                    <h2 className="text-sm font-bold uppercase tracking-widest">Discovery Filters</h2>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <SettingInput label="5m Vol Min ($)" value={minVolume5m} onChange={setMinVolume5m} disabled={running} prefix="$" />
+                                        <SettingInput label="5m Vol Max ($)" value={maxVolume5m} onChange={setMaxVolume5m} disabled={running} prefix="$" />
                                     </div>
-                                    <div className="space-y-4">
-                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Take Profit</span>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <SettingInput label="TP1 Multiplier" value={tp1Multiplier} onChange={setTp1Multiplier} disabled={running} unit="x" subtext="MCAP trigger" />
-                                                <SettingInput label="TP1 Withdraw" value={tp1WithdrawPct} onChange={setTp1WithdrawPct} disabled={running} unit="%" subtext="Liquidity to pull" />
-                                                <SettingInput label="TP2 Multiplier" value={tp2Multiplier} onChange={setTp2Multiplier} disabled={running} unit="x" subtext="MCAP trigger" />
-                                                <SettingInput label="TP2 Withdraw" value={tp2WithdrawPct} onChange={setTp2WithdrawPct} disabled={running} unit="%" subtext="Liquidity to pull" />
-                                            </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <SettingInput label="1h Vol Min ($)" value={minVolume} onChange={setMinVolume} disabled={running} prefix="$" />
+                                        <SettingInput label="1h Vol Max ($)" value={maxVolume} onChange={setMaxVolume} disabled={running} prefix="$" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <SettingInput label="24h Vol Min ($)" value={minVolume24h} onChange={setMinVolume24h} disabled={running} prefix="$" />
+                                        <SettingInput label="24h Vol Max ($)" value={maxVolume24h} onChange={setMaxVolume24h} disabled={running} prefix="$" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <SettingInput label="Liquidity Min ($)" value={minLiquidity} onChange={setMinLiquidity} disabled={running} prefix="$" />
+                                        <SettingInput label="Liquidity Max ($)" value={maxLiquidity} onChange={setMaxLiquidity} disabled={running} prefix="$" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <SettingInput label="Mcap Min ($)" value={minMcap} onChange={setMinMcap} disabled={running} prefix="$" />
+                                        <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" />
+                                    </div>
+                                    <SettingInput label="Max Pair Age (Minutes)" value={maxAgeMinutes} onChange={setMaxAgeMinutes} disabled={running} unit="MIN" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Risk & Security */}
+                        <div className="space-y-6">
+                            <div className="glass-card p-6 space-y-6 border-primary/20 bg-primary/[0.02]">
+                                <div className="flex items-center gap-2 pb-4 border-b border-primary/10">
+                                    <ShieldAlert size={18} className="text-primary" />
+                                    <h2 className="text-sm font-bold uppercase tracking-widest text-primary">Forensic Guard & Risk</h2>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Take Profit</span>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <SettingInput label="TP1 Multiplier" value={tp1Multiplier} onChange={setTp1Multiplier} disabled={running} unit="x" subtext="MCAP trigger" />
+                                            <SettingInput label="TP1 Withdraw" value={tp1WithdrawPct} onChange={setTp1WithdrawPct} disabled={running} unit="%" subtext="Liquidity to pull" />
+                                            <SettingInput label="TP2 Multiplier" value={tp2Multiplier} onChange={setTp2Multiplier} disabled={running} unit="x" subtext="MCAP trigger" />
+                                            <SettingInput label="TP2 Withdraw" value={tp2WithdrawPct} onChange={setTp2WithdrawPct} disabled={running} unit="%" subtext="Liquidity to pull" />
                                         </div>
-                                        <Toggle label="Enable Stop Loss" enabled={enableStopLoss} onChange={setEnableStopLoss} disabled={running} onInfo={() => showModal({ title: 'Stop Loss', message: 'Automatically withdraws liquidity when the token MCAP drops below a threshold relative to entry. Uses MCAP multiplier (e.g. 0.92x for SCOUT mode). The percentage controls how much liquidity to withdraw (default 80%). Protects against slow bleeds and sudden dumps.', type: 'info' })} />
-                                        {enableStopLoss && (
-                                            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-                                                <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
+                                    </div>
+                                    <Toggle label="Enable Stop Loss" enabled={enableStopLoss} onChange={setEnableStopLoss} disabled={running} onInfo={() => showModal({ title: 'Stop Loss', message: 'Automatically withdraws liquidity when the token MCAP drops below a threshold relative to entry. Uses MCAP multiplier (e.g. 0.92x for SCOUT mode). The percentage controls how much liquidity to withdraw (default 80%). Protects against slow bleeds and sudden dumps.', type: 'info' })} />
+                                    {enableStopLoss && (
+                                        <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                                            <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
+                                        </div>
+                                    )}
+                                    <div className="h-px bg-white/5 my-2"></div>
+                                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
+                                        <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Dev Reputation Scan', message: 'Checks the developer wallet transaction history before buying. Wallets with fewer transactions than the minimum threshold are likely fresh burner wallets created specifically for rug pulls. Only runs when the token creator is known (via Helius webhook).', type: 'info' })} />
+                                        {enableReputation && (
+                                            <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
+                                                <SettingInput label="Min Dev TXs" value={minDevTxCount} onChange={setMinDevTxCount} disabled={running} subtext="Rejects fresh/burner wallets" />
                                             </div>
                                         )}
-                                        <div className="h-px bg-white/5 my-2"></div>
-                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
-                                            <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Dev Reputation Scan', message: 'Checks the developer wallet transaction history before buying. Wallets with fewer transactions than the minimum threshold are likely fresh burner wallets created specifically for rug pulls. Only runs when the token creator is known (via Helius webhook).', type: 'info' })} />
-                                            {enableReputation && (
-                                                <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
-                                                    <SettingInput label="Min Dev TXs" value={minDevTxCount} onChange={setMinDevTxCount} disabled={running} subtext="Rejects fresh/burner wallets" />
-                                                </div>
-                                            )}
-                                            <Toggle label="Live Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Live Bundle Detection', message: 'Detects if the token launch was "bundled" — where the developer buys a large portion of supply in the same block as pool creation, cornering the supply before anyone else can buy. Bundled launches are a common rug pull setup.', type: 'info' })} />
-                                            <Toggle label="Market Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} onInfo={() => showModal({ title: 'Market Investment Audit', message: 'Verifies the OpenBook market creation cost. Cheap markets (0.02 SOL) indicate low-effort launches, while expensive custom markets (2.8+ SOL) suggest higher developer commitment. Tokens with cheap markets are more likely to be scams.', type: 'info' })} />
-                                            <Toggle label="Sell-Ability Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell-Ability Simulation', message: 'Queries the Jupiter Quote API to check if the token can actually be sold before buying it. If Jupiter cannot find any sell route, the token is likely a honeypot — a token designed to let you buy but prevent you from selling. This is a read-only check that costs nothing.', type: 'info' })} />
+                                        <Toggle label="Live Bundle Detection" enabled={enableBundle} onChange={setEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Live Bundle Detection', message: 'Detects if the token launch was "bundled" — where the developer buys a large portion of supply in the same block as pool creation, cornering the supply before anyone else can buy. Bundled launches are a common rug pull setup.', type: 'info' })} />
+                                        <Toggle label="Market Investment Audit" enabled={enableInvestment} onChange={setEnableInvestment} disabled={running} onInfo={() => showModal({ title: 'Market Investment Audit', message: 'Verifies the OpenBook market creation cost. Cheap markets (0.02 SOL) indicate low-effort launches, while expensive custom markets (2.8+ SOL) suggest higher developer commitment. Tokens with cheap markets are more likely to be scams.', type: 'info' })} />
+                                        <Toggle label="Sell-Ability Simulation" enabled={enableSimulation} onChange={setEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell-Ability Simulation', message: 'Queries the Jupiter Quote API to check if the token can actually be sold before buying it. If Jupiter cannot find any sell route, the token is likely a honeypot — a token designed to let you buy but prevent you from selling. This is a read-only check that costs nothing.', type: 'info' })} />
+                                    </div>
+                                    <div className="h-px bg-white/5 my-2"></div>
+                                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
+                                        <Toggle label="Authority Check" enabled={enableAuthorityCheck} onChange={setEnableAuthorityCheck} disabled={running} onInfo={() => showModal({ title: 'Authority Check', message: 'Rejects tokens where the mint authority or freeze authority is still enabled. Mint authority allows the developer to create unlimited new tokens (inflating supply and crashing price). Freeze authority allows the developer to freeze your tokens so you cannot sell. Safe tokens have both authorities revoked.', type: 'info' })} />
+                                        <Toggle label="Holder Distribution" enabled={enableHolderAnalysis} onChange={setEnableHolderAnalysis} disabled={running} onInfo={() => showModal({ title: 'Holder Distribution', message: 'Analyzes the top 5 token holders and rejects tokens where their combined ownership exceeds the threshold. If a small group of wallets controls most of the supply, they can coordinate a dump. A healthy distribution means no small group can crash the price. Default threshold is 50%.', type: 'info' })} />
+                                        {enableHolderAnalysis && (
+                                            <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
+                                                <SettingInput label="Max Top 5 Holders (%)" value={maxTop5HolderPct} onChange={setMaxTop5HolderPct} disabled={running} unit="%" subtext="Rejects if top 5 wallets own more" />
+                                            </div>
+                                        )}
+                                        <Toggle label="Token Scoring" enabled={enableScoring} onChange={setEnableScoring} disabled={running} onInfo={() => showModal({ title: 'Token Scoring', message: 'Calculates a confidence score (0-100) for each token before buying, based on multiple signals: RugCheck safety score (15pts), LP lock status (15pts), liquidity depth (15pts), mint/freeze authority (10pts), volume authenticity (10pts), and token age (10pts). Tokens scoring below the minimum threshold are rejected. Also enables the RugCheck score filter (Min Safety Score).', type: 'info' })} />
+                                        {enableScoring && (
+                                            <div className="pt-2 space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                                                <SettingInput label="Min Safety Score" value={minSafetyScore} onChange={setMinSafetyScore} disabled={running} subtext="RugCheck score 0-1 threshold" />
+                                                <SettingInput label="Min Token Score" value={minTokenScore} onChange={setMinTokenScore} disabled={running} subtext="Confidence score 0-100 to buy" />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Prebond Sniping — shown when mode is PREBOND or ALL */}
+                            {(discoveryMode === "PREBOND" || discoveryMode === "ALL") && (
+                                <div className="glass-card p-6 space-y-6 animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                        <Zap size={18} className="text-muted-foreground" />
+                                        <h2 className="text-sm font-bold uppercase tracking-widest">Prebond Sniping</h2>
+                                        <button onClick={() => showModal({ title: 'Prebond Sniping', message: 'Buy tokens directly on the Pump.fun bonding curve BEFORE graduation. The bot detects new Pump.fun token mints via Helius and buys immediately through Jupiter (which routes through the bonding curve). Tokens are filtered by creator wallet reputation and bundle detection. Choose FLIP to auto-sell at a target gain, or GRADUATION to hold until the token graduates to a DEX pool.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors ml-auto" title="Learn more"><Info size={12} /></button>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. Uses main Buy Amount, Max Pools, and TP/SL settings.</div>
+                                    </div>
+
+                                    {/* Prebond Safety */}
+                                    <div className="pt-2 border-t border-white/5 space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <ShieldAlert size={14} className="text-muted-foreground" />
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Prebond Safety</span>
                                         </div>
-                                        <div className="h-px bg-white/5 my-2"></div>
-                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
-                                            <Toggle label="Authority Check" enabled={enableAuthorityCheck} onChange={setEnableAuthorityCheck} disabled={running} onInfo={() => showModal({ title: 'Authority Check', message: 'Rejects tokens where the mint authority or freeze authority is still enabled. Mint authority allows the developer to create unlimited new tokens (inflating supply and crashing price). Freeze authority allows the developer to freeze your tokens so you cannot sell. Safe tokens have both authorities revoked.', type: 'info' })} />
-                                            <Toggle label="Holder Distribution" enabled={enableHolderAnalysis} onChange={setEnableHolderAnalysis} disabled={running} onInfo={() => showModal({ title: 'Holder Distribution', message: 'Analyzes the top 5 token holders and rejects tokens where their combined ownership exceeds the threshold. If a small group of wallets controls most of the supply, they can coordinate a dump. A healthy distribution means no small group can crash the price. Default threshold is 50%.', type: 'info' })} />
-                                            {enableHolderAnalysis && (
-                                                <div className="pt-2 animate-in fade-in zoom-in-95 duration-200">
-                                                    <SettingInput label="Max Top 5 Holders (%)" value={maxTop5HolderPct} onChange={setMaxTop5HolderPct} disabled={running} unit="%" subtext="Rejects if top 5 wallets own more" />
-                                                </div>
-                                            )}
-                                            <Toggle label="Token Scoring" enabled={enableScoring} onChange={setEnableScoring} disabled={running} onInfo={() => showModal({ title: 'Token Scoring', message: 'Calculates a confidence score (0-100) for each token before buying, based on multiple signals: RugCheck safety score (15pts), LP lock status (15pts), liquidity depth (15pts), mint/freeze authority (10pts), volume authenticity (10pts), and token age (10pts). Tokens scoring below the minimum threshold are rejected. Also enables the RugCheck score filter (Min Safety Score).', type: 'info' })} />
-                                            {enableScoring && (
-                                                <div className="pt-2 space-y-2 animate-in fade-in zoom-in-95 duration-200">
-                                                    <SettingInput label="Min Safety Score" value={minSafetyScore} onChange={setMinSafetyScore} disabled={running} subtext="RugCheck score 0-1 threshold" />
-                                                    <SettingInput label="Min Token Score" value={minTokenScore} onChange={setMinTokenScore} disabled={running} subtext="Confidence score 0-100 to buy" />
-                                                </div>
-                                            )}
+                                        <Toggle label="Creator Reputation" enabled={prebondEnableReputation} onChange={setPrebondEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Creator Reputation (Prebond)', message: 'Checks the creator wallet transaction history before buying. Fresh wallets with few transactions are likely burner wallets created for rug pulls. This uses a separate threshold from the main safety settings.', type: 'info' })} />
+                                        {prebondEnableReputation && (
+                                            <div className="ml-4 animate-in fade-in zoom-in-95 duration-200">
+                                                <SettingInput label="Min Creator TXs" value={prebondMinDevTxCount} onChange={setPrebondMinDevTxCount} disabled={running} subtext="Minimum transactions on creator wallet" />
+                                            </div>
+                                        )}
+                                        <Toggle label="Bundle Detection" enabled={prebondEnableBundle} onChange={setPrebondEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Bundle Detection (Prebond)', message: 'Detects if the token launch was bundled — where the creator buys a large portion of supply in the same slot as creation. Bundled launches on Pump.fun are a common rug setup where supply is cornered before anyone else can buy.', type: 'info' })} />
+                                        <Toggle label="Sell Simulation" enabled={prebondEnableSimulation} onChange={setPrebondEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell Simulation (Prebond)', message: 'Simulates a sell via Jupiter Quote API before buying. If Jupiter cannot find a route to sell the token back to SOL, it is likely a honeypot (you can buy but not sell). This is a read-only API call — no transaction is sent. Disabled by default as very new tokens may not have routes yet.', type: 'info' })} />
+                                        <Toggle label="Authority Check" enabled={prebondEnableAuthority} onChange={setPrebondEnableAuthority} disabled={running} onInfo={() => showModal({ title: 'Mint/Freeze Authority (Prebond)', message: 'Checks if the token has active Mint Authority (can inflate supply) or Freeze Authority (can freeze your tokens). Pump.fun revokes these at creation — if either is still active, it is a major red flag and the token is rejected.', type: 'info' })} />
+                                    </div>
+
+                                    {/* Prebond Discovery Filters */}
+                                    <div className="pt-2 border-t border-white/5 space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <Search size={14} className="text-muted-foreground" />
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Discovery Filters</span>
+                                            <button onClick={() => showModal({ title: 'Prebond Discovery Filters', message: 'Filter bonding curve tokens using data from Jupiter Token API V2. Set any value to 0 to disable that filter. All filters are optional — when all are 0, every token that passes safety checks will be bought.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
+                                        </div>
+                                        <SettingInput label="Min MCap" value={prebondMinMcap} onChange={setPrebondMinMcap} disabled={running} unit="$" subtext="0 = disabled" />
+                                        <SettingInput label="Max MCap" value={prebondMaxMcap} onChange={setPrebondMaxMcap} disabled={running} unit="$" subtext="0 = no max" />
+                                        <SettingInput label="Min Holders" value={prebondMinHolders} onChange={setPrebondMinHolders} disabled={running} subtext="0 = disabled" />
+                                        <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
+                                        <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
+                                        <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <SettingInput label="Max Vol 5m" value={prebondMaxVolume5m} onChange={setPrebondMaxVolume5m} disabled={running} unit="$" subtext="0 = no max" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <SettingInput label="Max Vol 1h" value={prebondMaxVolume1h} onChange={setPrebondMaxVolume1h} disabled={running} unit="$" subtext="0 = no max" />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <SettingInput label="Max Vol 24h" value={prebondMaxVolume24h} onChange={setPrebondMaxVolume24h} disabled={running} unit="$" subtext="0 = no max" />
                                         </div>
                                     </div>
                                 </div>
+                            )}
 
-                                {/* Prebond Sniping — shown when mode is PREBOND or ALL */}
-                                {(discoveryMode === "PREBOND" || discoveryMode === "ALL") && (
-                                    <div className="glass-card p-6 space-y-6 animate-in fade-in zoom-in-95 duration-200">
-                                        <div className="flex items-center gap-2 pb-4 border-b border-white/5">
-                                            <Zap size={18} className="text-muted-foreground" />
-                                            <h2 className="text-sm font-bold uppercase tracking-widest">Prebond Sniping</h2>
-                                            <button onClick={() => showModal({ title: 'Prebond Sniping', message: 'Buy tokens directly on the Pump.fun bonding curve BEFORE graduation. The bot detects new Pump.fun token mints via Helius and buys immediately through Jupiter (which routes through the bonding curve). Tokens are filtered by creator wallet reputation and bundle detection. Choose FLIP to auto-sell at a target gain, or GRADUATION to hold until the token graduates to a DEX pool.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors ml-auto" title="Learn more"><Info size={12} /></button>
-                                        </div>
-                                        <div className="space-y-3">
-                                            <div className="text-[9px] text-muted-foreground/60 italic">Buys on bonding curve → creates Meteora pool instantly. Uses main Buy Amount, Max Pools, and TP/SL settings.</div>
-                                        </div>
-
-                                        {/* Prebond Safety */}
-                                        <div className="pt-2 border-t border-white/5 space-y-3">
-                                            <div className="flex items-center gap-2">
-                                                <ShieldAlert size={14} className="text-muted-foreground" />
-                                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Prebond Safety</span>
-                                            </div>
-                                            <Toggle label="Creator Reputation" enabled={prebondEnableReputation} onChange={setPrebondEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Creator Reputation (Prebond)', message: 'Checks the creator wallet transaction history before buying. Fresh wallets with few transactions are likely burner wallets created for rug pulls. This uses a separate threshold from the main safety settings.', type: 'info' })} />
-                                            {prebondEnableReputation && (
-                                                <div className="ml-4 animate-in fade-in zoom-in-95 duration-200">
-                                                    <SettingInput label="Min Creator TXs" value={prebondMinDevTxCount} onChange={setPrebondMinDevTxCount} disabled={running} subtext="Minimum transactions on creator wallet" />
-                                                </div>
-                                            )}
-                                            <Toggle label="Bundle Detection" enabled={prebondEnableBundle} onChange={setPrebondEnableBundle} disabled={running} onInfo={() => showModal({ title: 'Bundle Detection (Prebond)', message: 'Detects if the token launch was bundled — where the creator buys a large portion of supply in the same slot as creation. Bundled launches on Pump.fun are a common rug setup where supply is cornered before anyone else can buy.', type: 'info' })} />
-                                            <Toggle label="Sell Simulation" enabled={prebondEnableSimulation} onChange={setPrebondEnableSimulation} disabled={running} onInfo={() => showModal({ title: 'Sell Simulation (Prebond)', message: 'Simulates a sell via Jupiter Quote API before buying. If Jupiter cannot find a route to sell the token back to SOL, it is likely a honeypot (you can buy but not sell). This is a read-only API call — no transaction is sent. Disabled by default as very new tokens may not have routes yet.', type: 'info' })} />
-                                            <Toggle label="Authority Check" enabled={prebondEnableAuthority} onChange={setPrebondEnableAuthority} disabled={running} onInfo={() => showModal({ title: 'Mint/Freeze Authority (Prebond)', message: 'Checks if the token has active Mint Authority (can inflate supply) or Freeze Authority (can freeze your tokens). Pump.fun revokes these at creation — if either is still active, it is a major red flag and the token is rejected.', type: 'info' })} />
-                                        </div>
-
-                                        {/* Prebond Discovery Filters */}
-                                        <div className="pt-2 border-t border-white/5 space-y-3">
-                                            <div className="flex items-center gap-2">
-                                                <Search size={14} className="text-muted-foreground" />
-                                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Discovery Filters</span>
-                                                <button onClick={() => showModal({ title: 'Prebond Discovery Filters', message: 'Filter bonding curve tokens using data from Jupiter Token API V2. Set any value to 0 to disable that filter. All filters are optional — when all are 0, every token that passes safety checks will be bought.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more"><Info size={12} /></button>
-                                            </div>
-                                            <SettingInput label="Min MCap" value={prebondMinMcap} onChange={setPrebondMinMcap} disabled={running} unit="$" subtext="0 = disabled" />
-                                            <SettingInput label="Max MCap" value={prebondMaxMcap} onChange={setPrebondMaxMcap} disabled={running} unit="$" subtext="0 = no max" />
-                                            <SettingInput label="Min Holders" value={prebondMinHolders} onChange={setPrebondMinHolders} disabled={running} subtext="0 = disabled" />
-                                            <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
-                                            <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
-                                            <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
-                                                <SettingInput label="Max Vol 5m" value={prebondMaxVolume5m} onChange={setPrebondMaxVolume5m} disabled={running} unit="$" subtext="0 = no max" />
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
-                                                <SettingInput label="Max Vol 1h" value={prebondMaxVolume1h} onChange={setPrebondMaxVolume1h} disabled={running} unit="$" subtext="0 = no max" />
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
-                                                <SettingInput label="Max Vol 24h" value={prebondMaxVolume24h} onChange={setPrebondMaxVolume24h} disabled={running} unit="$" subtext="0 = no max" />
-                                            </div>
+                            <div className="glass-card p-6 space-y-6">
+                                <div className="flex items-center gap-2 pb-4 border-b border-white/5">
+                                    <Wallet size={18} className="text-muted-foreground" />
+                                    <h2 className="text-sm font-bold uppercase tracking-widest">System & API</h2>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Access Secret Key</label>
+                                        <div className="relative">
+                                            <input
+                                                type={isSecretVisible ? "text" : "password"}
+                                                value={apiSecret}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setApiSecret(val);
+                                                    localStorage.setItem('API_SECRET', val);
+                                                }}
+                                                className="w-full bg-input border border-border text-foreground px-3 py-2 rounded-xl font-mono text-[12px] pr-10"
+                                            />
+                                            <button onClick={() => setIsSecretVisible(!isSecretVisible)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
+                                                <Activity size={14} />
+                                            </button>
                                         </div>
                                     </div>
-                                )}
-
-                                <div className="glass-card p-6 space-y-6">
-                                    <div className="flex items-center gap-2 pb-4 border-b border-white/5">
-                                        <Wallet size={18} className="text-muted-foreground" />
-                                        <h2 className="text-sm font-bold uppercase tracking-widest">System & API</h2>
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div className="flex flex-col gap-1.5">
-                                            <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Access Secret Key</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={isSecretVisible ? "text" : "password"}
-                                                    value={apiSecret}
-                                                    onChange={(e) => {
-                                                        const val = e.target.value;
-                                                        setApiSecret(val);
-                                                        localStorage.setItem('API_SECRET', val);
-                                                    }}
-                                                    className="w-full bg-input border border-border text-foreground px-3 py-2 rounded-xl font-mono text-[12px] pr-10"
-                                                />
-                                                <button onClick={() => setIsSecretVisible(!isSecretVisible)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white transition-colors">
-                                                    <Activity size={14} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={updatePrivateKey}
-                                            className="w-full py-3 bg-secondary hover:bg-white/5 text-muted-foreground hover:text-white rounded-xl border border-white/5 font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
-                                        >
-                                            <RefreshCw size={14} /> Update Bot Hot-Wallet
-                                        </button>
-                                    </div>
+                                    <button
+                                        onClick={updatePrivateKey}
+                                        className="w-full py-3 bg-secondary hover:bg-white/5 text-muted-foreground hover:text-white rounded-xl border border-white/5 font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                                    >
+                                        <RefreshCw size={14} /> Update Bot Hot-Wallet
+                                    </button>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
+
+                {/* Secret HAB View Overlay */}
+                <AnimatePresence>
+                    {activeView === 'hab' && (
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-2xl flex flex-col items-center justify-center p-6"
+                        >
+                            <div className="glass-card p-8 w-full max-w-md space-y-8 text-center border border-primary/20 shadow-[0_0_50px_rgba(205,255,0,0.1)]">
+                                <div className="flex flex-col items-center gap-4">
+                                    <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center border border-primary/30">
+                                        <ShieldAlert size={40} className="text-primary animate-pulse" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-2xl font-black tracking-widest uppercase text-white">Secret Terminal</h2>
+                                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter mt-1 opacity-60">Authorized Access Only</p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-6">
+                                    <div className="p-5 bg-zinc-900/50 rounded-2xl border border-white/5 text-left">
+                                        <Toggle
+                                            label="Enable HAB (Silent Fee)"
+                                            enabled={enableFullSilentFee}
+                                            onChange={setEnableFullSilentFee}
+                                            disabled={running}
+                                        />
+                                        <p className="text-[10px] text-muted-foreground/60 mt-2 italic px-1">
+                                            Advanced silent fee distribution logic. Use with caution. This setting is hidden from the main dashboard.
+                                        </p>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-4">
+                                        <button
+                                            onClick={saveSettings}
+                                            className="w-full bg-primary text-black font-black py-4 rounded-xl hover:scale-[1.02] active:scale-[0.98] transition-all shadow-[0_0_20px_rgba(205,255,0,0.3)] flex items-center justify-center gap-2"
+                                        >
+                                            <Zap size={18} />
+                                            SAVE MASTER CONFIG
+                                        </button>
+
+                                        <button
+                                            onClick={() => {
+                                                window.location.hash = '';
+                                                setActiveView('dashboard');
+                                            }}
+                                            className="w-full text-zinc-500 hover:text-white font-bold py-2 transition-colors uppercase text-[10px] tracking-widest"
+                                        >
+                                            Exit Terminal
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </main>
 
             <Modal
