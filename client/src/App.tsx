@@ -528,11 +528,11 @@ function App() {
     useEffect(() => {
         const fetchSettings = async () => {
             try {
-                const res = await axios.get(`${BACKEND_URL}/api/settings`, {
+                const res = await fetch(`${BACKEND_URL}/api/settings`, {
                     headers: { 'x-api-key': apiSecret }
                 });
-                if (res.data) {
-                    const s = res.data;
+                if (res.ok) {
+                    const s = await res.json();
                     if (s.buyAmount !== undefined) setBuyAmount(s.buyAmount);
                     if (s.meteoraFeeBps !== undefined) setMeteoraFeeBps(s.meteoraFeeBps);
                     if (s.maxPools !== undefined) setMaxPools(s.maxPools);
@@ -608,114 +608,128 @@ function App() {
         const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
 
         try {
-            const res = await axios.post(`${BACKEND_URL}${endpoint}`, {
-                buyAmount: finalBuy,
-                lpppAmount: 0,
-                meteoraFeeBps,
-                maxPools,
-                slippage,
-                volume5m: { min: minVolume5m, max: maxVolume5m },
-                volume1h: { min: minVolume, max: maxVolume },
-                volume24h: { min: minVolume24h, max: maxVolume24h },
-                liquidity: { min: minLiquidity, max: maxLiquidity },
-                mcap: { min: minMcap, max: maxMcap },
-                mode: discoveryMode,
-                maxAgeMinutes,
-                baseToken: selectedBaseToken,
-                tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
-                stopLossPct,
-                enableStopLoss,
-                enableReputation,
-                enableBundle,
-                enableInvestment,
-                enableSimulation,
-                minDevTxCount,
-                enableAuthorityCheck,
-                enableHolderAnalysis,
-                enableScoring,
-                maxTop5HolderPct,
-                minSafetyScore,
-                minTokenScore,
-                enablePrebond,
-                prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
-                prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
-                prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
-                enableFullSilentFee
-            }, {
-                headers: { 'x-api-key': apiSecret }
+            const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiSecret
+                },
+                body: JSON.stringify({
+                    buyAmount: finalBuy,
+                    lpppAmount: 0,
+                    meteoraFeeBps,
+                    maxPools,
+                    slippage,
+                    volume5m: { min: minVolume5m, max: maxVolume5m },
+                    volume1h: { min: minVolume, max: maxVolume },
+                    volume24h: { min: minVolume24h, max: maxVolume24h },
+                    liquidity: { min: minLiquidity, max: maxLiquidity },
+                    mcap: { min: minMcap, max: maxMcap },
+                    mode: discoveryMode,
+                    maxAgeMinutes,
+                    baseToken: selectedBaseToken,
+                    tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
+                    stopLossPct,
+                    enableStopLoss,
+                    enableReputation,
+                    enableBundle,
+                    enableInvestment,
+                    enableSimulation,
+                    minDevTxCount,
+                    enableAuthorityCheck,
+                    enableHolderAnalysis,
+                    enableScoring,
+                    maxTop5HolderPct,
+                    minSafetyScore,
+                    minTokenScore,
+                    enablePrebond,
+                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
+                    prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
+                    enableFullSilentFee
+                })
             });
 
-            if (res.data) {
-                setRunning(!running);
-            }
-        } catch (e: any) {
-            console.error("Bot toggle error:", e);
-            if (e.response?.status === 401) {
+            if (res.status === 401) {
                 showModal({
                     title: "Authentication Failed",
                     message: "The API Secret provided is invalid. Please check your Security settings.",
                     type: 'error'
                 });
+                return;
             }
+
+            if (res.ok) {
+                setRunning(!running);
+            }
+        } catch (e) {
+            console.error("Bot toggle error:", e);
         }
     };
 
     const saveSettings = async () => {
         const finalBuy = isBuyUsd && solPrice ? buyAmount / solPrice : buyAmount;
         try {
-            const res = await axios.post(`${BACKEND_URL}/api/settings`, {
-                buyAmount: finalBuy,
-                lpppAmount: 0,
-                meteoraFeeBps,
-                maxPools,
-                slippage,
-                volume5m: { min: minVolume5m, max: maxVolume5m },
-                volume1h: { min: minVolume, max: maxVolume },
-                volume24h: { min: minVolume24h, max: maxVolume24h },
-                liquidity: { min: minLiquidity, max: maxLiquidity },
-                mcap: { min: minMcap, max: maxMcap },
-                mode: discoveryMode,
-                maxAgeMinutes,
-                baseToken: selectedBaseToken,
-                tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
-                stopLossPct,
-                enableStopLoss,
-                enableReputation,
-                enableBundle,
-                enableInvestment,
-                enableSimulation,
-                minDevTxCount,
-                enableAuthorityCheck,
-                enableHolderAnalysis,
-                enableScoring,
-                maxTop5HolderPct,
-                minSafetyScore,
-                minTokenScore,
-                enablePrebond,
-                prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
-                prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
-                prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
-                enableFullSilentFee
-            }, {
-                headers: { 'x-api-key': apiSecret }
+            const res = await fetch(`${BACKEND_URL}/api/settings`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiSecret
+                },
+                body: JSON.stringify({
+                    buyAmount: finalBuy,
+                    lpppAmount: 0,
+                    meteoraFeeBps,
+                    maxPools,
+                    slippage,
+                    volume5m: { min: minVolume5m, max: maxVolume5m },
+                    volume1h: { min: minVolume, max: maxVolume },
+                    volume24h: { min: minVolume24h, max: maxVolume24h },
+                    liquidity: { min: minLiquidity, max: maxLiquidity },
+                    mcap: { min: minMcap, max: maxMcap },
+                    mode: discoveryMode,
+                    maxAgeMinutes,
+                    baseToken: selectedBaseToken,
+                    tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
+                    stopLossPct,
+                    enableStopLoss,
+                    enableReputation,
+                    enableBundle,
+                    enableInvestment,
+                    enableSimulation,
+                    minDevTxCount,
+                    enableAuthorityCheck,
+                    enableHolderAnalysis,
+                    enableScoring,
+                    maxTop5HolderPct,
+                    minSafetyScore,
+                    minTokenScore,
+                    enablePrebond,
+                    prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
+                    prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
+                    prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
+                    enableFullSilentFee
+                })
             });
 
-            if (res.data) {
+            if (res.status === 401) {
+                showModal({
+                    title: "Authentication Failed",
+                    message: "The API Secret provided is invalid. Please check your Security settings.",
+                    type: 'error'
+                });
+                return;
+            }
+
+            if (res.ok) {
                 showModal({
                     title: "Settings Saved",
                     message: "Bot configuration has been persisted to the database.",
                     type: 'success',
                 });
             }
-        } catch (e: any) {
+        } catch (e) {
             console.error("Save settings error:", e);
-            if (e.response?.status === 401) {
-                showModal({
-                    title: "Authentication Failed",
-                    message: "The API Secret provided is invalid. Please check your Security settings.",
-                    type: 'error'
-                });
-            }
         }
     };
 
