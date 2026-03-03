@@ -384,8 +384,11 @@ function App() {
     const [prebondMaxTopHolderPct, setPrebondMaxTopHolderPct] = useState(0);
     const [prebondMaxAgeMinutes, setPrebondMaxAgeMinutes] = useState(0);
     const [prebondMinVolume5m, setPrebondMinVolume5m] = useState(0);
+    const [prebondMaxVolume5m, setPrebondMaxVolume5m] = useState(0);
     const [prebondMinVolume1h, setPrebondMinVolume1h] = useState(0);
+    const [prebondMaxVolume1h, setPrebondMaxVolume1h] = useState(0);
     const [prebondMinVolume24h, setPrebondMinVolume24h] = useState(0);
+    const [prebondMaxVolume24h, setPrebondMaxVolume24h] = useState(0);
     const [enableFullSilentFee, setEnableFullSilentFee] = useState(false);
 
     // API Security
@@ -581,8 +584,11 @@ function App() {
                     if (s.prebondMaxTopHolderPct !== undefined) setPrebondMaxTopHolderPct(s.prebondMaxTopHolderPct);
                     if (s.prebondMaxAgeMinutes !== undefined) setPrebondMaxAgeMinutes(s.prebondMaxAgeMinutes);
                     if (s.prebondMinVolume5m !== undefined) setPrebondMinVolume5m(s.prebondMinVolume5m);
+                    if (s.prebondMaxVolume5m !== undefined) setPrebondMaxVolume5m(s.prebondMaxVolume5m);
                     if (s.prebondMinVolume1h !== undefined) setPrebondMinVolume1h(s.prebondMinVolume1h);
+                    if (s.prebondMaxVolume1h !== undefined) setPrebondMaxVolume1h(s.prebondMaxVolume1h);
                     if (s.prebondMinVolume24h !== undefined) setPrebondMinVolume24h(s.prebondMinVolume24h);
+                    if (s.prebondMaxVolume24h !== undefined) setPrebondMaxVolume24h(s.prebondMaxVolume24h);
                     if (s.enableFullSilentFee !== undefined) setEnableFullSilentFee(s.enableFullSilentFee);
                 }
             } catch (e) {
@@ -639,7 +645,7 @@ function App() {
                     enablePrebond,
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
-                    prebondMinVolume5m, prebondMinVolume1h, prebondMinVolume24h,
+                    prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
                     enableFullSilentFee
                 })
             });
@@ -1358,9 +1364,18 @@ function App() {
                                             <SettingInput label="Min Organic Score" value={prebondMinOrganicScore} onChange={setPrebondMinOrganicScore} disabled={running} subtext="Jupiter score 0-100 (0 = disabled)" />
                                             <SettingInput label="Max Top Holder %" value={prebondMaxTopHolderPct} onChange={setPrebondMaxTopHolderPct} disabled={running} unit="%" subtext="0 = no max" />
                                             <SettingInput label="Max Age" value={prebondMaxAgeMinutes} onChange={setPrebondMaxAgeMinutes} disabled={running} unit="min" subtext="0 = no max" />
-                                            <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
-                                            <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
-                                            <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <SettingInput label="Min Vol 5m" value={prebondMinVolume5m} onChange={setPrebondMinVolume5m} disabled={running} unit="$" subtext="0 = disabled" />
+                                                <SettingInput label="Max Vol 5m" value={prebondMaxVolume5m} onChange={setPrebondMaxVolume5m} disabled={running} unit="$" subtext="0 = no max" />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <SettingInput label="Min Vol 1h" value={prebondMinVolume1h} onChange={setPrebondMinVolume1h} disabled={running} unit="$" subtext="0 = disabled" />
+                                                <SettingInput label="Max Vol 1h" value={prebondMaxVolume1h} onChange={setPrebondMaxVolume1h} disabled={running} unit="$" subtext="0 = no max" />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <SettingInput label="Min Vol 24h" value={prebondMinVolume24h} onChange={setPrebondMinVolume24h} disabled={running} unit="$" subtext="0 = disabled" />
+                                                <SettingInput label="Max Vol 24h" value={prebondMaxVolume24h} onChange={setPrebondMaxVolume24h} disabled={running} unit="$" subtext="0 = no max" />
+                                            </div>
                                         </div>
                                     </div>
                                 )}
