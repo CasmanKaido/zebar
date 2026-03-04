@@ -349,6 +349,7 @@ function App() {
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
     const [maxPools, setMaxPools] = useState(5); // Default 5 pools
     const [discoveryMode, setDiscoveryMode] = useState<'SCOUT' | 'ANALYST' | 'PREBOND' | 'ALL'>('SCOUT');
+    const [liquiditySlippage, setLiquiditySlippage] = useState(100); // Default 1% (100 bps)
 
     // Take Profit / Stop Loss
     const [tp1Multiplier, setTp1Multiplier] = useState(7);
@@ -406,6 +407,7 @@ function App() {
         defaultValue?: string;
         onConfirm?: (val?: string) => void;
         onCancel?: () => void;
+        customBody?: React.ReactNode;
     }>({
         isOpen: false,
         title: '',
@@ -564,6 +566,7 @@ function App() {
                     if (s.mode !== undefined) setDiscoveryMode(s.mode);
                     if (s.maxAgeMinutes !== undefined) setMaxAgeMinutes(s.maxAgeMinutes);
                     if (s.baseToken !== undefined) setSelectedBaseToken(s.baseToken);
+                    if (s.liquiditySlippage !== undefined) setLiquiditySlippage(s.liquiditySlippage);
 
                     // TP/SL Settings
                     if (s.tp1Multiplier !== undefined) setTp1Multiplier(s.tp1Multiplier);
@@ -638,6 +641,7 @@ function App() {
                     volume1h: { min: minVolume, max: maxVolume },
                     volume24h: { min: minVolume24h, max: maxVolume24h },
                     liquidity: { min: minLiquidity, max: maxLiquidity },
+                    liquiditySlippage,
                     mcap: { min: minMcap, max: maxMcap },
                     mode: discoveryMode,
                     maxAgeMinutes,
@@ -700,6 +704,7 @@ function App() {
                     volume1h: { min: minVolume, max: maxVolume },
                     volume24h: { min: minVolume24h, max: maxVolume24h },
                     liquidity: { min: minLiquidity, max: maxLiquidity },
+                    liquiditySlippage,
                     mcap: { min: minMcap, max: maxMcap },
                     mode: discoveryMode,
                     maxAgeMinutes,
@@ -797,23 +802,98 @@ function App() {
     };
 
     const increaseLiquidity = async (poolId: string) => {
+        const pool = pools.find(p => p.poolId === poolId);
+        const baseToken = pool?.baseToken || 'LPPP';
+        const lpppPrice = baseTokenPrices[baseToken];
+
+        // Component for custom body to handle internal state
+        const IncreaseBody = ({ initialAmount, initialSlippage, onDataChange }: { initialAmount: string, initialSlippage: number, onDataChange: (amount: string, slippage: number) => void }) => {
+            const [amt, setAmt] = useState(initialAmount);
+            const [slp, setSlp] = useState(initialSlippage);
+
+            useEffect(() => {
+                onDataChange(amt, slp);
+            }, [amt, slp]);
+
+            const usdVal = solPrice && !isNaN(Number(amt)) ? (Number(amt) * solPrice).toFixed(2) : "0.00";
+            const tokenVal = lpppPrice && !isNaN(Number(amt)) && solPrice ? ((Number(amt) * solPrice) / lpppPrice).toFixed(2) : "0.00";
+
+            return (
+                <div className="space-y-4 pt-2">
+                    <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">SOL Amount</label>
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={amt}
+                                onChange={(e) => setAmt(e.target.value)}
+                                className="w-full bg-zinc-900 border border-primary/20 text-sm text-primary font-mono rounded-xl px-4 py-3 outline-none"
+                                placeholder="0.1"
+                                autoFocus
+                            />
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col items-end pointer-events-none">
+                                <span className="text-[10px] font-bold text-white/50">${usdVal} USD</span>
+                                <span className="text-[9px] font-medium text-primary/40">{tokenVal} {baseToken}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Transaction Slippage</label>
+                            <span className="text-[10px] text-primary/60 font-mono">{slp} BPS</span>
+                        </div>
+                        <input
+                            type="range"
+                            min="10"
+                            max="500"
+                            step="10"
+                            value={slp}
+                            onChange={(e) => setSlp(Number(e.target.value))}
+                            className="w-full accent-primary bg-zinc-800 rounded-lg appearance-none h-1.5 cursor-pointer"
+                        />
+                        <div className="flex justify-between text-[8px] text-muted-foreground font-black uppercase tracking-tighter">
+                            <span>0.1%</span>
+                            <span>1.0% (REC)</span>
+                            <span>5.0%</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        let currentAmount = "0.1";
+        let currentSlippage = liquiditySlippage;
+
         showModal({
             title: "Increase Liquidity",
-            message: "How much SOL would you like to add to this pool?",
+            message: `Adding more SOL to the ${pool?.token || 'pool'} Meteora vault.`,
             type: 'info',
-            showInput: true,
-            inputPlaceholder: "0.1",
-            defaultValue: "0.1",
             onCancel: closeModal,
-            onConfirm: async (amount) => {
-                if (!amount || isNaN(Number(amount))) return;
+            customBody: (
+                <IncreaseBody
+                    initialAmount={currentAmount}
+                    initialSlippage={currentSlippage}
+                    onDataChange={(a, s) => {
+                        currentAmount = a;
+                        currentSlippage = s;
+                    }}
+                />
+            ),
+            onConfirm: async () => {
+                if (!currentAmount || isNaN(Number(currentAmount))) return;
+
                 const res = await fetch(`${BACKEND_URL}/api/pool/increase`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'x-api-key': apiSecret
                     },
-                    body: JSON.stringify({ poolId, amountSol: Number(amount) })
+                    body: JSON.stringify({
+                        poolId,
+                        amountSol: Number(currentAmount),
+                        slippageBps: currentSlippage
+                    })
                 });
 
                 if (res.status === 401) {
@@ -1250,6 +1330,25 @@ function App() {
                                                 <option value={200}>2.00%</option>
                                             </select>
                                         </div>
+
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Liquidity Slippage</label>
+                                                <button onClick={() => showModal({ title: 'Liquidity Slippage', message: 'Slippage tolerance specifically for adding liquidity. Recommended 1% (100 bps) or higher for volatile pools to prevent "TooMuchSolRequired" (6002) errors.', type: 'info' })} className="text-zinc-500 hover:text-primary transition-colors" title="Learn more">
+                                                    <Info size={12} />
+                                                </button>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="number"
+                                                    value={liquiditySlippage}
+                                                    onChange={(e) => setLiquiditySlippage(Number(e.target.value))}
+                                                    className="w-16 bg-zinc-900 border border-primary/20 text-xs text-primary font-bold rounded px-2 py-1 outline-none text-right"
+                                                    disabled={running}
+                                                />
+                                                <span className="text-[10px] text-muted-foreground font-bold">BPS</span>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1504,6 +1603,7 @@ function App() {
                 defaultValue={modalConfig.defaultValue}
                 onConfirm={modalConfig.onConfirm}
                 onCancel={modalConfig.onCancel}
+                customBody={modalConfig.customBody}
             />
         </div>
     );

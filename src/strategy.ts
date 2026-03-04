@@ -1004,7 +1004,7 @@ export class StrategyManager {
      * Increases liquidity in a Meteora CP-AMM pool.
      * For LPPP/HTP pools: swaps SOL → base token first, then deposits base token side.
      */
-    async addMeteoraLiquidity(poolAddress: string, amountSol: number): Promise<{ success: boolean; txSig?: string; error?: string }> {
+    async addMeteoraLiquidity(poolAddress: string, amountSol: number, slippageBps: number = 100): Promise<{ success: boolean; txSig?: string; error?: string }> {
         const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const { PublicKey, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require("@solana/web3.js");
         const BN = require("bn.js");
@@ -1063,8 +1063,8 @@ export class StrategyManager {
                 sqrtPrice: poolState.sqrtPrice
             });
 
-            const slippageMult = new BN(101);
-            const slippageDiv = new BN(100);
+            const slippageMult = new BN(10000 + slippageBps);
+            const slippageDiv = new BN(10000);
 
             const maxAmountA = isDepositSideA
                 ? depositQuote.consumedInputAmount.mul(slippageMult).div(slippageDiv)
@@ -1095,16 +1095,31 @@ export class StrategyManager {
             const priorityFee = await this.getPriorityFee();
             tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
-            const txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
-                skipPreflight: true,
-                commitment: "confirmed"
-            });
+            let txSig: string;
+            try {
+                txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
+                    skipPreflight: true,
+                    commitment: "confirmed"
+                });
+            } catch (sendErr: any) {
+                if (sendErr.getLogs) {
+                    const logs = await sendErr.getLogs();
+                    console.error("[METEORA] Transaction Logs:", logs);
+                    SocketManager.emitLog(`[METEORA] Transaction Logs: ${logs.join('\n')}`, "error");
+                }
+                throw sendErr;
+            }
 
             // Verify on-chain success (skipPreflight can mask failures)
             const status = await this.connection.getSignatureStatus(txSig);
             if (status?.value?.err) {
-                console.error(`[METEORA] Add liquidity tx confirmed but FAILED: ${JSON.stringify(status.value.err)}`);
-                return { success: false, txSig, error: `Transaction reverted: ${JSON.stringify(status.value.err)}` };
+                let errorMsg = JSON.stringify(status.value.err);
+                if (errorMsg.includes("6002")) {
+                    errorMsg = "Slippage Tolerance Exceeded (Custom Error 6002)";
+                }
+                console.error(`[METEORA] Add liquidity tx confirmed but FAILED: ${errorMsg}`);
+                SocketManager.emitLog(`[BUY] Liquidity injection failed: ${errorMsg}`, "error");
+                return { success: false, txSig, error: errorMsg };
             }
 
             console.log(`[METEORA] Liquidity Increased: https://solscan.io/tx/${txSig}`);

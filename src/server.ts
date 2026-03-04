@@ -36,6 +36,7 @@ function sanitizeSettings(raw: any): BotSettings {
         meteoraFeeBps: num(raw.meteoraFeeBps, 200, 0, 10000),
         maxPools: num(raw.maxPools, 5, 1, 100),
         slippage: num(raw.slippage, 10, 0, 100),
+        liquiditySlippage: num(raw.liquiditySlippage, 100, 0, 10000),
         volume5m: range(raw.volume5m, 0, 0),
         volume1h: range(raw.volume1h, 0, 0),
         volume24h: range(raw.volume24h, 0, 0),
@@ -265,9 +266,9 @@ app.post("/api/pool/withdraw", async (req, res) => {
 });
 
 app.post("/api/pool/increase", async (req, res) => {
-    const { poolId, amountSol } = req.body;
+    const { poolId, amountSol, slippageBps } = req.body;
     if (!poolId || !amountSol) return res.status(400).json({ error: "Missing poolId or amountSol" });
-    const result = await botManager.increaseLiquidity(poolId, amountSol);
+    const result = await botManager.increaseLiquidity(poolId, amountSol, slippageBps);
     res.json(result);
 });
 

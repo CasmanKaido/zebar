@@ -98,6 +98,9 @@ console.log("Wallet Public Key:", wallet.publicKey.toBase58());
 // Standard is 20 (0.2%)
 export const METEORA_POOL_FEE_BPS = parseInt(process.env.METEORA_POOL_FEE_BPS || "20");
 
+// Liquidity addition slippage in Basis Points (100 bps = 1%)
+export const LIQUIDITY_SLIPPAGE_BPS = parseInt(process.env.LIQUIDITY_SLIPPAGE_BPS || "100");
+
 // Jito Configuration
 export const JITO_BLOCK_ENGINE_URL = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
 export const JITO_TIP_LAMPORTS = parseInt(process.env.JITO_TIP_LAMPORTS || "100000"); // 0.0001 SOL

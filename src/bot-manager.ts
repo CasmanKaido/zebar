@@ -47,6 +47,7 @@ export class BotManager {
         meteoraFeeBps: 200,
         maxPools: 5,
         slippage: 10,
+        liquiditySlippage: 100,
         volume5m: { min: 2000, max: 0 },
         volume1h: { min: 25000, max: 0 },
         volume24h: { min: 100000, max: 0 },
@@ -1550,9 +1551,11 @@ export class BotManager {
         }
     }
 
-    async increaseLiquidity(poolId: string, amountSol: number) {
+    async increaseLiquidity(poolId: string, amountSol: number, slippageBps?: number) {
         SocketManager.emitLog(`[MANUAL] Increasing liquidity by ${amountSol} SOL in ${poolId.slice(0, 8)}...`, "warning");
-        const result = await this.strategy.addMeteoraLiquidity(poolId, amountSol);
+        const bps = slippageBps || this.settings.liquiditySlippage || 100;
+        const result = await this.strategy.addMeteoraLiquidity(poolId, amountSol, bps);
+
         if (result.success) {
             SocketManager.emitLog(`[SUCCESS] Added more liquidity!`, "success");
         } else {

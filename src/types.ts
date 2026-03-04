@@ -34,6 +34,7 @@ export interface BotSettings {
     meteoraFeeBps: number; // in Basis Points (e.g. 200 = 2%)
     maxPools: number; // Max pools to create before auto-stop
     slippage: number; // in % (e.g. 10)
+    liquiditySlippage: number; // in Basis Points (e.g. 100 = 1%)
     volume5m: { min: number; max: number };
     volume1h: { min: number; max: number };
     volume24h: { min: number; max: number };

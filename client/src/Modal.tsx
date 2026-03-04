@@ -16,6 +16,7 @@ interface ModalProps {
     secondaryCalculation?: (val: string, solPrice?: number | null, lpppPrice?: number | null) => React.ReactNode;
     solPrice?: number | null;
     lpppPrice?: number | null;
+    customBody?: React.ReactNode;
 }
 
 export const Modal = ({
@@ -31,6 +32,7 @@ export const Modal = ({
     defaultValue = "",
     solPrice,
     lpppPrice,
+    customBody,
     ...props
 }: ModalProps) => {
     const [localInput, setLocalInput] = useState(defaultValue);
@@ -108,6 +110,12 @@ export const Modal = ({
                                 {message}
                             </p>
                         </div>
+
+                        {customBody && (
+                            <div className="mb-6">
+                                {customBody}
+                            </div>
+                        )}
 
                         {showInput && (
                             <div className="mb-6">
