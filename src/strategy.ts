@@ -1006,7 +1006,7 @@ export class StrategyManager {
      */
     async addMeteoraLiquidity(poolAddress: string, amountSol: number, slippageBps: number = 100): Promise<{ success: boolean; txSig?: string; error?: string }> {
         const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
-        const { PublicKey, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require("@solana/web3.js");
+        const { PublicKey, sendAndConfirmTransaction, LAMPORTS_PER_SOL, ComputeBudgetProgram } = require("@solana/web3.js");
         const BN = require("bn.js");
 
         console.log(`[STRATEGY] Increasing liquidity by ${amountSol} SOL in pool: ${poolAddress}`);
@@ -1022,39 +1022,46 @@ export class StrategyManager {
             const pos = userPositions[0];
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
-            // Determine which side is the base token (SOL, LPPP, or HTP)
+            // Determine token sides
             const tokenAMintStr = poolState.tokenAMint.toBase58();
             const tokenBMintStr = poolState.tokenBMint.toBase58();
             const baseMints = Object.values(BASE_TOKENS).map((m: PublicKey) => m.toBase58());
-            const isTokenASOL = poolState.tokenAMint.equals(SOL_MINT);
-            const isTokenBSOL = poolState.tokenBMint.equals(SOL_MINT);
+
             const isTokenABase = baseMints.includes(tokenAMintStr);
             const isTokenBBase = baseMints.includes(tokenBMintStr);
 
             let depositAmountBN: any;
+            let otherAmountBN: any;
             let isDepositSideA: boolean;
 
-            // STRATEGY: 50/50 Swap-then-Deposit for dual-sided pools
-            // 1. Swap roughly half of the input SOL to the base token
-            // 2. Deposit the other half of SOL + the received base token
+            // STRATEGY: Universal 50/50 Swap-then-Deposit
+            // 1. Swap 50% of input SOL to the base token (LPPP/HTP)
+            // 2. If the other side is NOT SOL, swap the other 50% SOL to that token too.
             const swapSolAmount = amountSol / 2;
             const remainingSolAmount = amountSol - swapSolAmount;
 
-            if (isTokenABase || isTokenBBase) {
-                const baseMint = isTokenABase ? poolState.tokenAMint : poolState.tokenBMint;
-                isDepositSideA = isTokenABase;
+            const baseMint = isTokenABase ? poolState.tokenAMint : (isTokenBBase ? poolState.tokenBMint : null);
+            if (!baseMint) return { success: false, error: "Pool has no recognized base token (LPPP/HTP)" };
 
-                console.log(`[METEORA] Splitting ${amountSol} SOL: swapping ${swapSolAmount.toFixed(4)} SOL → base, keeping ${remainingSolAmount.toFixed(4)} SOL for deposit.`);
-                const swapResult = await this.swapToken(baseMint, swapSolAmount, 10);
-                if (!swapResult.success) {
-                    return { success: false, error: `SOL → base token swap failed: ${swapResult.error}` };
-                }
-                console.log(`[METEORA] Swap success: received ${swapResult.uiAmount} base tokens`);
+            isDepositSideA = isTokenABase;
+            const otherMint = isDepositSideA ? poolState.tokenBMint : poolState.tokenAMint;
+            const isOtherSideSOL = otherMint.equals(SOL_MINT);
 
-                // Use the received base token as the anchor for the quote
-                depositAmountBN = new BN((swapResult.amount * 99n / 100n).toString());
+            // Step 1: Swap for Base Token
+            console.log(`[METEORA] Swapping ${swapSolAmount.toFixed(4)} SOL → Base Token (${isDepositSideA ? "A" : "B"})...`);
+            const swapBase = await this.swapToken(baseMint, swapSolAmount, 10);
+            if (!swapBase.success) return { success: false, error: `SOL → base token swap failed: ${swapBase.error}` };
+            depositAmountBN = new BN((swapBase.amount * 99n / 100n).toString());
+
+            // Step 2: Handle Other Side
+            if (isOtherSideSOL) {
+                console.log(`[METEORA] Other side is SOL. Using remaining ${remainingSolAmount.toFixed(4)} SOL.`);
+                otherAmountBN = new BN(Math.floor(remainingSolAmount * 0.95 * LAMPORTS_PER_SOL));
             } else {
-                return { success: false, error: "Pool has no recognized base token (SOL/LPPP/HTP)" };
+                console.log(`[METEORA] Other side is NOT SOL. Swapping ${remainingSolAmount.toFixed(4)} SOL → Quote Token...`);
+                const swapOther = await this.swapToken(otherMint, remainingSolAmount, 10);
+                if (!swapOther.success) return { success: false, error: `SOL → quote token swap failed: ${swapOther.error}` };
+                otherAmountBN = new BN((swapOther.amount * 99n / 100n).toString());
             }
 
             let depositQuote = cpAmm.getDepositQuote({
@@ -1065,15 +1072,16 @@ export class StrategyManager {
                 sqrtPrice: poolState.sqrtPrice
             });
 
-            // SCALE CHECK: If the pool ratio requires more SOL than we have remaining, scale down the transaction
+            // SCALE CHECK: Use 1e9 precision to avoid rounding down to 0% scaling
             const requiredOtherSide = depositQuote.outputAmount;
-            const availableOtherSide = new BN(Math.floor(remainingSolAmount * 0.95 * LAMPORTS_PER_SOL)); // 5% buffer for fees/slippage
+            const availableOtherSide = otherAmountBN;
 
             if (requiredOtherSide.gt(availableOtherSide)) {
-                const scalingFactor = Number(availableOtherSide.toString()) / Number(requiredOtherSide.toString());
-                console.log(`[METEORA] Required side (${requiredOtherSide.toString()}) > Available (${availableOtherSide.toString()}). Scaling down by ${(scalingFactor * 100).toFixed(1)}%`);
+                const precision = 1_000_000_000;
+                const scalingFactor = Math.floor((Number(availableOtherSide.toString()) / Number(requiredOtherSide.toString())) * precision);
+                console.log(`[METEORA] Required side (${requiredOtherSide.toString()}) > Available (${availableOtherSide.toString()}). Scaling down by ${((scalingFactor / precision) * 100).toFixed(4)}%`);
 
-                depositAmountBN = depositAmountBN.mul(new BN(Math.floor(scalingFactor * 10000))).div(new BN(10000));
+                depositAmountBN = depositAmountBN.mul(new BN(scalingFactor)).div(new BN(precision));
 
                 // Re-calculate quote with scaled amount
                 depositQuote = cpAmm.getDepositQuote({
@@ -1139,12 +1147,12 @@ export class StrategyManager {
                 throw sendErr;
             }
 
-            // Verify on-chain success (skipPreflight can mask failures)
+            // Verify on-chain success
             const status = await this.connection.getSignatureStatus(txSig);
             if (status?.value?.err) {
                 let errorMsg = JSON.stringify(status.value.err);
                 if (errorMsg.includes("6002")) {
-                    errorMsg = "Slippage Tolerance Exceeded (Custom Error 6002)";
+                    errorMsg = "Slippage Tolerance Exceeded (6002). The pool price moved too fast. Try increasing slippage in settings.";
                 }
                 console.error(`[METEORA] Add liquidity tx confirmed but FAILED: ${errorMsg}`);
                 SocketManager.emitLog(`[BUY] Liquidity injection failed: ${errorMsg}`, "error");
@@ -1162,7 +1170,6 @@ export class StrategyManager {
 
             console.error(`[METEORA] Increase Liquidity Error: ${errorMsg}`);
 
-            // Log essential info without triggering gated getters like .transactionLogs
             if (error.signature) {
                 console.error(`[METEORA] Signature: ${error.signature}`);
             }
