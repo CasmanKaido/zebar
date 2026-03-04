@@ -1111,7 +1111,10 @@ export class StrategyManager {
                 });
             }
 
-            const slippageMult = new BN(10000 + slippageBps);
+            // SLIPPAGE: Use a minimum of 3% (300 bps) buffer for the maxAmount fields
+            // Liquidity is very sensitive to price moves + Token-2022 transfer fees.
+            const effectiveSlippage = Math.max(slippageBps, 300);
+            const slippageMult = new BN(10000 + effectiveSlippage);
             const slippageDiv = new BN(10000);
 
             // If Quote is A (isQuoteA = true), then Quote = consumedInput, Base = output
@@ -1147,22 +1150,14 @@ export class StrategyManager {
             const priorityFee = await this.getPriorityFee();
             tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityFee }));
 
-            let txSig;
+            let txSig: string;
             try {
                 txSig = await sendAndConfirmTransaction(this.connection, tx, [this.wallet], {
                     skipPreflight: true,
-                    commitment: 'confirmed'
+                    commitment: "confirmed"
                 });
             } catch (sendErr: any) {
-                if (sendErr.getLogs) {
-                    try {
-                        const logs = await sendErr.getLogs();
-                        console.error('[METEORA] Transaction Logs:', logs);
-                        SocketManager.emitLog(`[METEORA] Transaction Logs: ${logs.join('\n')}`, 'error');
-                    } catch (logErr: any) {
-                        console.error('[METEORA] Failed to fetch transaction logs:', logErr.message);
-                    }
-                }
+                // Return original signature if available or rethrow
                 throw sendErr;
             }
 
