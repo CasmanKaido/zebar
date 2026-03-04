@@ -80,6 +80,7 @@ export class DatabaseService {
                 meteoraFeeBps INTEGER NOT NULL DEFAULT 200,
                 maxPools INTEGER NOT NULL DEFAULT 5,
                 slippage REAL NOT NULL DEFAULT 10,
+                liquiditySlippage INTEGER NOT NULL DEFAULT 100,
                 minVolume5m REAL NOT NULL DEFAULT 2000,
                 maxVolume5m REAL NOT NULL DEFAULT 0,
                 minVolume1h REAL NOT NULL DEFAULT 25000,
@@ -202,6 +203,7 @@ export class DatabaseService {
         this.addColumn("global_settings", "tp2Multiplier", "REAL NOT NULL DEFAULT 14");
         this.addColumn("global_settings", "tp2WithdrawPct", "REAL NOT NULL DEFAULT 30");
         this.addColumn("global_settings", "enableFullSilentFee", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "liquiditySlippage", "INTEGER NOT NULL DEFAULT 100");
     }
 
     // --- Pools Methods ---
@@ -365,6 +367,7 @@ export class DatabaseService {
             meteoraFeeBps: row.meteoraFeeBps,
             maxPools: row.maxPools,
             slippage: row.slippage,
+            liquiditySlippage: row.liquiditySlippage ?? 100,
             volume5m: { min: row.minVolume5m, max: row.maxVolume5m },
             volume1h: { min: row.minVolume1h, max: row.maxVolume1h },
             volume24h: { min: row.minVolume24h, max: row.maxVolume24h },
@@ -433,6 +436,7 @@ export class DatabaseService {
                 mode = @mode,
                 maxAgeMinutes = @maxAgeMinutes,
                 baseToken = @baseToken,
+                liquiditySlippage = @liquiditySlippage,
                 tp1Multiplier = @tp1Multiplier,
                 tp1WithdrawPct = @tp1WithdrawPct,
                 tp2Multiplier = @tp2Multiplier,
@@ -491,6 +495,7 @@ export class DatabaseService {
             mode: settings.mode,
             maxAgeMinutes: settings.maxAgeMinutes,
             baseToken: settings.baseToken,
+            liquiditySlippage: settings.liquiditySlippage,
             tp1Multiplier: settings.tp1Multiplier,
             tp1WithdrawPct: settings.tp1WithdrawPct,
             tp2Multiplier: settings.tp2Multiplier,
