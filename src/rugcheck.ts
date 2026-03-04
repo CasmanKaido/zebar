@@ -124,6 +124,11 @@ export class SafetyService {
             };
         };
 
+        // Check 0: Rugged flag
+        if (report.rugged) {
+            return reject("Token is flagged as rugged in RugCheck", ["Rugged flag set"], "unlocked");
+        }
+
         // Check 1: Bundle % (top holder concentration)
         const topHolder = report.topHolders?.[0];
         const bundlePct = topHolder?.percent || 0;
@@ -135,14 +140,26 @@ export class SafetyService {
         }
 
         // Check 2: Locked Liquidity (from lockers array)
-        const hasLockedLP = report.lockers && report.lockers.length > 0;
+        const lockers = report.lockers || [];
+        const totalLockedRatio = lockers.reduce((sum, l) => sum + (l.percentage || 0), 0);
+        const hasSubstantialLock = totalLockedRatio >= 90;
+
         const isSafeCurve = report.markets?.some((m: any) =>
             (m.marketType === "pump_fun_amm" && m.lp?.lpLockedPct > 90) ||
             (m.marketType === "meteora" && m.lp?.lpLockedPct > 90)
         );
 
-        if (!hasLockedLP && !isSafeCurve) {
-            return reject(`LP not locked (no lockers detected)`, [`LP not locked`], "unlocked");
+        // STRICTION: If SCOUT mode, we skip anything with "unknown" or "unlocked"
+        // Also ensure that if it's "safe curve", there isn't a massive unlocked Raydium pool
+        const raydiumMarket = report.markets?.find((m: any) => m.marketType === "raydium");
+        const hasMassiveRaydium = raydiumMarket && raydiumMarket.liquidity > (report.totalMarketLiquidity * 0.4); // Raydium has >40% of liq
+
+        if (!hasSubstantialLock && !isSafeCurve) {
+            return reject(`LP not locked (Locked: ${totalLockedRatio.toFixed(1)}%, Threshold: 90%)`, [`LP not locked`], "unlocked");
+        }
+
+        if (isSafeCurve && hasMassiveRaydium && (!raydiumMarket.lp?.lpLockedPct || raydiumMarket.lp.lpLockedPct < 90)) {
+            return reject(`LP split detected: Safe curve but mass unlocked Raydium pool exists`, [`Unlocked secondary market`], "unlocked");
         }
 
         // Check 3: Mint Authority (toggleable)
@@ -186,7 +203,7 @@ export class SafetyService {
         }
 
         // ── PASS: All checks passed ──
-        const lpReason = isSafeCurve && !hasLockedLP ? 'Curve/Meteora Locked' : 'Locked';
+        const lpReason = isSafeCurve && !hasSubstantialLock ? 'Curve/Meteora Locked' : 'Locked';
         SocketManager.emitLog(
             `[SAFETY] ✅ ${tag}... Safety PASS (Bundle: ${bundlePct.toFixed(1)}%, LP: ${lpReason}, Auth: ${mintAuthStatus}/${freezeAuthStatus}, Score: ${score.toFixed(2)})`,
             "success"
