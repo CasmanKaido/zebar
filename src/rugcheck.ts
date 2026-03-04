@@ -130,7 +130,8 @@ export class SafetyService {
         }
 
         // Check 1: Bundle % (top holder concentration)
-        const topHolder = report.topHolders?.[0];
+        const topHolders = Array.isArray(report.topHolders) ? report.topHolders : [];
+        const topHolder = topHolders[0];
         const bundlePct = topHolder?.percent || 0;
         if (bundlePct > MAX_BUNDLE_PCT) {
             return reject(
@@ -140,18 +141,19 @@ export class SafetyService {
         }
 
         // Check 2: Locked Liquidity (from lockers array)
-        const lockers = report.lockers || [];
+        const lockers = Array.isArray(report.lockers) ? report.lockers : [];
         const totalLockedRatio = lockers.reduce((sum, l) => sum + (l.percentage || 0), 0);
         const hasSubstantialLock = totalLockedRatio >= 90;
 
-        const isSafeCurve = report.markets?.some((m: any) =>
+        const markets = Array.isArray(report.markets) ? report.markets : [];
+        const isSafeCurve = markets.some((m: any) =>
             (m.marketType === "pump_fun_amm" && m.lp?.lpLockedPct > 90) ||
             (m.marketType === "meteora" && m.lp?.lpLockedPct > 90)
         );
 
         // STRICTION: If SCOUT mode, we skip anything with "unknown" or "unlocked"
         // Also ensure that if it's "safe curve", there isn't a massive unlocked Raydium pool
-        const raydiumMarket = report.markets?.find((m: any) => m.marketType === "raydium");
+        const raydiumMarket = markets.find((m: any) => m.marketType === "raydium");
         const hasMassiveRaydium = raydiumMarket && raydiumMarket.liquidity > (report.totalMarketLiquidity * 0.4); // Raydium has >40% of liq
 
         if (!hasSubstantialLock && !isSafeCurve) {
