@@ -1103,9 +1103,13 @@ export class StrategyManager {
                 });
             } catch (sendErr: any) {
                 if (sendErr.getLogs) {
-                    const logs = await sendErr.getLogs();
-                    console.error("[METEORA] Transaction Logs:", logs);
-                    SocketManager.emitLog(`[METEORA] Transaction Logs: ${logs.join('\n')}`, "error");
+                    try {
+                        const logs = await sendErr.getLogs();
+                        console.error("[METEORA] Transaction Logs:", logs);
+                        SocketManager.emitLog(`[METEORA] Transaction Logs: ${logs.join('\n')}`, "error");
+                    } catch (logErr: any) {
+                        console.error("[METEORA] Failed to fetch transaction logs:", logErr.message);
+                    }
                 }
                 throw sendErr;
             }
