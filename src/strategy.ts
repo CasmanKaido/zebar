@@ -1034,34 +1034,56 @@ export class StrategyManager {
             let depositAmountBN: any;
             let isDepositSideA: boolean;
 
-            if (isTokenASOL || isTokenBSOL) {
-                // SOL pool — deposit SOL directly
-                depositAmountBN = new BN(Math.floor(amountSol * LAMPORTS_PER_SOL));
-                isDepositSideA = isTokenASOL;
-            } else if (isTokenABase || isTokenBBase) {
-                // LPPP/HTP pool — swap SOL → base token first, then deposit
+            // STRATEGY: 50/50 Swap-then-Deposit for dual-sided pools
+            // 1. Swap roughly half of the input SOL to the base token
+            // 2. Deposit the other half of SOL + the received base token
+            const swapSolAmount = amountSol / 2;
+            const remainingSolAmount = amountSol - swapSolAmount;
+
+            if (isTokenABase || isTokenBBase) {
                 const baseMint = isTokenABase ? poolState.tokenAMint : poolState.tokenBMint;
                 isDepositSideA = isTokenABase;
 
-                console.log(`[METEORA] Pool uses ${isTokenABase ? tokenAMintStr.slice(0, 8) : tokenBMintStr.slice(0, 8)} as base. Swapping ${amountSol} SOL → base token...`);
-                const swapResult = await this.swapToken(baseMint, amountSol, 10);
+                console.log(`[METEORA] Splitting ${amountSol} SOL: swapping ${swapSolAmount.toFixed(4)} SOL → base, keeping ${remainingSolAmount.toFixed(4)} SOL for deposit.`);
+                const swapResult = await this.swapToken(baseMint, swapSolAmount, 10);
                 if (!swapResult.success) {
                     return { success: false, error: `SOL → base token swap failed: ${swapResult.error}` };
                 }
-                console.log(`[METEORA] Swap success: received ${swapResult.uiAmount} base tokens (${swapResult.amount} raw)`);
-                // Use 99% of received amount to account for rounding
+                console.log(`[METEORA] Swap success: received ${swapResult.uiAmount} base tokens`);
+
+                // Use the received base token as the anchor for the quote
                 depositAmountBN = new BN((swapResult.amount * 99n / 100n).toString());
             } else {
                 return { success: false, error: "Pool has no recognized base token (SOL/LPPP/HTP)" };
             }
 
-            const depositQuote = cpAmm.getDepositQuote({
+            let depositQuote = cpAmm.getDepositQuote({
                 inAmount: depositAmountBN,
                 isTokenA: isDepositSideA,
                 minSqrtPrice: poolState.sqrtMinPrice,
                 maxSqrtPrice: poolState.sqrtMaxPrice,
                 sqrtPrice: poolState.sqrtPrice
             });
+
+            // SCALE CHECK: If the pool ratio requires more SOL than we have remaining, scale down the transaction
+            const requiredOtherSide = depositQuote.outputAmount;
+            const availableOtherSide = new BN(Math.floor(remainingSolAmount * 0.95 * LAMPORTS_PER_SOL)); // 5% buffer for fees/slippage
+
+            if (requiredOtherSide.gt(availableOtherSide)) {
+                const scalingFactor = Number(availableOtherSide.toString()) / Number(requiredOtherSide.toString());
+                console.log(`[METEORA] Required side (${requiredOtherSide.toString()}) > Available (${availableOtherSide.toString()}). Scaling down by ${(scalingFactor * 100).toFixed(1)}%`);
+
+                depositAmountBN = depositAmountBN.mul(new BN(Math.floor(scalingFactor * 10000))).div(new BN(10000));
+
+                // Re-calculate quote with scaled amount
+                depositQuote = cpAmm.getDepositQuote({
+                    inAmount: depositAmountBN,
+                    isTokenA: isDepositSideA,
+                    minSqrtPrice: poolState.sqrtMinPrice,
+                    maxSqrtPrice: poolState.sqrtMaxPrice,
+                    sqrtPrice: poolState.sqrtPrice
+                });
+            }
 
             const slippageMult = new BN(10000 + slippageBps);
             const slippageDiv = new BN(10000);
@@ -1139,12 +1161,15 @@ export class StrategyManager {
             }
 
             console.error(`[METEORA] Increase Liquidity Error: ${errorMsg}`);
-            // Don't log the full error object if it's a SendTransactionError to avoid triggering rejected Promise logs
-            if (error.name === "SendTransactionError") {
+
+            // Log essential info without triggering gated getters like .transactionLogs
+            if (error.signature) {
                 console.error(`[METEORA] Signature: ${error.signature}`);
-            } else {
-                console.error(error);
             }
+            if (error.transactionMessage) {
+                console.error(`[METEORA] Message: ${error.transactionMessage}`);
+            }
+
             return { success: false, error: errorMsg };
         }
     }
