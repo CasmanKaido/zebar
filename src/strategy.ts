@@ -1074,6 +1074,9 @@ export class StrategyManager {
                 ? depositQuote.outputAmount.mul(slippageMult).div(slippageDiv)
                 : depositQuote.consumedInputAmount.mul(slippageMult).div(slippageDiv);
 
+            console.log(`[METEORA] Deposit Quote: LP Delta: ${depositQuote.liquidityDelta.toString()} | Consumed: ${depositQuote.consumedInputAmount.toString()} | Output: ${depositQuote.outputAmount.toString()}`);
+            console.log(`[METEORA] Max Amounts (Slippage ${slippageBps} bps): A: ${maxAmountA.toString()} | B: ${maxAmountB.toString()}`);
+
             const tx = await cpAmm.addLiquidity({
                 owner: this.wallet.publicKey,
                 pool: new PublicKey(poolAddress),
@@ -1130,8 +1133,19 @@ export class StrategyManager {
             return { success: true, txSig };
 
         } catch (error: any) {
-            console.error(`[METEORA] Increase Liquidity Error:`, error);
-            return { success: false, error: error.message };
+            let errorMsg = error.message || "Unknown error";
+            if (errorMsg.includes("6002") || (error.transactionMessage && error.transactionMessage.includes("6002"))) {
+                errorMsg = "Slippage tolerance exceeded (6002). The pool price moved too fast. Try increasing slippage in settings.";
+            }
+
+            console.error(`[METEORA] Increase Liquidity Error: ${errorMsg}`);
+            // Don't log the full error object if it's a SendTransactionError to avoid triggering rejected Promise logs
+            if (error.name === "SendTransactionError") {
+                console.error(`[METEORA] Signature: ${error.signature}`);
+            } else {
+                console.error(error);
+            }
+            return { success: false, error: errorMsg };
         }
     }
 
