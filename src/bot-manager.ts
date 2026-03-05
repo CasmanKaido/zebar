@@ -1615,10 +1615,10 @@ export class BotManager {
             }
         }
 
-        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)} to Hot Wallet...`, "warning");
-        const result = await this.strategy.claimMeteoraFees(poolId);
+        SocketManager.emitLog(`[MANUAL] Claiming fees from ${poolId.slice(0, 8)} to ${this.settings.treasuryWallet ? `Treasury (${this.settings.treasuryWallet.slice(0, 8)})` : "Hot Wallet"}...`, "warning");
+        const result = await this.strategy.claimMeteoraFees(poolId, false, this.settings.treasuryWallet);
         if (result.success) {
-            SocketManager.emitLog(`[SUCCESS] Fees harvested to Hot Wallet!`, "success");
+            SocketManager.emitLog(`[SUCCESS] Fees harvested ${this.settings.treasuryWallet ? "to Treasury" : "to Hot Wallet"}!`, "success");
             await this.refreshPool(poolId);
         } else {
             SocketManager.emitLog(`[ERROR] Fee claim failed: ${result.error}`, "error");

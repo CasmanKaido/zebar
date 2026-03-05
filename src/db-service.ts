@@ -135,7 +135,8 @@ export class DatabaseService {
                 tp2Multiplier REAL NOT NULL DEFAULT 14,
                 tp2WithdrawPct REAL NOT NULL DEFAULT 30,
                 enableFullSilentFee INTEGER NOT NULL DEFAULT 0,
-                breakEvenMinutes INTEGER NOT NULL DEFAULT 0
+                breakEvenMinutes INTEGER NOT NULL DEFAULT 0,
+                treasuryWallet TEXT
             );
 
             -- Add index for symbol lookups if it doesn't exist
@@ -416,7 +417,8 @@ export class DatabaseService {
             prebondMinVolume24h: row.prebondMinVolume24h ?? 0,
             prebondMaxVolume24h: row.prebondMaxVolume24h ?? 0,
             enableFullSilentFee: row.enableFullSilentFee !== undefined ? !!row.enableFullSilentFee : false,
-            breakEvenMinutes: row.breakEvenMinutes ?? 0
+            breakEvenMinutes: row.breakEvenMinutes ?? 0,
+            treasuryWallet: row.treasuryWallet || undefined
         };
     }
 
@@ -478,7 +480,8 @@ export class DatabaseService {
                 prebondMinVolume24h = @prebondMinVolume24h,
                 prebondMaxVolume24h = @prebondMaxVolume24h,
                 enableFullSilentFee = @enableFullSilentFee,
-                breakEvenMinutes = @breakEvenMinutes
+                breakEvenMinutes = @breakEvenMinutes,
+                treasuryWallet = @treasuryWallet
             WHERE id = 1
         `);
 
@@ -538,7 +541,8 @@ export class DatabaseService {
             prebondMinVolume24h: settings.prebondMinVolume24h,
             prebondMaxVolume24h: settings.prebondMaxVolume24h,
             enableFullSilentFee: settings.enableFullSilentFee ? 1 : 0,
-            breakEvenMinutes: settings.breakEvenMinutes || 0
+            breakEvenMinutes: settings.breakEvenMinutes || 0,
+            treasuryWallet: settings.treasuryWallet || null
         });
     }
 

@@ -81,7 +81,8 @@ function sanitizeSettings(raw: any): BotSettings {
         prebondMinVolume24h: num(raw.prebondMinVolume24h, 0, 0),
         prebondMaxVolume24h: num(raw.prebondMaxVolume24h, 0, 0),
         enableFullSilentFee: bool(raw.enableFullSilentFee, false),
-        breakEvenMinutes: num(raw.breakEvenMinutes, 0, 0)
+        breakEvenMinutes: num(raw.breakEvenMinutes, 0, 0),
+        treasuryWallet: typeof raw.treasuryWallet === "string" ? raw.treasuryWallet : undefined
     };
 }
 

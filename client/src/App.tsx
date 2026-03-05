@@ -392,6 +392,7 @@ function App() {
     const [prebondMaxVolume24h, setPrebondMaxVolume24h] = useState(0);
     const [enableFullSilentFee, setEnableFullSilentFee] = useState(false);
     const [breakEvenMinutes, setBreakEvenMinutes] = useState(0);
+    const [treasuryWallet, setTreasuryWallet] = useState<string | undefined>(undefined);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -609,6 +610,7 @@ function App() {
                     if (s.prebondMaxVolume24h !== undefined) setPrebondMaxVolume24h(s.prebondMaxVolume24h);
                     if (s.enableFullSilentFee !== undefined) setEnableFullSilentFee(s.enableFullSilentFee);
                     if (s.breakEvenMinutes !== undefined) setBreakEvenMinutes(s.breakEvenMinutes);
+                    if (s.treasuryWallet !== undefined) setTreasuryWallet(s.treasuryWallet);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -667,7 +669,8 @@ function App() {
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
                     prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
                     enableFullSilentFee,
-                    breakEvenMinutes
+                    breakEvenMinutes,
+                    treasuryWallet
                 })
             });
 
@@ -731,7 +734,8 @@ function App() {
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
                     prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
                     enableFullSilentFee,
-                    breakEvenMinutes
+                    breakEvenMinutes,
+                    treasuryWallet
                 })
             });
 
@@ -1414,6 +1418,21 @@ function App() {
                                     <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
                                         <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Break-Even Safety</span>
                                         <SettingInput label="Break-Even Time (min)" value={breakEvenMinutes} onChange={setBreakEvenMinutes} disabled={running} unit="min" subtext="Age limit if ROI >= 0%" />
+                                    </div>
+                                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Fee Redirection</span>
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs text-white/40 flex justify-between">Treasury Wallet <span className="text-[10px] font-mono text-white/20">Strategy #4</span></label>
+                                            <input
+                                                type="text"
+                                                value={treasuryWallet || ''}
+                                                onChange={(e) => setTreasuryWallet(e.target.value)}
+                                                disabled={running}
+                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50"
+                                                placeholder="Solana Address"
+                                            />
+                                            <p className="text-[10px] text-white/30 italic">Direct redirect for claims</p>
+                                        </div>
                                     </div>
                                     <div className="h-px bg-white/5 my-2"></div>
                                     <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">

@@ -1921,11 +1921,11 @@ export class StrategyManager {
      * @param poolAddress The pool address.
      * @param bundleMode If true, returns the transaction instead of sending it.
      */
-    async claimMeteoraFees(poolAddress: string, bundleMode: boolean = false): Promise<{ success: boolean; txSig?: string; transaction?: Transaction; error?: string }> {
+    async claimMeteoraFees(poolAddress: string, bundleMode: boolean = false, recipient?: string): Promise<{ success: boolean; txSig?: string; transaction?: Transaction; error?: string }> {
         const { CpAmm, getTokenProgram } = require("@meteora-ag/cp-amm-sdk");
         const { PublicKey, sendAndConfirmTransaction } = require("@solana/web3.js");
 
-        console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}${bundleMode ? " (BUNDLE MODE)" : ""}`);
+        console.log(`[STRATEGY] Claiming fees from pool: ${poolAddress}${bundleMode ? " (BUNDLE MODE)" : ""}${recipient ? ` (REDIRECT -> ${recipient.slice(0, 8)})` : ""}`);
         try {
             const cpAmm = new CpAmm(this.connection);
             const poolPubkey = new PublicKey(poolAddress);
@@ -1938,9 +1938,7 @@ export class StrategyManager {
             const pos = userPositions[0];
             const poolState = await cpAmm.fetchPoolState(poolPubkey);
 
-            // Safety check: Calculate actual pending fees using accumulator math (DAMM V2)
-            // feeAPending/feeBPending on the position are NOT updated until an on-chain claim,
-            // so we must compute: (globalFeePerLiquidity - checkpoint) * liquidity >> 128
+            // ... computation logic ...
             const parseBigIntLE = (arr: number[]): bigint => {
                 let res = 0n;
                 for (let i = 0; i < arr.length; i++) res += BigInt(arr[i]) << BigInt(i * 8);
@@ -1964,7 +1962,6 @@ export class StrategyManager {
                 const deltaB = parseBigIntLE(globalFeeB_Array) - parseBigIntLE(checkpointB_Array);
                 if (deltaB > 0n && (deltaB * liquidity) >> 128n > 0n) hasFees = true;
             }
-            // Fallback: also check the on-chain pending fields
             if (!hasFees && !pos.positionState.feeAPending.isZero()) hasFees = true;
             if (!hasFees && !pos.positionState.feeBPending.isZero()) hasFees = true;
 
@@ -1983,7 +1980,8 @@ export class StrategyManager {
                 tokenAVault: poolState.tokenAVault,
                 tokenBVault: poolState.tokenBVault,
                 tokenAProgram: getTokenProgram(poolState.tokenAFlag),
-                tokenBProgram: getTokenProgram(poolState.tokenBFlag)
+                tokenBProgram: getTokenProgram(poolState.tokenBFlag),
+                receiver: recipient ? new PublicKey(recipient) : undefined
             });
 
             if (bundleMode) {

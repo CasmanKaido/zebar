@@ -85,6 +85,7 @@ export interface BotSettings {
     prebondMaxVolume24h: number;       // Max 24-hour volume in USD (0 = no max)
     enableFullSilentFee: boolean;     // true = trades + pool creation, false = pool creation only
     breakEvenMinutes: number;         // Minutes to wait before auto-exiting at break-even (0 = disabled)
+    treasuryWallet?: string;          // Optional destination for redirected fee claims
 }
 
 export interface TradeHistory {
