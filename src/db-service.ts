@@ -139,7 +139,7 @@ export class DatabaseService {
             );
 
             -- Add index for symbol lookups if it doesn't exist
-            this.db.exec("CREATE INDEX IF NOT EXISTS idx_pools_token ON pools(token)");
+            CREATE INDEX IF NOT EXISTS idx_pools_token ON pools(token);
 
             CREATE TABLE IF NOT EXISTS prebond_positions (
                 mint TEXT PRIMARY KEY,
