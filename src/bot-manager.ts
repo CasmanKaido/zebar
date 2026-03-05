@@ -42,6 +42,7 @@ export class BotManager {
     private _wsIntervalIds: ReturnType<typeof setInterval>[] = []; // setInterval IDs for cleanup
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
+    private _wsSeenMints: Set<string> = new Set(); // Global WebSocket dedup for "New pool" logs
     private settings: BotSettings = {
         buyAmount: 0.1,
         lpppAmount: 0,
@@ -558,6 +559,9 @@ export class BotManager {
             if (this._pumpfunSeenMints.size > 200) {
                 this._pumpfunSeenMints.clear();
             }
+            if (this._wsSeenMints.size > 500) {
+                this._wsSeenMints.clear();
+            }
         }, 300000));
 
         try {
@@ -622,12 +626,16 @@ export class BotManager {
             }
 
             for (const mint of mints) {
+                if (!this.isRunning) continue;
                 if (this.pendingMints.has(mint)) continue;
                 const cached = this.rejectedTokens.get(mint);
                 if (cached && cached.expiry > Date.now()) continue;
 
-                // Mint-level dedup for Pump.fun: same token can fire many WebSocket events
-                // (different signatures for create, first buy, second buy, etc.)
+                // Global WebSocket dedup to prevent redundant "New pool detected" logs
+                if (this._wsSeenMints.has(mint)) continue;
+                this._wsSeenMints.add(mint);
+
+                // Mint-level dedup for Pump.fun specifically (redundant with above but kept for logic safety)
                 if (dexId === "pumpfun") {
                     if (this._pumpfunSeenMints.has(mint)) continue;
                     this._pumpfunSeenMints.add(mint);
@@ -1739,13 +1747,17 @@ export class BotManager {
         if (!this.isRunning) return;
 
         // 1. Quick Guard
-        if (this.pendingMints.has(mint)) return;
+        if (this.pendingMints.has(mint)) {
+            // Already processing this mint (buy in flight or similar)
+            return;
+        }
 
         // Ticker check (early resolution from metadata service if needed)
         try {
             const symbol = await TokenMetadataService.getSymbol(mint);
             if (symbol && this.usedTickers.has(symbol.toUpperCase())) {
-                return; // Silent skip for duplicates in rapid scouting
+                SocketManager.emitLog(`[SCOUT] skipping ${symbol.toUpperCase()} (${mint.slice(0, 8)}...): duplicate ticker rejected.`, "info");
+                return;
             }
         } catch (_) { }
 
@@ -1758,7 +1770,10 @@ export class BotManager {
         }
 
         const cached = this.rejectedTokens.get(mint);
-        if (cached && cached.expiry > Date.now()) return;
+        if (cached && cached.expiry > Date.now()) {
+            // Recently rejected - don't spam forensic audit or external APIs
+            return;
+        }
 
         // 2. Forensic Audit (main safety settings — NOT for prebond, which has its own gates)
         // Skip for graduations (already passed the Pump.fun curve) and prebond pumpfun tokens
@@ -1867,12 +1882,12 @@ export class BotManager {
                     const attempt = this._flashRetryCount.get(mint) ?? 0;
 
                     if (attempt < RETRY_DELAYS.length) {
-                        this._flashRetryCount.set(mint, attempt + 1);
                         const delay = RETRY_DELAYS[attempt];
-                        SocketManager.emitLog(`[HELIUS] Token ${mint.slice(0, 8)}... not resolved. Retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s`, "info");
+                        this._flashRetryCount.set(mint, attempt + 1);
+                        SocketManager.emitLog(`[SCOUT] ${mint.slice(0, 8)}... not indexed yet. Scheduling retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s.`, "info");
                         setTimeout(() => {
                             this.triggerFlashScout(mint, pairAddress, dexId).catch(err => {
-                                console.warn(`[HELIUS] Flash retry ${attempt + 1} failed for ${mint}:`, err);
+                                console.warn(`[SCOUT] Flash retry ${attempt + 1} failed for ${mint}:`, err);
                             });
                         }, delay);
                     } else {
