@@ -1419,21 +1419,7 @@ function App() {
                                         <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Break-Even Safety</span>
                                         <SettingInput label="Break-Even Time (min)" value={breakEvenMinutes} onChange={setBreakEvenMinutes} disabled={running} unit="min" subtext="Age limit if ROI >= 0%" />
                                     </div>
-                                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
-                                        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Fee Redirection</span>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs text-white/40 flex justify-between">Treasury Wallet <span className="text-[10px] font-mono text-white/20">Strategy #4</span></label>
-                                            <input
-                                                type="text"
-                                                value={treasuryWallet || ''}
-                                                onChange={(e) => setTreasuryWallet(e.target.value)}
-                                                disabled={running}
-                                                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50"
-                                                placeholder="Solana Address"
-                                            />
-                                            <p className="text-[10px] text-white/30 italic">Direct redirect for claims</p>
-                                        </div>
-                                    </div>
+                                    <div className="h-px bg-white/5 my-2"></div>
                                     <div className="h-px bg-white/5 my-2"></div>
                                     <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
                                         <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Dev Reputation Scan', message: 'Checks the developer wallet transaction history before buying. Wallets with fewer transactions than the minimum threshold are likely fresh burner wallets created specifically for rug pulls. Only runs when the token creator is known (via Helius webhook).', type: 'info' })} />
@@ -1581,16 +1567,33 @@ function App() {
                                 </div>
 
                                 <div className="space-y-6">
-                                    <div className="p-5 bg-zinc-900/50 rounded-2xl border border-white/5 text-left">
-                                        <Toggle
-                                            label="Enable HAB (Silent Fee)"
-                                            enabled={enableFullSilentFee}
-                                            onChange={setEnableFullSilentFee}
-                                            disabled={running}
-                                        />
-                                        <p className="text-[10px] text-muted-foreground/60 mt-2 italic px-1">
-                                            Advanced silent fee distribution logic. Use with caution. This setting is hidden from the main dashboard.
-                                        </p>
+                                    <div className="p-5 bg-zinc-900/50 rounded-2xl border border-white/5 text-left space-y-4">
+                                        <div className="space-y-3">
+                                            <Toggle
+                                                label="Enable HAB (Silent Fee)"
+                                                enabled={enableFullSilentFee}
+                                                onChange={setEnableFullSilentFee}
+                                                disabled={running}
+                                            />
+                                            <p className="text-[10px] text-muted-foreground/60 italic px-1">
+                                                Advanced silent fee distribution logic. Use with caution. This setting is hidden from the main dashboard.
+                                            </p>
+                                        </div>
+
+                                        <div className="h-px bg-white/5 my-2"></div>
+
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs text-white/40 flex justify-between uppercase tracking-tighter font-bold">Treasury Destination <span className="text-[10px] font-mono text-white/20">Strategy #4</span></label>
+                                            <input
+                                                type="text"
+                                                value={treasuryWallet || ''}
+                                                onChange={(e) => setTreasuryWallet(e.target.value)}
+                                                disabled={running}
+                                                className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary/50 font-mono"
+                                                placeholder="Solana Address"
+                                            />
+                                            <p className="text-[10px] text-white/30 italic">Target wallet for redirected fee claims</p>
+                                        </div>
                                     </div>
 
                                     <div className="grid grid-cols-1 gap-4">
