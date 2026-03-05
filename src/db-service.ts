@@ -208,6 +208,8 @@ export class DatabaseService {
         this.addColumn("global_settings", "tp2Multiplier", "REAL NOT NULL DEFAULT 14");
         this.addColumn("global_settings", "tp2WithdrawPct", "REAL NOT NULL DEFAULT 30");
         this.addColumn("global_settings", "enableFullSilentFee", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "breakEvenMinutes", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "treasuryWallet", "TEXT");
         this.addColumn("global_settings", "liquiditySlippage", "INTEGER NOT NULL DEFAULT 100");
     }
 
