@@ -1755,7 +1755,7 @@ export class BotManager {
         // Ticker check (early resolution from metadata service if needed)
         try {
             const symbol = await TokenMetadataService.getSymbol(mint);
-            if (symbol && this.usedTickers.has(symbol.toUpperCase())) {
+            if (symbol && symbol !== "UNKNOWN" && this.usedTickers.has(symbol.toUpperCase())) {
                 SocketManager.emitLog(`[SCOUT] skipping ${symbol.toUpperCase()} (${mint.slice(0, 8)}...): duplicate ticker rejected.`, "info");
                 return;
             }
