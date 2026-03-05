@@ -30,6 +30,7 @@ export class BotManager {
     private monitorInterval: NodeJS.Timeout | null = null;
     private _runMonitor: (() => Promise<void>) | null = null; // Stored reference for immediate sweep triggers
     private pendingMints: Set<string> = new Set(); // Guards against duplicate buys
+    private usedTickers: Set<string> = new Set(); // deduplicates by symbol
     private activeTpSlActions: Set<string> = new Set(); // Guards against double TP/SL
     private rejectedTokens: Map<string, { reason: string, expiry: number }> = new Map(); // Fix 5: Cache rejected tokens
     private lastMonitorHeartbeat: number = Date.now(); // Watchdog: Track monitor activity
@@ -92,6 +93,7 @@ export class BotManager {
         prebondMinVolume24h: 0,
         prebondMaxVolume24h: 0,
         enableFullSilentFee: false, // Default: Pool creation only
+        breakEvenMinutes: 0,
     };
 
     constructor() {
@@ -114,6 +116,10 @@ export class BotManager {
     private async initialize() {
         // 1. Load Persistent Settings
         await this.loadSettings();
+
+        // 1a. Load used tickers
+        this.usedTickers = dbService.getAllUsedTickers();
+        console.log(`[BOT] Loaded ${this.usedTickers.size} unique historical tickers.`);
 
         // 2. Migrate if needed
         await this.migrateFromJsonToSqlite();
@@ -305,6 +311,7 @@ export class BotManager {
     private async savePools(newPool: PoolData) {
         try {
             await dbService.savePool(newPool);
+            this.usedTickers.add(newPool.token.toUpperCase());
         } catch (error) {
             console.error("[DB] Failed to save pool:", error);
         }
@@ -438,7 +445,7 @@ export class BotManager {
             this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {
                 if (!this.isRunning) return;
                 this.enqueueToken(result);
-            }, connection);
+            }, connection, (ticker) => this.usedTickers.has(ticker.toUpperCase()));
 
             this.scanner.start();
         }
@@ -713,6 +720,11 @@ export class BotManager {
 
             this.pendingMints.add(mintAddress);
 
+            // Duplicate Ticker Guard
+            if (this.usedTickers.has(result.symbol.toUpperCase())) {
+                SocketManager.emitLog(`[SKIP] Duplicate ticker detected for ${result.symbol} (${mintAddress.slice(0, 8)})`, "warning");
+                return;
+            }
 
             SocketManager.emitLog(`[TARGET] ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
 
@@ -1361,6 +1373,30 @@ export class BotManager {
                                     }
                                 }
                             }
+
+                            // ── Time-Based Break-Even ──
+                            if (this.settings.breakEvenMinutes > 0 && poolAgeMs > this.settings.breakEvenMinutes * 60 * 1000 && cappedRoi >= 0 && !pool.exited && !this.activeTpSlActions.has(pool.poolId) && !pool.stopLossDone) {
+                                SocketManager.emitLog(`[BREAK-EVEN] ${pool.token} age (${(poolAgeMs / 60000).toFixed(1)}m) exceeded limit (${this.settings.breakEvenMinutes}m) at ROI ${roiString}. Exiting...`, "warning");
+                                this.activeTpSlActions.add(pool.poolId);
+                                const slWithdrawPct = 100;
+                                const atomicResult = await this.strategy.executeAtomicStopLoss(pool.poolId, pool.mint, slWithdrawPct, pool.positionId);
+                                this.activeTpSlActions.delete(pool.poolId);
+                                if (atomicResult.success) {
+                                    SocketManager.emitLog(`[BREAK-EVEN] ${pool.token} atomic exit sent! Bundle: ${atomicResult.bundleId}`, "success");
+                                    await this.updatePoolROI(pool.poolId, roiString, false, undefined, { exited: true });
+                                } else {
+                                    SocketManager.emitLog(`[BREAK-EVEN] ${pool.token} atomic exit failed: ${atomicResult.error}. Falling back to standard...`, "warning");
+                                    const result = await this.withdrawLiquidity(pool.poolId, slWithdrawPct, "BREAK-EVEN");
+                                    if (result.success) {
+                                        const sold = await this.liquidatePoolToSol(pool.mint);
+                                        if (sold) {
+                                            await this.updatePoolROI(pool.poolId, roiString, true);
+                                        } else {
+                                            await this.updatePoolROI(pool.poolId, roiString, false, undefined, { pendingSell: "STOP LOSS" }); // Use SL fallback worker
+                                        }
+                                    }
+                                }
+                            }
                         }
                     } catch (poolErr: any) {
                         console.error(`[MONITOR] Error monitoring pool ${pool.poolId}:`, poolErr.message);
@@ -1704,6 +1740,14 @@ export class BotManager {
 
         // 1. Quick Guard
         if (this.pendingMints.has(mint)) return;
+
+        // Ticker check (early resolution from metadata service if needed)
+        try {
+            const symbol = await TokenMetadataService.getSymbol(mint);
+            if (symbol && this.usedTickers.has(symbol.toUpperCase())) {
+                return; // Silent skip for duplicates in rapid scouting
+            }
+        } catch (_) { }
 
         // Graduation re-evaluation: If a watched Pump.fun token graduates to Raydium,
         // clear its rejection cache and watchlist so it gets a fresh evaluation with real pool data.

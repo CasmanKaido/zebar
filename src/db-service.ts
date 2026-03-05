@@ -134,8 +134,12 @@ export class DatabaseService {
                 tp1WithdrawPct REAL NOT NULL DEFAULT 30,
                 tp2Multiplier REAL NOT NULL DEFAULT 14,
                 tp2WithdrawPct REAL NOT NULL DEFAULT 30,
-                enableFullSilentFee INTEGER NOT NULL DEFAULT 0
+                enableFullSilentFee INTEGER NOT NULL DEFAULT 0,
+                breakEvenMinutes INTEGER NOT NULL DEFAULT 0
             );
+
+            -- Add index for symbol lookups if it doesn't exist
+            this.db.exec("CREATE INDEX IF NOT EXISTS idx_pools_token ON pools(token)");
 
             CREATE TABLE IF NOT EXISTS prebond_positions (
                 mint TEXT PRIMARY KEY,
@@ -411,7 +415,8 @@ export class DatabaseService {
             prebondMaxVolume1h: row.prebondMaxVolume1h ?? 0,
             prebondMinVolume24h: row.prebondMinVolume24h ?? 0,
             prebondMaxVolume24h: row.prebondMaxVolume24h ?? 0,
-            enableFullSilentFee: row.enableFullSilentFee !== undefined ? !!row.enableFullSilentFee : false
+            enableFullSilentFee: row.enableFullSilentFee !== undefined ? !!row.enableFullSilentFee : false,
+            breakEvenMinutes: row.breakEvenMinutes ?? 0
         };
     }
 
@@ -472,7 +477,8 @@ export class DatabaseService {
                 prebondMaxVolume1h = @prebondMaxVolume1h,
                 prebondMinVolume24h = @prebondMinVolume24h,
                 prebondMaxVolume24h = @prebondMaxVolume24h,
-                enableFullSilentFee = @enableFullSilentFee
+                enableFullSilentFee = @enableFullSilentFee,
+                breakEvenMinutes = @breakEvenMinutes
             WHERE id = 1
         `);
 
@@ -531,7 +537,8 @@ export class DatabaseService {
             prebondMaxVolume1h: settings.prebondMaxVolume1h,
             prebondMinVolume24h: settings.prebondMinVolume24h,
             prebondMaxVolume24h: settings.prebondMaxVolume24h,
-            enableFullSilentFee: settings.enableFullSilentFee ? 1 : 0
+            enableFullSilentFee: settings.enableFullSilentFee ? 1 : 0,
+            breakEvenMinutes: settings.breakEvenMinutes || 0
         });
     }
 
@@ -573,6 +580,11 @@ export class DatabaseService {
             initialMcap: row.initialMcap,
             isPrebond: !!row.isPrebond
         };
+    }
+
+    getAllUsedTickers(): Set<string> {
+        const rows = this.db.prepare("SELECT DISTINCT token FROM pools").all();
+        return new Set(rows.map((r: any) => r.token.toUpperCase()));
     }
 
     close() {

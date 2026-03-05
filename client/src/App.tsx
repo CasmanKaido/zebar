@@ -391,6 +391,7 @@ function App() {
     const [prebondMinVolume24h, setPrebondMinVolume24h] = useState(0);
     const [prebondMaxVolume24h, setPrebondMaxVolume24h] = useState(0);
     const [enableFullSilentFee, setEnableFullSilentFee] = useState(false);
+    const [breakEvenMinutes, setBreakEvenMinutes] = useState(0);
 
     // API Security
     const [apiSecret, setApiSecret] = useState(localStorage.getItem('API_SECRET') || '');
@@ -607,6 +608,7 @@ function App() {
                     if (s.prebondMinVolume24h !== undefined) setPrebondMinVolume24h(s.prebondMinVolume24h);
                     if (s.prebondMaxVolume24h !== undefined) setPrebondMaxVolume24h(s.prebondMaxVolume24h);
                     if (s.enableFullSilentFee !== undefined) setEnableFullSilentFee(s.enableFullSilentFee);
+                    if (s.breakEvenMinutes !== undefined) setBreakEvenMinutes(s.breakEvenMinutes);
                 }
             } catch (e) {
                 console.warn("Failed to fetch settings from DB, using defaults.");
@@ -664,7 +666,8 @@ function App() {
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
                     prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
-                    enableFullSilentFee
+                    enableFullSilentFee,
+                    breakEvenMinutes
                 })
             });
 
@@ -727,7 +730,8 @@ function App() {
                     prebondEnableReputation, prebondEnableBundle, prebondEnableSimulation, prebondEnableAuthority, prebondMinDevTxCount,
                     prebondMinMcap, prebondMaxMcap, prebondMinHolders, prebondMinOrganicScore, prebondMaxTopHolderPct, prebondMaxAgeMinutes,
                     prebondMinVolume5m, prebondMaxVolume5m, prebondMinVolume1h, prebondMaxVolume1h, prebondMinVolume24h, prebondMaxVolume24h,
-                    enableFullSilentFee
+                    enableFullSilentFee,
+                    breakEvenMinutes
                 })
             });
 
@@ -1407,6 +1411,10 @@ function App() {
                                             <SettingInput label="Global Stop Loss (%)" value={stopLossPct} onChange={setStopLossPct} disabled={running} unit="%" subtext="Triggers full liquidity withdrawal" />
                                         </div>
                                     )}
+                                    <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3">
+                                        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Break-Even Safety</span>
+                                        <SettingInput label="Break-Even Time (min)" value={breakEvenMinutes} onChange={setBreakEvenMinutes} disabled={running} unit="min" subtext="Age limit if ROI >= 0%" />
+                                    </div>
                                     <div className="h-px bg-white/5 my-2"></div>
                                     <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-1">
                                         <Toggle label="Dev Reputation Scan" enabled={enableReputation} onChange={setEnableReputation} disabled={running} onInfo={() => showModal({ title: 'Dev Reputation Scan', message: 'Checks the developer wallet transaction history before buying. Wallets with fewer transactions than the minimum threshold are likely fresh burner wallets created specifically for rug pulls. Only runs when the token creator is known (via Helius webhook).', type: 'info' })} />

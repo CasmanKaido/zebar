@@ -80,7 +80,8 @@ function sanitizeSettings(raw: any): BotSettings {
         prebondMaxVolume1h: num(raw.prebondMaxVolume1h, 0, 0),
         prebondMinVolume24h: num(raw.prebondMinVolume24h, 0, 0),
         prebondMaxVolume24h: num(raw.prebondMaxVolume24h, 0, 0),
-        enableFullSilentFee: bool(raw.enableFullSilentFee, false)
+        enableFullSilentFee: bool(raw.enableFullSilentFee, false),
+        breakEvenMinutes: num(raw.breakEvenMinutes, 0, 0)
     };
 }
 

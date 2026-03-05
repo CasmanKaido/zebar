@@ -40,6 +40,7 @@ export class MarketScanner {
     private isRunning: boolean = false;
     private criteria: ScannerCriteria;
     private callback: (result: ScanResult) => Promise<void>;
+    private isTickerUsed?: (ticker: string) => boolean;
     private seenPairs: Map<string, number> = new Map(); // mintAddress -> timestamp
     private _processingMutex: Set<string> = new Set(); // Prevent concurrent webhook duplicate buys
     private SEEN_COOLDOWN = 3 * 60 * 1000; // 3 minute cooldown
@@ -53,10 +54,11 @@ export class MarketScanner {
     private readonly GECKO_PAGES_PER_SWEEP = 6;
     private readonly GECKO_MAX_PAGE = 10;
 
-    constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any) {
+    constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any, tickerChecker?: (ticker: string) => boolean) {
         this.criteria = criteria;
         this.callback = callback;
         this.connection = conn;
+        this.isTickerUsed = tickerChecker;
     }
 
     setConnection(conn: any) {
@@ -374,6 +376,12 @@ export class MarketScanner {
                 const sym = pair.baseToken?.symbol || mintAddress.slice(0, 6);
                 const dex = pair.dexId || "?";
 
+                if (this.isTickerUsed && this.isTickerUsed(sym)) {
+                    rejectReasons.dedup++; // Reuse dedup count or add tickerSpecific one
+                    console.log(`[EVAL] ${sym} | ❌ DUPLICATE TICKER (Already traded)`);
+                    continue;
+                }
+
                 // Dedup cooldown
                 const lastSeen = this.seenPairs.get(mintAddress);
                 if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) {
@@ -535,6 +543,11 @@ export class MarketScanner {
             if (lastSeen && Date.now() - lastSeen < this.SEEN_COOLDOWN) return false;
 
             SocketManager.emitLog(`[FLASH-EVAL] Real-time check for ${result.symbol}...`, "info");
+
+            if (this.isTickerUsed && this.isTickerUsed(result.symbol)) {
+                SocketManager.emitLog(`[FLASH-REJECT] ${result.symbol} failed criteria: Duplicate Ticker`, "warning");
+                return false;
+            }
 
             // Max Age filter — reject tokens older than maxAgeMinutes
             if (this.criteria.maxAgeMinutes && this.criteria.maxAgeMinutes > 0 && result.pairCreatedAt) {
