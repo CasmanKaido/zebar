@@ -1,4 +1,4 @@
-import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT, JUPITER_API_KEY } from "./config";
+import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT, JUPITER_API_KEY, updateWalletFromPrivateKey } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -1726,9 +1726,7 @@ export class BotManager {
 
     async updateWallet(privateKeyBs58: string) {
         try {
-            const { Keypair } = require("@solana/web3.js");
-            const bs58 = require("bs58");
-            const newWallet = Keypair.fromSecretKey(bs58.decode(privateKeyBs58));
+            const newWallet = updateWalletFromPrivateKey(privateKeyBs58);
 
             this.strategy.setKey(newWallet);
             SocketManager.emitLog(`[WALLET] Updated to: ${newWallet.publicKey.toBase58()}`, "success");

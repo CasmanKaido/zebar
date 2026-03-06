@@ -216,7 +216,7 @@ export class SafetyService {
             reason: `RugCheck: Bundle ${bundlePct.toFixed(1)}% + LP: ${lpReason}`,
             source: "rugcheck",
             score,
-            lpLockedPct: bundlePct,
+            lpLockedPct: totalLockedRatio,
             risks: [],
             checks: { mintAuthority: mintAuthStatus, freezeAuthority: freezeAuthStatus, liquidityLocked: "locked" }
         };

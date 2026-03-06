@@ -24,6 +24,7 @@ export const FEE_USD_AMOUNT = parseFloat(process.env.FEE_USD_AMOUNT || "0.5");
 export const HELIUS_AUTH_SECRET = (process.env.HELIUS_AUTH_SECRET || "").trim();
 export const HELIUS_RPC_URL = process.env.HELIUS_RPC_URL;
 export const MONITOR_RPC_URL = process.env.MONITOR_RPC_URL;
+export const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
 
 // Paths
 import * as path from "path";
@@ -90,7 +91,13 @@ if (!PRIVATE_KEY) {
     throw new Error("CRITICAL ERROR: PRIVATE_KEY is missing from .env. Please provide a valid private key to use the bot.");
 }
 
-export const wallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+export let wallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+
+export function updateWalletFromPrivateKey(privateKeyBs58: string): Keypair {
+    const newWallet = Keypair.fromSecretKey(bs58.decode(privateKeyBs58));
+    wallet = newWallet;
+    return newWallet;
+}
 
 console.log("Wallet Public Key:", wallet.publicKey.toBase58());
 

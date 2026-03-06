@@ -7,10 +7,11 @@ import cors from "cors";
 import path from "path";
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
-import { SOL_MINT, BASE_TOKENS } from "./config";
+import { SOL_MINT, BASE_TOKENS, ADMIN_PASSWORD } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { HeliusWebhookService } from "./helius-webhook-service";
 import { dbService } from "./db-service";
+import { constantTimeSecretEqual } from "./auth-utils";
 
 import { BotSettings } from "./types";
 
@@ -53,14 +54,14 @@ function sanitizeSettings(raw: any): BotSettings {
         enableStopLoss: bool(raw.enableStopLoss, true),
         enableReputation: bool(raw.enableReputation, true),
         enableBundle: bool(raw.enableBundle, true),
-        enableInvestment: bool(raw.enableInvestment, false),
+        enableInvestment: bool(raw.enableInvestment, true),
         enableSimulation: bool(raw.enableSimulation, false),
-        minDevTxCount: num(raw.minDevTxCount, 10, 0),
+        minDevTxCount: num(raw.minDevTxCount, 50, 0),
         enableAuthorityCheck: bool(raw.enableAuthorityCheck, true),
-        enableHolderAnalysis: bool(raw.enableHolderAnalysis, false),
+        enableHolderAnalysis: bool(raw.enableHolderAnalysis, true),
         enableScoring: bool(raw.enableScoring, false),
-        maxTop5HolderPct: num(raw.maxTop5HolderPct, 0, 0, 100),
-        minSafetyScore: num(raw.minSafetyScore, 0, 0, 1),
+        maxTop5HolderPct: num(raw.maxTop5HolderPct, 50, 0, 100),
+        minSafetyScore: num(raw.minSafetyScore, 0.3, 0, 1),
         minTokenScore: num(raw.minTokenScore, 60, 0, 100),
         enablePrebond: bool(raw.enablePrebond, false),
         prebondEnableReputation: bool(raw.prebondEnableReputation, true),
@@ -113,8 +114,8 @@ app.use("/api", (req, res, next) => {
     // Skip auth if no API_SECRET is configured (backward compatible)
     if (!API_SECRET) return next();
 
-    const providedKey = req.headers["x-api-key"];
-    if (providedKey !== API_SECRET) {
+    const providedKey = String(req.headers["x-api-key"] || "").trim();
+    if (!providedKey || !constantTimeSecretEqual(providedKey, API_SECRET)) {
         return res.status(401).json({ error: "Unauthorized. Provide valid x-api-key header." });
     }
     next();
@@ -293,10 +294,17 @@ app.post("/api/config/key", async (req, res) => {
     const { privateKey, adminPassword } = req.body;
     if (!privateKey) return res.status(400).json({ error: "Missing privateKey" });
 
-    // Security: Add password protection (Issue 34)
-    const REQUIRED_PASSWORD = process.env.ADMIN_PASSWORD || "lppp-admin";
-    if (adminPassword !== REQUIRED_PASSWORD) {
-        return res.status(401).json({ error: "Invalid admin password" });
+    // Security hardening: refuse wallet updates if admin password is not configured.
+    if (!ADMIN_PASSWORD) {
+        return res.status(503).json({
+            success: false,
+            error: "Wallet update is disabled. Set ADMIN_PASSWORD in .env to enable this endpoint."
+        });
+    }
+
+    const providedPassword = String(adminPassword || "").trim();
+    if (!providedPassword || !constantTimeSecretEqual(providedPassword, ADMIN_PASSWORD)) {
+        return res.status(401).json({ success: false, error: "Invalid admin password" });
     }
 
     const result = await botManager.updateWallet(privateKey);
@@ -331,6 +339,7 @@ httpServer.listen(PORT, () => {
     const pkg = require("../package.json");
     console.log(`LPPP BOT Version: v${pkg.version}`);
     console.log(`[CONFIG] API_SECRET Status: ${API_SECRET ? "CONFIGURED (Locked)" : "UNSET (Public Access Mode)"}`);
+    console.log(`[CONFIG] ADMIN_PASSWORD Status: ${ADMIN_PASSWORD ? "CONFIGURED" : "UNSET (Wallet update endpoint disabled)"}`);
     console.log(`[CONFIG] RPC_URL: ${process.env.RPC_URL ? "OK" : "MISSING"}`);
     const birdKey = process.env.BIRDEYE_API_KEY;
     console.log(`[CONFIG] BIRDEYE_API_KEY: ${birdKey ? birdKey.substring(0, 4) + "****" : "MISSING/UNSET"}`);

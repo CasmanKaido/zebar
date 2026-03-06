@@ -932,15 +932,6 @@ function App() {
             inputPlaceholder: "Password",
             onCancel: closeModal,
             onConfirm: async (pass) => {
-                if (pass !== "lppp-admin") {
-                    showModal({
-                        title: "Access Denied",
-                        message: "The password you entered is incorrect.",
-                        type: 'error'
-                    });
-                    return;
-                }
-
                 showModal({
                     title: "Update Private Key",
                     message: "Paste your new base58 Private Key below. This will update the bot's runtime wallet.",

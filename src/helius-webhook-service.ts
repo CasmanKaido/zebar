@@ -1,6 +1,7 @@
 import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { HELIUS_AUTH_SECRET, BASE_TOKENS } from "./config";
+import { constantTimeSecretEqual, normalizeBearerToken } from "./auth-utils";
 
 /**
  * Helius Webhook Service
@@ -20,9 +21,8 @@ export class HeliusWebhookService {
         console.log(`[HELIUS] Webhook received at ${new Date().toISOString()}`);
         // 1. Security Check
         if (HELIUS_AUTH_SECRET) {
-            // Normalize header (handle potential "Bearer " prefix from Helius or proxies)
-            const token = authHeader?.replace("Bearer ", "").trim();
-            if (token !== HELIUS_AUTH_SECRET) {
+            const token = normalizeBearerToken(authHeader);
+            if (!token || !constantTimeSecretEqual(token, HELIUS_AUTH_SECRET)) {
                 console.warn("[HELIUS] Unauthorized webhook attempt (invalid secret).");
                 return false;
             }
