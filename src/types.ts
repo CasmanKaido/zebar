@@ -43,6 +43,14 @@ export interface BotSettings {
     mode: "SCOUT" | "ANALYST" | "PREBOND" | "ALL";
     maxAgeMinutes: number;
     baseToken: string;
+    enableRunnerMode: boolean;
+    runnerMinScore: number;
+    runnerMin5mToLiquidityPct: number;
+    runnerMin5mTo1hPct: number;
+    runnerMinPriceChangePct: number;
+    runnerMinLiquidityChangePct: number;
+    runnerMinPairAgeMinutes: number;
+    runnerTopCandidates: number;
     // Take Profit / Stop Loss
     tp1Multiplier: number;             // MCAP multiplier to trigger TP1 (e.g. 7 = 7x)
     tp1WithdrawPct: number;            // % of liquidity to withdraw at TP1

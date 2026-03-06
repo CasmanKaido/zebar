@@ -58,6 +58,14 @@ export class BotManager {
         mode: "SCOUT",
         maxAgeMinutes: 0,
         baseToken: "LPPP",
+        enableRunnerMode: false,
+        runnerMinScore: 55,
+        runnerMin5mToLiquidityPct: 18,
+        runnerMin5mTo1hPct: 35,
+        runnerMinPriceChangePct: 0,
+        runnerMinLiquidityChangePct: 0,
+        runnerMinPairAgeMinutes: 2,
+        runnerTopCandidates: 3,
         tp1Multiplier: 7,
         tp1WithdrawPct: 30,
         tp2Multiplier: 14,
@@ -440,7 +448,15 @@ export class BotManager {
                 liquidity: this.settings.liquidity,
                 mcap: this.settings.mcap,
                 mode: scannerMode,
-                maxAgeMinutes: this.settings.maxAgeMinutes
+                maxAgeMinutes: this.settings.maxAgeMinutes,
+                enableRunnerMode: this.settings.enableRunnerMode,
+                runnerMinScore: this.settings.runnerMinScore,
+                runnerMin5mToLiquidityPct: this.settings.runnerMin5mToLiquidityPct,
+                runnerMin5mTo1hPct: this.settings.runnerMin5mTo1hPct,
+                runnerMinPriceChangePct: this.settings.runnerMinPriceChangePct,
+                runnerMinLiquidityChangePct: this.settings.runnerMinLiquidityChangePct,
+                runnerMinPairAgeMinutes: this.settings.runnerMinPairAgeMinutes,
+                runnerTopCandidates: this.settings.runnerTopCandidates
             };
 
             this.scanner = new MarketScanner(criteria, async (result: ScanResult) => {

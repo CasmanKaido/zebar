@@ -35,6 +35,28 @@ export interface ScannerCriteria {
     mcap: NumericRange;
     mode?: ScannerMode;
     maxAgeMinutes?: number;
+    enableRunnerMode?: boolean;
+    runnerMinScore?: number;
+    runnerMin5mToLiquidityPct?: number;
+    runnerMin5mTo1hPct?: number;
+    runnerMinPriceChangePct?: number;
+    runnerMinLiquidityChangePct?: number;
+    runnerMinPairAgeMinutes?: number;
+    runnerTopCandidates?: number;
+}
+
+interface TokenSnapshot {
+    volume5m: number;
+    liquidity: number;
+    priceUsd: number;
+    mcap: number;
+    ts: number;
+}
+
+interface RunnerAssessment {
+    score: number;
+    reasons: string[];
+    meets: boolean;
 }
 
 export class MarketScanner {
@@ -55,6 +77,7 @@ export class MarketScanner {
     private geckoPage = 1;
     private readonly GECKO_PAGES_PER_SWEEP = 6;
     private readonly GECKO_MAX_PAGE = 10;
+    private tokenSnapshots: Map<string, TokenSnapshot> = new Map();
 
     constructor(criteria: ScannerCriteria, callback: (result: ScanResult) => Promise<void>, conn: any, tickerChecker?: (ticker: string) => boolean) {
         this.criteria = criteria;
@@ -366,7 +389,7 @@ export class MarketScanner {
             // ═══════════════════════════════════════════════════════
             // FILTER — apply user criteria, collect all matches
             // ═══════════════════════════════════════════════════════
-            const qualified: { pair: any; mintAddress: string; volume5m: number; volume1h: number; volume24h: number; liquidity: number; mcap: number; priceUSD: number }[] = [];
+            const qualified: { pair: any; mintAddress: string; volume5m: number; volume1h: number; volume24h: number; liquidity: number; mcap: number; priceUSD: number; runnerScore: number; runnerReasons: string[] }[] = [];
 
             // ── Track rejection reasons ──
             const rejectReasons = { noMint: 0, dedup: 0, stablecoin: 0, vol5m: 0, vol1h: 0, vol24h: 0, liquidity: 0, mcap: 0, jupiter: 0, accepted: 0 };
@@ -444,6 +467,21 @@ export class MarketScanner {
                 if (!meetsLiquidity) { rejectReasons.liquidity++; console.log(`[EVAL] ${tag} | ❌ LIQUIDITY`); continue; }
                 if (!meetsMcap) { rejectReasons.mcap++; console.log(`[EVAL] ${tag} | ❌ MCAP`); continue; }
 
+                const runnerAssessment = this.assessRunnerCandidate(
+                    mintAddress,
+                    volume5m,
+                    volume1h,
+                    liquidity,
+                    mcap,
+                    priceUSD,
+                    pair.pairCreatedAt
+                );
+                if (this.criteria.enableRunnerMode && !runnerAssessment.meets) {
+                    console.log(`[EVAL] ${tag} | ❌ RUNNER (${runnerAssessment.score}/100) ${runnerAssessment.reasons.join(", ")}`);
+                    this.updateTokenSnapshot(mintAddress, volume5m, liquidity, priceUSD, mcap);
+                    continue;
+                }
+
                 if (this.jupiterTokens.size > 0 && !this.jupiterTokens.has(mintAddress)) {
                     // High-liquidity tokens bypass Jupiter check — they're clearly established
                     if (liquidity >= 500_000) {
@@ -456,8 +494,9 @@ export class MarketScanner {
                 }
 
                 rejectReasons.accepted++;
-                console.log(`[EVAL] ${tag} | ✅ QUALIFIED`);
-                qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD });
+                console.log(`[EVAL] ${tag} | ✅ QUALIFIED${this.criteria.enableRunnerMode ? ` | RUNNER ${runnerAssessment.score}/100` : ""}`);
+                qualified.push({ pair, mintAddress, volume5m, volume1h, volume24h, liquidity, mcap, priceUSD, runnerScore: runnerAssessment.score, runnerReasons: runnerAssessment.reasons });
+                this.updateTokenSnapshot(mintAddress, volume5m, liquidity, priceUSD, mcap);
             }
 
             // ── Log filter summary (to both console and frontend) ──
@@ -479,7 +518,7 @@ export class MarketScanner {
                     const sym = q.pair.baseToken?.symbol || "???";
                     const dex = q.pair.dexId || "?";
                     SocketManager.emitLog(
-                        `  ⚡ ${sym} | Vol5m: $${fmt(q.volume5m)} | Vol1h: $${fmt(q.volume1h)} | Vol24h: $${fmt(q.volume24h)} | Liq: $${fmt(q.liquidity)} | MCap: $${fmt(q.mcap)} | DEX: ${dex}`,
+                        `  ⚡ ${sym} | Vol5m: $${fmt(q.volume5m)} | Vol1h: $${fmt(q.volume1h)} | Vol24h: $${fmt(q.volume24h)} | Liq: $${fmt(q.liquidity)} | MCap: $${fmt(q.mcap)}${this.criteria.enableRunnerMode ? ` | Runner:${q.runnerScore}` : ""} | DEX: ${dex}`,
                         "info"
                     );
                 }
@@ -490,7 +529,15 @@ export class MarketScanner {
             // Safety checks now use free APIs (RugCheck + GoPlus),
             // so there's no RPC cost limit.
             // ═══════════════════════════════════════════════════════
-            const toExecute = qualified;
+            const toExecute = this.criteria.enableRunnerMode
+                ? [...qualified]
+                    .sort((a, b) => b.runnerScore - a.runnerScore || b.liquidity - a.liquidity)
+                    .slice(0, this.criteria.runnerTopCandidates || 3)
+                : qualified;
+
+            if (this.criteria.enableRunnerMode && toExecute.length > 0) {
+                SocketManager.emitLog(`[RUNNER] Executing top ${toExecute.length}/${qualified.length} ranked candidates.`, "info");
+            }
 
             for (const q of toExecute) {
                 this.seenPairs.set(q.mintAddress, Date.now());
@@ -575,20 +622,98 @@ export class MarketScanner {
             const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min * 0.5, max: this.criteria.mcap.max });
             const meetsVol5m = hasVol5mFilter ? this.inRange(vol5m, this.criteria.volume5m) : true;
             const meetsVol1h = hasVol1hFilter ? this.inRange(vol1h, this.criteria.volume1h) : true;
+            const runnerAssessment = this.assessRunnerCandidate(
+                mintAddress,
+                vol5m,
+                vol1h,
+                liquidity,
+                mcap,
+                result.priceUsd || 0,
+                result.pairCreatedAt
+            );
+            this.updateTokenSnapshot(mintAddress, vol5m, liquidity, result.priceUsd || 0, mcap);
 
-            if (meetsLiq && meetsMcap && meetsVol5m && meetsVol1h) {
-                SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
+            if (meetsLiq && meetsMcap && meetsVol5m && meetsVol1h && (!this.criteria.enableRunnerMode || runnerAssessment.meets)) {
+                SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout${this.criteria.enableRunnerMode ? ` | Runner ${runnerAssessment.score}/100` : ""}!`, "success");
                 this.seenPairs.set(mintAddress, Date.now());
                 await this.callback(result);
                 return true;
             } else {
-                console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Vol5m:${meetsVol5m}, Vol1h:${meetsVol1h}, Liq:${meetsLiq}, Mcap:${meetsMcap})`);
+                console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Vol5m:${meetsVol5m}, Vol1h:${meetsVol1h}, Liq:${meetsLiq}, Mcap:${meetsMcap}${this.criteria.enableRunnerMode ? `, Runner:${runnerAssessment.score}/100` : ""})`);
                 return false;
             }
         } finally {
             // Always release the lock so the token can be re-evaluated later if needed
             this._processingMutex.delete(mintAddress);
         }
+    }
+
+    private updateTokenSnapshot(mintAddress: string, volume5m: number, liquidity: number, priceUsd: number, mcap: number) {
+        this.tokenSnapshots.set(mintAddress, {
+            volume5m,
+            liquidity,
+            priceUsd,
+            mcap,
+            ts: Date.now()
+        });
+    }
+
+    private assessRunnerCandidate(
+        mintAddress: string,
+        volume5m: number,
+        volume1h: number,
+        liquidity: number,
+        mcap: number,
+        priceUsd: number,
+        pairCreatedAt?: number
+    ): RunnerAssessment {
+        if (!this.criteria.enableRunnerMode) {
+            return { score: 0, reasons: [], meets: true };
+        }
+
+        const reasons: string[] = [];
+        let score = 0;
+
+        const v5mToLiquidityPct = liquidity > 0 ? (volume5m / liquidity) * 100 : 0;
+        const v5mTo1hPct = volume1h > 0 ? (volume5m / volume1h) * 100 : 0;
+
+        if (v5mToLiquidityPct >= (this.criteria.runnerMin5mToLiquidityPct || 0)) score += 20;
+        else reasons.push(`5m/liquidity ${v5mToLiquidityPct.toFixed(1)}%`);
+
+        if (v5mTo1hPct >= (this.criteria.runnerMin5mTo1hPct || 0)) score += 20;
+        else reasons.push(`5m/1h ${v5mTo1hPct.toFixed(1)}%`);
+
+        if (liquidity >= Math.max(10000, this.criteria.liquidity.min)) score += 15;
+        else reasons.push(`liq ${liquidity.toFixed(0)}`);
+
+        if (mcap > 0 && (this.criteria.mcap.max === 0 || mcap <= this.criteria.mcap.max)) score += 10;
+
+        if (pairCreatedAt) {
+            const ageMinutes = (Date.now() - pairCreatedAt) / 60000;
+            if (ageMinutes >= (this.criteria.runnerMinPairAgeMinutes || 0)) score += 10;
+            else reasons.push(`age ${ageMinutes.toFixed(1)}m`);
+        }
+
+        const previous = this.tokenSnapshots.get(mintAddress);
+        if (previous) {
+            const priceChangePct = previous.priceUsd > 0 ? ((priceUsd - previous.priceUsd) / previous.priceUsd) * 100 : 0;
+            const liquidityChangePct = previous.liquidity > 0 ? ((liquidity - previous.liquidity) / previous.liquidity) * 100 : 0;
+            const volumeGrowthPct = previous.volume5m > 0 ? ((volume5m - previous.volume5m) / previous.volume5m) * 100 : 0;
+
+            if (priceChangePct >= (this.criteria.runnerMinPriceChangePct || 0)) score += 15;
+            else if ((this.criteria.runnerMinPriceChangePct || 0) > 0) reasons.push(`price ${priceChangePct.toFixed(1)}%`);
+
+            if (liquidityChangePct >= (this.criteria.runnerMinLiquidityChangePct || 0)) score += 10;
+            else if ((this.criteria.runnerMinLiquidityChangePct || 0) > 0) reasons.push(`liq change ${liquidityChangePct.toFixed(1)}%`);
+
+            if (volumeGrowthPct > 0) score += 10;
+            else reasons.push(`5m growth ${volumeGrowthPct.toFixed(1)}%`);
+        } else {
+            score += 10; // allow first-seen tokens to compete on raw structure
+        }
+
+        const meets = score >= (this.criteria.runnerMinScore || 0);
+        return { score: Math.max(0, Math.min(100, Math.round(score))), reasons, meets };
     }
 
     private inRange(val: number, range: NumericRange) {

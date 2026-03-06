@@ -344,6 +344,14 @@ function App() {
     const [minMcap, setMinMcap] = useState(60000);
     const [maxMcap, setMaxMcap] = useState(0);
     const [maxAgeMinutes, setMaxAgeMinutes] = useState(0);
+    const [enableRunnerMode, setEnableRunnerMode] = useState(false);
+    const [runnerMinScore, setRunnerMinScore] = useState(55);
+    const [runnerMin5mToLiquidityPct, setRunnerMin5mToLiquidityPct] = useState(18);
+    const [runnerMin5mTo1hPct, setRunnerMin5mTo1hPct] = useState(35);
+    const [runnerMinPriceChangePct, setRunnerMinPriceChangePct] = useState(0);
+    const [runnerMinLiquidityChangePct, setRunnerMinLiquidityChangePct] = useState(0);
+    const [runnerMinPairAgeMinutes, setRunnerMinPairAgeMinutes] = useState(2);
+    const [runnerTopCandidates, setRunnerTopCandidates] = useState(3);
 
     // Meteora Specific
     const [meteoraFeeBps, setMeteoraFeeBps] = useState(200); // 2% Default
@@ -568,6 +576,14 @@ function App() {
                     if (s.mode !== undefined) setDiscoveryMode(s.mode);
                     if (s.maxAgeMinutes !== undefined) setMaxAgeMinutes(s.maxAgeMinutes);
                     if (s.baseToken !== undefined) setSelectedBaseToken(s.baseToken);
+                    if (s.enableRunnerMode !== undefined) setEnableRunnerMode(s.enableRunnerMode);
+                    if (s.runnerMinScore !== undefined) setRunnerMinScore(s.runnerMinScore);
+                    if (s.runnerMin5mToLiquidityPct !== undefined) setRunnerMin5mToLiquidityPct(s.runnerMin5mToLiquidityPct);
+                    if (s.runnerMin5mTo1hPct !== undefined) setRunnerMin5mTo1hPct(s.runnerMin5mTo1hPct);
+                    if (s.runnerMinPriceChangePct !== undefined) setRunnerMinPriceChangePct(s.runnerMinPriceChangePct);
+                    if (s.runnerMinLiquidityChangePct !== undefined) setRunnerMinLiquidityChangePct(s.runnerMinLiquidityChangePct);
+                    if (s.runnerMinPairAgeMinutes !== undefined) setRunnerMinPairAgeMinutes(s.runnerMinPairAgeMinutes);
+                    if (s.runnerTopCandidates !== undefined) setRunnerTopCandidates(s.runnerTopCandidates);
                     if (s.liquiditySlippage !== undefined) setLiquiditySlippage(s.liquiditySlippage);
 
                     // TP/SL Settings
@@ -650,6 +666,14 @@ function App() {
                     mode: discoveryMode,
                     maxAgeMinutes,
                     baseToken: selectedBaseToken,
+                    enableRunnerMode,
+                    runnerMinScore,
+                    runnerMin5mToLiquidityPct,
+                    runnerMin5mTo1hPct,
+                    runnerMinPriceChangePct,
+                    runnerMinLiquidityChangePct,
+                    runnerMinPairAgeMinutes,
+                    runnerTopCandidates,
                     tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
                     stopLossPct,
                     enableStopLoss,
@@ -715,6 +739,14 @@ function App() {
                     mode: discoveryMode,
                     maxAgeMinutes,
                     baseToken: selectedBaseToken,
+                    enableRunnerMode,
+                    runnerMinScore,
+                    runnerMin5mToLiquidityPct,
+                    runnerMin5mTo1hPct,
+                    runnerMinPriceChangePct,
+                    runnerMinLiquidityChangePct,
+                    runnerMinPairAgeMinutes,
+                    runnerTopCandidates,
                     tp1Multiplier, tp1WithdrawPct, tp2Multiplier, tp2WithdrawPct,
                     stopLossPct,
                     enableStopLoss,
@@ -1379,6 +1411,36 @@ function App() {
                                         <SettingInput label="Mcap Max ($)" value={maxMcap} onChange={setMaxMcap} disabled={running} prefix="$" />
                                     </div>
                                     <SettingInput label="Max Pair Age (Minutes)" value={maxAgeMinutes} onChange={setMaxAgeMinutes} disabled={running} unit="MIN" />
+                                    <div className="h-px bg-white/5 my-2"></div>
+                                    <Toggle
+                                        label="Runner Mode"
+                                        enabled={enableRunnerMode}
+                                        onChange={setEnableRunnerMode}
+                                        disabled={running}
+                                        onInfo={() => showModal({
+                                            title: 'Runner Mode',
+                                            message: 'Adds a second layer after the normal filters. Tokens are scored for runner-style structure and only the top ranked candidates are allowed through. This reduces weak launches that are merely "not rugged yet" and favors stronger momentum relative to liquidity and recent follow-through.',
+                                            type: 'info'
+                                        })}
+                                    />
+                                    {enableRunnerMode && (
+                                        <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-3 animate-in fade-in zoom-in-95 duration-200">
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Runner Filters</span>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <SettingInput label="Min Runner Score" value={runnerMinScore} onChange={setRunnerMinScore} disabled={running} unit="/100" />
+                                                <SettingInput label="Top Candidates" value={runnerTopCandidates} onChange={setRunnerTopCandidates} disabled={running} unit="TOP" />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <SettingInput label="Min 5m / Liq (%)" value={runnerMin5mToLiquidityPct} onChange={setRunnerMin5mToLiquidityPct} disabled={running} unit="%" subtext="Demand relative to depth" />
+                                                <SettingInput label="Min 5m / 1h (%)" value={runnerMin5mTo1hPct} onChange={setRunnerMin5mTo1hPct} disabled={running} unit="%" subtext="Recent acceleration" />
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <SettingInput label="Min Price Change (%)" value={runnerMinPriceChangePct} onChange={setRunnerMinPriceChangePct} disabled={running} unit="%" subtext="0 = disabled" />
+                                                <SettingInput label="Min Liq Change (%)" value={runnerMinLiquidityChangePct} onChange={setRunnerMinLiquidityChangePct} disabled={running} unit="%" subtext="0 = disabled" />
+                                            </div>
+                                            <SettingInput label="Min Pair Age (Minutes)" value={runnerMinPairAgeMinutes} onChange={setRunnerMinPairAgeMinutes} disabled={running} unit="MIN" subtext="Avoids first-block noise and instant rugs" />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>

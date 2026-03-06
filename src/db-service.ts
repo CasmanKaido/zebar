@@ -94,6 +94,14 @@ export class DatabaseService {
                 mode TEXT NOT NULL DEFAULT 'SCOUT',
                 maxAgeMinutes INTEGER NOT NULL DEFAULT 0,
                 baseToken TEXT NOT NULL DEFAULT 'LPPP',
+                enableRunnerMode INTEGER NOT NULL DEFAULT 0,
+                runnerMinScore REAL NOT NULL DEFAULT 55,
+                runnerMin5mToLiquidityPct REAL NOT NULL DEFAULT 18,
+                runnerMin5mTo1hPct REAL NOT NULL DEFAULT 35,
+                runnerMinPriceChangePct REAL NOT NULL DEFAULT 0,
+                runnerMinLiquidityChangePct REAL NOT NULL DEFAULT 0,
+                runnerMinPairAgeMinutes INTEGER NOT NULL DEFAULT 2,
+                runnerTopCandidates INTEGER NOT NULL DEFAULT 3,
                 stopLossPct REAL NOT NULL DEFAULT -2,
                 enableReputation INTEGER NOT NULL DEFAULT 1,
                 enableBundle INTEGER NOT NULL DEFAULT 1,
@@ -211,6 +219,14 @@ export class DatabaseService {
         this.addColumn("global_settings", "breakEvenMinutes", "INTEGER NOT NULL DEFAULT 0");
         this.addColumn("global_settings", "treasuryWallet", "TEXT");
         this.addColumn("global_settings", "liquiditySlippage", "INTEGER NOT NULL DEFAULT 100");
+        this.addColumn("global_settings", "enableRunnerMode", "INTEGER NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "runnerMinScore", "REAL NOT NULL DEFAULT 55");
+        this.addColumn("global_settings", "runnerMin5mToLiquidityPct", "REAL NOT NULL DEFAULT 18");
+        this.addColumn("global_settings", "runnerMin5mTo1hPct", "REAL NOT NULL DEFAULT 35");
+        this.addColumn("global_settings", "runnerMinPriceChangePct", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "runnerMinLiquidityChangePct", "REAL NOT NULL DEFAULT 0");
+        this.addColumn("global_settings", "runnerMinPairAgeMinutes", "INTEGER NOT NULL DEFAULT 2");
+        this.addColumn("global_settings", "runnerTopCandidates", "INTEGER NOT NULL DEFAULT 3");
     }
 
     // --- Pools Methods ---
@@ -383,6 +399,14 @@ export class DatabaseService {
             mode: row.mode,
             maxAgeMinutes: row.maxAgeMinutes,
             baseToken: row.baseToken,
+            enableRunnerMode: row.enableRunnerMode !== undefined ? !!row.enableRunnerMode : false,
+            runnerMinScore: row.runnerMinScore ?? 55,
+            runnerMin5mToLiquidityPct: row.runnerMin5mToLiquidityPct ?? 18,
+            runnerMin5mTo1hPct: row.runnerMin5mTo1hPct ?? 35,
+            runnerMinPriceChangePct: row.runnerMinPriceChangePct ?? 0,
+            runnerMinLiquidityChangePct: row.runnerMinLiquidityChangePct ?? 0,
+            runnerMinPairAgeMinutes: row.runnerMinPairAgeMinutes ?? 2,
+            runnerTopCandidates: row.runnerTopCandidates ?? 3,
             tp1Multiplier: row.tp1Multiplier ?? 7,
             tp1WithdrawPct: row.tp1WithdrawPct ?? 30,
             tp2Multiplier: row.tp2Multiplier ?? 14,
@@ -445,6 +469,14 @@ export class DatabaseService {
                 mode = @mode,
                 maxAgeMinutes = @maxAgeMinutes,
                 baseToken = @baseToken,
+                enableRunnerMode = @enableRunnerMode,
+                runnerMinScore = @runnerMinScore,
+                runnerMin5mToLiquidityPct = @runnerMin5mToLiquidityPct,
+                runnerMin5mTo1hPct = @runnerMin5mTo1hPct,
+                runnerMinPriceChangePct = @runnerMinPriceChangePct,
+                runnerMinLiquidityChangePct = @runnerMinLiquidityChangePct,
+                runnerMinPairAgeMinutes = @runnerMinPairAgeMinutes,
+                runnerTopCandidates = @runnerTopCandidates,
                 liquiditySlippage = @liquiditySlippage,
                 tp1Multiplier = @tp1Multiplier,
                 tp1WithdrawPct = @tp1WithdrawPct,
@@ -506,6 +538,14 @@ export class DatabaseService {
             mode: settings.mode,
             maxAgeMinutes: settings.maxAgeMinutes,
             baseToken: settings.baseToken,
+            enableRunnerMode: settings.enableRunnerMode ? 1 : 0,
+            runnerMinScore: settings.runnerMinScore,
+            runnerMin5mToLiquidityPct: settings.runnerMin5mToLiquidityPct,
+            runnerMin5mTo1hPct: settings.runnerMin5mTo1hPct,
+            runnerMinPriceChangePct: settings.runnerMinPriceChangePct,
+            runnerMinLiquidityChangePct: settings.runnerMinLiquidityChangePct,
+            runnerMinPairAgeMinutes: settings.runnerMinPairAgeMinutes,
+            runnerTopCandidates: settings.runnerTopCandidates,
             liquiditySlippage: settings.liquiditySlippage,
             tp1Multiplier: settings.tp1Multiplier,
             tp1WithdrawPct: settings.tp1WithdrawPct,
