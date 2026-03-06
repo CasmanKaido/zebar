@@ -18,6 +18,7 @@ export interface ScanResult {
     priceUsd: number;
     source?: string;
     pairCreatedAt?: number;
+    resolutionMode?: "pair_confirmed" | "mint_fallback";
 }
 
 export interface NumericRange {

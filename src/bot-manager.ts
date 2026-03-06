@@ -40,6 +40,7 @@ export class BotManager {
     private _pumpfunWatchlist: Map<string, number> = new Map(); // Pump.fun tokens rejected on curve — re-evaluate on graduation
     private _wsSubscriptionIds: number[] = []; // WebSocket subscription IDs for cleanup
     private _wsIntervalIds: ReturnType<typeof setInterval>[] = []; // setInterval IDs for cleanup
+    private _flashRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
     private _wsSeenMints: Set<string> = new Set(); // Global WebSocket dedup for "New pool" logs
@@ -275,6 +276,21 @@ export class BotManager {
         }
     }
 
+    private clearFlashRetryTimer(mint: string) {
+        const timer = this._flashRetryTimers.get(mint);
+        if (timer) {
+            clearTimeout(timer);
+            this._flashRetryTimers.delete(mint);
+        }
+    }
+
+    private clearAllFlashRetryTimers() {
+        for (const timer of this._flashRetryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this._flashRetryTimers.clear();
+    }
+
     /**
      * One-time migration from pools.json to SQLite.
      */
@@ -404,6 +420,8 @@ export class BotManager {
 
         this.sessionPoolCount = 0; // Reset session counter
         this.pendingMints.clear(); // Reset pending buys
+        this.clearAllFlashRetryTimers();
+        this._flashRetryCount.clear();
 
         // Start position monitor (only if not already running)
         if (!this.monitorInterval) {
@@ -631,17 +649,65 @@ export class BotManager {
 
             if (!tx || !tx.meta || tx.meta.err) return;
 
-            // Extract token mints from post-token balances
-            const mints = new Set<string>();
+            const accountKeys = tx.transaction.message.accountKeys || [];
+            const candidatePairAddresses = new Set<string>();
+            for (const key of accountKeys) {
+                const pubkey = typeof key === "string" ? key : key.pubkey?.toBase58?.() || key.pubkey?.toString?.() || "";
+                if (pubkey && pubkey.length >= 32) candidatePairAddresses.add(pubkey);
+            }
+
+            let resolvedPair: any = null;
+            for (const addr of candidatePairAddresses) {
+                resolvedPair = await DexScreenerService.fetchPairByAddress(addr, "WS_PAIR");
+                if (resolvedPair && resolvedPair.dexId?.toLowerCase().includes(dexId)) {
+                    break;
+                }
+                resolvedPair = null;
+            }
+
+            const candidateMints = new Set<string>();
+            if (resolvedPair) {
+                const pairAddress = resolvedPair.pairAddress;
+                const baseMint = resolvedPair.baseToken?.address;
+                const quoteMint = resolvedPair.quoteToken?.address;
+
+                if (baseMint && !stables.has(baseMint) && !Object.values(BASE_TOKENS).some(m => m.toBase58() === baseMint)) {
+                    candidateMints.add(baseMint);
+                }
+                if (quoteMint && !stables.has(quoteMint) && !Object.values(BASE_TOKENS).some(m => m.toBase58() === quoteMint)) {
+                    candidateMints.add(quoteMint);
+                }
+
+                for (const mint of candidateMints) {
+                    if (!this.isRunning) continue;
+                    if (this.pendingMints.has(mint)) continue;
+                    const cached = this.rejectedTokens.get(mint);
+                    if (cached && cached.expiry > Date.now()) continue;
+                    if (this._wsSeenMints.has(mint)) continue;
+                    this._wsSeenMints.add(mint);
+
+                    if (dexId === "pumpfun") {
+                        if (this._pumpfunSeenMints.has(mint)) continue;
+                        this._pumpfunSeenMints.add(mint);
+                    }
+
+                    const isGraduation = dexId !== "pumpfun";
+                    SocketManager.emitLog(`[WS] ⚡ New pair resolved! ${mint.slice(0, 8)}... via ${pairAddress.slice(0, 8)}... (${dexId})`, "info");
+                    this.triggerFlashScout(mint, pairAddress, dexId, isGraduation).catch(() => { });
+                }
+                return;
+            }
+
+            // Fallback: only use post-token balances if we couldn't tie the tx to an exact pair.
             const postBalances = tx.meta.postTokenBalances || [];
             for (const bal of postBalances) {
                 const mint = bal.mint;
-                if (mint && mint.length >= 40 && !stables.has(mint)) {
-                    mints.add(mint);
+                if (mint && mint.length >= 40 && !stables.has(mint) && !Object.values(BASE_TOKENS).some(m => m.toBase58() === mint)) {
+                    candidateMints.add(mint);
                 }
             }
 
-            for (const mint of mints) {
+            for (const mint of candidateMints) {
                 if (!this.isRunning) continue;
                 if (this.pendingMints.has(mint)) continue;
                 const cached = this.rejectedTokens.get(mint);
@@ -661,7 +727,7 @@ export class BotManager {
                 // Graduations are detected by Raydium/Meteora WebSocket (pool creation on DEX).
                 const isGraduation = dexId !== "pumpfun";
 
-                SocketManager.emitLog(`[WS] ⚡ New pool detected! ${mint.slice(0, 8)}... (${dexId})`, "info");
+                SocketManager.emitLog(`[WS] ⚡ New pool fallback! ${mint.slice(0, 8)}... (${dexId})`, "warning");
                 this.triggerFlashScout(mint, "", dexId, isGraduation).catch(() => { });
             }
         } catch {
@@ -965,6 +1031,7 @@ export class BotManager {
         const flushed = this.evaluationQueue.length;
         this.evaluationQueue = [];
         this.pendingMints.clear();
+        this.clearAllFlashRetryTimers();
         this._flashRetryCount.clear();
         this._pumpfunWatchlist.clear();
         this._pumpfunSeenMints.clear();
@@ -1762,6 +1829,8 @@ export class BotManager {
     async triggerFlashScout(mint: string, pairAddress: string, dexId: string, isGraduation: boolean = false, creator?: string) {
         if (!this.isRunning) return;
 
+        this.clearFlashRetryTimer(mint);
+
         // 1. Quick Guard
         if (this.pendingMints.has(mint)) {
             // Already processing this mint (buy in flight or similar)
@@ -1818,31 +1887,83 @@ export class BotManager {
         try {
             let result: ScanResult | null = null;
 
-            // ── RESOLUTION CHAIN: DexScreener → Birdeye → On-Chain ──
+            // ── RESOLUTION CHAIN: Exact Pair → Constrained Mint Fallback → Birdeye ──
 
-            // Attempt 1: DexScreener (best data quality — has pair address, all volume buckets)
-            const resolved = await DexScreenerService.batchLookupTokens([mint], "HELIUS_FLASH");
-            if (resolved.length > 0) {
-                this._flashRetryCount.delete(mint);
-                const data = resolved[0];
-                result = {
-                    mint: new PublicKey(data.baseToken.address),
-                    pairAddress: data.pairAddress,
-                    dexId: data.dexId,
-                    volume24h: data.volume.h24,
-                    liquidity: data.liquidity.usd,
-                    mcap: data.marketCap,
-                    symbol: data.baseToken.symbol,
-                    priceUsd: parseFloat(data.priceUsd),
-                    source: "HELIUS_LIVE",
-                    pairCreatedAt: data.pairCreatedAt || 0
-                };
-                (result as any).volume5m = data.volume.m5;
-                (result as any).volume1h = data.volume.h1;
-                SocketManager.emitLog(`[HELIUS] Flash Scout via DexScreener: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
+            if (pairAddress) {
+                const exactPair = await DexScreenerService.fetchPairByAddress(pairAddress, "HELIUS_PAIR");
+                if (exactPair) {
+                    const candidateMints = [exactPair.baseToken?.address, exactPair.quoteToken?.address]
+                        .filter((candidate): candidate is string =>
+                            !!candidate &&
+                            candidate.length >= 32 &&
+                            candidate === mint &&
+                            !Object.values(BASE_TOKENS).some(base => base.toBase58() === candidate)
+                        );
+
+                    if (candidateMints.length > 0) {
+                        const data = exactPair;
+                        this._flashRetryCount.delete(mint);
+                        result = {
+                            mint: new PublicKey(mint),
+                            pairAddress: data.pairAddress,
+                            dexId: data.dexId,
+                            volume24h: data.volume.h24,
+                            liquidity: data.liquidity.usd,
+                            mcap: data.marketCap,
+                            symbol: data.baseToken?.address === mint ? data.baseToken.symbol : data.quoteToken?.symbol || "TOKEN",
+                            priceUsd: parseFloat(data.priceUsd),
+                            source: "HELIUS_LIVE",
+                            pairCreatedAt: data.pairCreatedAt || 0,
+                            resolutionMode: "pair_confirmed"
+                        };
+                        result.volume5m = data.volume.m5;
+                        result.volume1h = data.volume.h1;
+                        SocketManager.emitLog(`[HELIUS] Flash Scout via exact pair: ${result.symbol} (${pairAddress.slice(0, 8)}...)`, "info");
+                    } else {
+                        SocketManager.emitLog(`[HELIUS] Ignored old/ambiguous pool ${pairAddress.slice(0, 8)}... for ${mint.slice(0, 8)}...`, "warning");
+                        this.rejectedTokens.set(mint, { reason: "pair_ambiguous", expiry: Date.now() + 10 * 60 * 1000 });
+                        return;
+                    }
+                }
             }
 
-            // Attempt 2: Birdeye token overview (indexes faster than DexScreener for new tokens)
+            // Attempt 2: constrained mint lookup if exact pair was unavailable
+            if (!result) {
+                const resolved = await DexScreenerService.batchLookupTokens([mint], "HELIUS_FLASH");
+                if (resolved.length > 0) {
+                    const data = resolved.find((p: any) =>
+                        (!pairAddress || p.pairAddress === pairAddress) &&
+                        (!dexId || p.dexId === dexId) &&
+                        (!this.settings.maxAgeMinutes || !p.pairCreatedAt || ((Date.now() - p.pairCreatedAt) / 60000) <= this.settings.maxAgeMinutes)
+                    );
+
+                    if (data) {
+                        this._flashRetryCount.delete(mint);
+                        result = {
+                            mint: new PublicKey(data.baseToken.address),
+                            pairAddress: data.pairAddress,
+                            dexId: data.dexId,
+                            volume24h: data.volume.h24,
+                            liquidity: data.liquidity.usd,
+                            mcap: data.marketCap,
+                            symbol: data.baseToken.symbol,
+                            priceUsd: parseFloat(data.priceUsd),
+                            source: "HELIUS_LIVE",
+                            pairCreatedAt: data.pairCreatedAt || 0,
+                            resolutionMode: "mint_fallback"
+                        };
+                        result.volume5m = data.volume.m5;
+                        result.volume1h = data.volume.h1;
+                        SocketManager.emitLog(`[HELIUS] Flash Scout via mint fallback: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
+                    } else {
+                        SocketManager.emitLog(`[HELIUS] Ignored old token fallback for ${mint.slice(0, 8)}...; no fresh matching pair.`, "warning");
+                        this.rejectedTokens.set(mint, { reason: "old_token_fallback", expiry: Date.now() + 10 * 60 * 1000 });
+                        return;
+                    }
+                }
+            }
+
+            // Attempt 3: Birdeye token overview (indexes faster than DexScreener for new tokens)
             if (!result) {
                 const birdeye = await BirdeyeService.fetchTokenOverview(mint);
                 if (birdeye && birdeye.price > 0 && birdeye.liquidity > 0) {
@@ -1856,10 +1977,11 @@ export class BotManager {
                         mcap: birdeye.mcap,
                         symbol: birdeye.symbol,
                         priceUsd: birdeye.price,
-                        source: "HELIUS_LIVE_BE"
+                        source: "HELIUS_LIVE_BE",
+                        resolutionMode: "mint_fallback"
                     };
-                    (result as any).volume5m = birdeye.volume5m;
-                    (result as any).volume1h = birdeye.volume1h;
+                    result.volume5m = birdeye.volume5m;
+                    result.volume1h = birdeye.volume1h;
                     SocketManager.emitLog(`[HELIUS] Flash Scout via Birdeye fallback: ${result.symbol} (MCAP: $${Math.floor(result.mcap)})`, "info");
                 }
             }
@@ -1901,12 +2023,19 @@ export class BotManager {
                         const delay = RETRY_DELAYS[attempt];
                         this._flashRetryCount.set(mint, attempt + 1);
                         SocketManager.emitLog(`[SCOUT] ${mint.slice(0, 8)}... not indexed yet. Scheduling retry ${attempt + 1}/${RETRY_DELAYS.length} in ${delay / 1000}s.`, "info");
-                        setTimeout(() => {
-                            this.triggerFlashScout(mint, pairAddress, dexId).catch(err => {
+                        const timer = setTimeout(() => {
+                            this._flashRetryTimers.delete(mint);
+                            if (!this.isRunning) {
+                                SocketManager.emitLog(`[SCOUT] Retry canceled for ${mint.slice(0, 8)}... bot is stopped.`, "info");
+                                return;
+                            }
+                            this.triggerFlashScout(mint, pairAddress, dexId, isGraduation, creator).catch(err => {
                                 console.warn(`[SCOUT] Flash retry ${attempt + 1} failed for ${mint}:`, err);
                             });
                         }, delay);
+                        this._flashRetryTimers.set(mint, timer);
                     } else {
+                        this.clearFlashRetryTimer(mint);
                         this._flashRetryCount.delete(mint);
                         // Block this token for 30 minutes so WebSocket re-fires don't restart the retry cycle
                         this.rejectedTokens.set(mint, { reason: "unresolvable", expiry: Date.now() + 30 * 60 * 1000 });
