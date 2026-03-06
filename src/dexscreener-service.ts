@@ -14,187 +14,25 @@ import { SocketManager } from "./socket";
  */
 
 const DS_BASE = "https://api.dexscreener.com";
-type DsPriority = "high" | "normal" | "low";
-type DexPair = {
-    pairAddress: string;
-    baseToken: any;
-    quoteToken: any;
-    dexId: string;
-    chainId: "solana";
-    priceUsd: string;
-    volume: { m5: number; h1: number; h6?: number; h24: number };
-    liquidity: { usd: number };
-    marketCap: number;
-    source: string;
-    pairCreatedAt?: number;
-};
 
 // Pagination state for rolling through the token profiles
 let lastSeenProfileTimestamp = 0;
 
-const DS_MIN_DELAY_MS = 900;
-const DS_THROTTLE_DELAY_MS = 4000;
-const DS_NEGATIVE_CACHE_MS = 20_000;
-const DS_RESULT_CACHE_MS = 15_000;
+// Global rate limiter: enforce minimum 500ms between any two DexScreener API calls.
+// DexScreener limits pairs endpoint to ~300 req/min; 500ms gap = max 120 req/min (well within limit).
+let lastDsCallMs = 0;
+const DS_MIN_DELAY_MS = 500;
 
-interface QueueTask<T> {
-    priority: DsPriority;
-    run: () => Promise<T>;
-    resolve: (value: T) => void;
-    reject: (reason?: any) => void;
-}
-
-class DexScreenerScheduler {
-    private static queues: Record<DsPriority, QueueTask<any>[]> = { high: [], normal: [], low: [] };
-    private static active = false;
-    private static lastCallMs = 0;
-    private static throttleUntil = 0;
-    private static consecutive429s = 0;
-    private static inFlightTokenLookups = new Map<string, Promise<DexPair[]>>();
-    private static tokenResultCache = new Map<string, { ts: number; pairs: DexPair[] }>();
-    private static negativeCache = new Map<string, number>();
-
-    static isThrottled(): boolean {
-        return Date.now() < this.throttleUntil;
+async function dsRateLimit(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - lastDsCallMs;
+    if (elapsed < DS_MIN_DELAY_MS) {
+        await new Promise(r => setTimeout(r, DS_MIN_DELAY_MS - elapsed));
     }
-
-    static getThrottleState() {
-        return {
-            throttled: this.isThrottled(),
-            throttleUntil: this.throttleUntil,
-            queueDepth: this.queues.high.length + this.queues.normal.length + this.queues.low.length,
-            consecutive429s: this.consecutive429s
-        };
-    }
-
-    static getCachedTokenPairs(mint: string): DexPair[] | null {
-        const cached = this.tokenResultCache.get(mint);
-        if (cached && Date.now() - cached.ts < DS_RESULT_CACHE_MS) return cached.pairs;
-        return null;
-    }
-
-    static markNegative(mint: string) {
-        this.negativeCache.set(mint, Date.now() + DS_NEGATIVE_CACHE_MS);
-    }
-
-    static isNegativeCached(mint: string): boolean {
-        const expiry = this.negativeCache.get(mint) || 0;
-        if (expiry > Date.now()) return true;
-        if (expiry) this.negativeCache.delete(mint);
-        return false;
-    }
-
-    static getInflight(mint: string): Promise<DexPair[]> | null {
-        return this.inFlightTokenLookups.get(mint) || null;
-    }
-
-    static setInflight(mint: string, promise: Promise<DexPair[]>) {
-        this.inFlightTokenLookups.set(mint, promise);
-        promise.finally(() => this.inFlightTokenLookups.delete(mint));
-    }
-
-    static cacheTokenResult(mint: string, pairs: DexPair[]) {
-        this.tokenResultCache.set(mint, { ts: Date.now(), pairs });
-        if (pairs.length > 0) this.negativeCache.delete(mint);
-    }
-
-    static enqueue<T>(priority: DsPriority, run: () => Promise<T>): Promise<T> {
-        return new Promise<T>((resolve, reject) => {
-            this.queues[priority].push({ priority, run, resolve, reject });
-            this.pump().catch((err) => console.warn(`[DEXSCREENER] Scheduler pump failed: ${err.message}`));
-        });
-    }
-
-    private static async pump() {
-        if (this.active) return;
-        this.active = true;
-
-        try {
-            while (true) {
-                const task = this.nextTask();
-                if (!task) break;
-
-                await this.waitTurn();
-
-                try {
-                    const result = await task.run();
-                    this.consecutive429s = 0;
-                    task.resolve(result);
-                } catch (err: any) {
-                    if (err?.response?.status === 429) {
-                        this.consecutive429s++;
-                        const backoff = DS_THROTTLE_DELAY_MS * Math.min(this.consecutive429s, 5);
-                        this.throttleUntil = Date.now() + backoff;
-                        SocketManager.emitLog(`[DEXSCREENER] Rate limited. Backing off for ${(backoff / 1000).toFixed(0)}s.`, "warning");
-                    }
-                    task.reject(err);
-                }
-            }
-        } finally {
-            this.active = false;
-        }
-    }
-
-    private static nextTask(): QueueTask<any> | undefined {
-        return this.queues.high.shift() || this.queues.normal.shift() || this.queues.low.shift();
-    }
-
-    private static async waitTurn() {
-        const now = Date.now();
-        const minDelay = this.isThrottled() ? DS_THROTTLE_DELAY_MS : DS_MIN_DELAY_MS;
-        const target = Math.max(this.lastCallMs + minDelay, this.throttleUntil);
-        if (target > now) {
-            await new Promise(r => setTimeout(r, target - now));
-        }
-        this.lastCallMs = Date.now();
-        this.pruneCaches();
-    }
-
-    private static pruneCaches() {
-        const now = Date.now();
-        for (const [mint, cached] of this.tokenResultCache) {
-            if (now - cached.ts > DS_RESULT_CACHE_MS) this.tokenResultCache.delete(mint);
-        }
-        for (const [mint, expiry] of this.negativeCache) {
-            if (expiry <= now) this.negativeCache.delete(mint);
-        }
-    }
-}
-
-function normalizePair(pair: any, source: string): DexPair {
-    return {
-        pairAddress: pair.pairAddress,
-        baseToken: pair.baseToken,
-        quoteToken: pair.quoteToken,
-        dexId: pair.dexId || "unknown",
-        chainId: "solana",
-        priceUsd: pair.priceUsd || "0",
-        volume: {
-            m5: pair.volume?.m5 || 0,
-            h1: pair.volume?.h1 || 0,
-            h6: pair.volume?.h6 || 0,
-            h24: pair.volume?.h24 || 0
-        },
-        liquidity: {
-            usd: pair.liquidity?.usd || 0
-        },
-        marketCap: pair.marketCap || pair.fdv || 0,
-        source,
-        pairCreatedAt: pair.pairCreatedAt || 0
-    };
-}
-
-async function dsGet<T>(url: string, priority: DsPriority, options: { params?: any; timeout?: number } = {}): Promise<T> {
-    return DexScreenerScheduler.enqueue(priority, async () => {
-        const res = await axios.get(url, { timeout: options.timeout || 8000, params: options.params });
-        return res.data as T;
-    });
+    lastDsCallMs = Date.now();
 }
 
 export class DexScreenerService {
-    static isThrottled(): boolean {
-        return DexScreenerScheduler.isThrottled();
-    }
 
     /**
      * Fetch trending/boosted tokens on Solana.
@@ -203,12 +41,12 @@ export class DexScreenerService {
      */
     static async fetchBoostedTokens(): Promise<any[]> {
         try {
-            if (DexScreenerScheduler.isThrottled()) return [];
-            const data = await dsGet<any[]>(`${DS_BASE}/token-boosts/top/v1`, "low");
-            if (!data || !Array.isArray(data)) return [];
+            await dsRateLimit();
+            const res = await axios.get(`${DS_BASE}/token-boosts/top/v1`, { timeout: 8000 });
+            if (!res.data || !Array.isArray(res.data)) return [];
 
             // Filter to Solana only and normalize to our pair format
-            const solanaTokens = data.filter((t: any) => t.chainId === "solana");
+            const solanaTokens = res.data.filter((t: any) => t.chainId === "solana");
 
             // Now look up pair data for these tokens (batch of up to 30)
             const tokenAddresses = solanaTokens.map((t: any) => t.tokenAddress).slice(0, 30);
@@ -227,11 +65,11 @@ export class DexScreenerService {
      */
     static async fetchLatestProfiles(): Promise<any[]> {
         try {
-            if (DexScreenerScheduler.isThrottled()) return [];
-            const data = await dsGet<any[]>(`${DS_BASE}/token-profiles/latest/v1`, "low");
-            if (!data || !Array.isArray(data)) return [];
+            await dsRateLimit();
+            const res = await axios.get(`${DS_BASE}/token-profiles/latest/v1`, { timeout: 8000 });
+            if (!res.data || !Array.isArray(res.data)) return [];
 
-            const solanaTokens = data.filter((t: any) => t.chainId === "solana");
+            const solanaTokens = res.data.filter((t: any) => t.chainId === "solana");
             const tokenAddresses = solanaTokens.map((t: any) => t.tokenAddress).slice(0, 30);
             if (tokenAddresses.length === 0) return [];
 
@@ -249,84 +87,60 @@ export class DexScreenerService {
      */
     static async batchLookupTokens(tokenAddresses: string[], source: string = "BASELINE"): Promise<any[]> {
         const results: any[] = [];
-        const unique = [...new Set(tokenAddresses.filter(Boolean))];
-        const cached: string[] = [];
-        const needsFetch: string[] = [];
-
-        for (const mint of unique) {
-            const hit = DexScreenerScheduler.getCachedTokenPairs(mint);
-            if (hit) {
-                results.push(...hit.map(pair => ({ ...pair, source })));
-                cached.push(mint);
-                continue;
-            }
-            if (DexScreenerScheduler.isNegativeCached(mint)) continue;
-            needsFetch.push(mint);
-        }
-
-        const singleInflight = unique.length === 1 ? DexScreenerScheduler.getInflight(unique[0]) : null;
-        if (singleInflight) {
-            const inflightPairs = await singleInflight;
-            return inflightPairs.map(pair => ({ ...pair, source }));
-        }
-
         // DexScreener allows comma-separated addresses, max ~30 per request
         const batchSize = 30;
-        const priority: DsPriority = source.includes("HELIUS") || source.includes("FLASH") ? "high" : source.includes("SCOUT") ? "normal" : "low";
 
-        for (let i = 0; i < needsFetch.length; i += batchSize) {
-            const batch = needsFetch.slice(i, i + batchSize);
+        for (let i = 0; i < tokenAddresses.length; i += batchSize) {
+            const batch = tokenAddresses.slice(i, i + batchSize);
             const joined = batch.join(",");
 
-            const lookupPromise = (async () => {
-                try {
-                    const data = await dsGet<any>(`${DS_BASE}/latest/dex/tokens/${joined}`, priority, { timeout: 10000 });
-                    const pairs = data?.pairs || [];
-
-                    // DexScreener returns ALL pairs for each token. We want the best Solana pair per token.
-                    const bestByMint = new Map<string, DexPair>();
-
-                    for (const pair of pairs) {
-                        if (pair.chainId !== "solana") continue;
-
-                        const mintAddr = pair.baseToken?.address;
-                        if (!mintAddr) continue;
-
-                        const existing = bestByMint.get(mintAddr);
-                        const pairLiq = pair.liquidity?.usd || 0;
-                        const existingLiq = existing?.liquidity?.usd || 0;
-
-                        if (!existing || pairLiq > existingLiq) {
-                            bestByMint.set(mintAddr, normalizePair(pair, source));
-                        }
-                    }
-
-                    for (const mint of batch) {
-                        const pair = bestByMint.get(mint);
-                        if (pair) {
-                            DexScreenerScheduler.cacheTokenResult(mint, [pair]);
-                        } else {
-                            DexScreenerScheduler.markNegative(mint);
-                        }
-                    }
-
-                    return batch.flatMap((mint) => {
-                        const cachedPair = DexScreenerScheduler.getCachedTokenPairs(mint) || [];
-                        return cachedPair.map(pair => ({ ...pair, source }));
-                    });
-                } catch (err: any) {
-                    if (batch.length === 1) DexScreenerScheduler.markNegative(batch[0]);
-                    throw err;
-                }
-            })();
-
-            if (batch.length === 1) {
-                DexScreenerScheduler.setInflight(batch[0], lookupPromise as Promise<DexPair[]>);
-            }
-
             try {
-                const batchResults = await lookupPromise;
-                results.push(...batchResults);
+                await dsRateLimit();
+                const res = await axios.get(`${DS_BASE}/latest/dex/tokens/${joined}`, { timeout: 10000 });
+                const pairs = res.data?.pairs || [];
+
+                // DexScreener returns ALL pairs for each token. We want the best Solana pair per token.
+                const bestByMint = new Map<string, any>();
+
+                for (const pair of pairs) {
+                    if (pair.chainId !== "solana") continue;
+
+                    const mintAddr = pair.baseToken?.address;
+                    if (!mintAddr) continue;
+
+                    const existing = bestByMint.get(mintAddr);
+                    const pairLiq = pair.liquidity?.usd || 0;
+                    const existingLiq = existing?.liquidity?.usd || 0;
+
+                    // Keep the pair with highest liquidity (more reliable pricing)
+                    if (!existing || pairLiq > existingLiq) {
+                        bestByMint.set(mintAddr, pair);
+                    }
+                }
+
+                for (const pair of bestByMint.values()) {
+                    results.push({
+                        // Native DexScreener pair format — pairAddress is ALWAYS correct
+                        pairAddress: pair.pairAddress,
+                        baseToken: pair.baseToken,
+                        quoteToken: pair.quoteToken,
+                        dexId: pair.dexId || "unknown",
+                        chainId: "solana",
+                        priceUsd: pair.priceUsd || "0",
+                        volume: {
+                            m5: pair.volume?.m5 || 0,
+                            h1: pair.volume?.h1 || 0,
+                            h6: pair.volume?.h6 || 0,
+                            h24: pair.volume?.h24 || 0
+                        },
+                        liquidity: {
+                            usd: pair.liquidity?.usd || 0
+                        },
+                        marketCap: pair.marketCap || pair.fdv || 0,
+                        source,
+                        pairCreatedAt: pair.pairCreatedAt || 0
+                    });
+                }
             } catch (err: any) {
                 console.warn(`[DEXSCREENER] Batch lookup failed for ${batch.length} tokens: ${err.message}`);
             }
@@ -342,15 +156,32 @@ export class DexScreenerService {
      */
     static async searchPairs(query: string): Promise<any[]> {
         try {
-            const data = await dsGet<any>(`${DS_BASE}/latest/dex/search`, "low", {
+            await dsRateLimit();
+            const res = await axios.get(`${DS_BASE}/latest/dex/search`, {
                 params: { q: query },
                 timeout: 8000
             });
 
-            const pairs = data?.pairs || [];
+            const pairs = res.data?.pairs || [];
             return pairs
                 .filter((p: any) => p.chainId === "solana")
-                .map((pair: any) => normalizePair(pair, "SEARCH"));
+                .map((pair: any) => ({
+                    pairAddress: pair.pairAddress,
+                    baseToken: pair.baseToken,
+                    quoteToken: pair.quoteToken,
+                    dexId: pair.dexId || "unknown",
+                    chainId: "solana",
+                    priceUsd: pair.priceUsd || "0",
+                    volume: {
+                        m5: pair.volume?.m5 || 0,
+                        h1: pair.volume?.h1 || 0,
+                        h6: pair.volume?.h6 || 0,
+                        h24: pair.volume?.h24 || 0
+                    },
+                    liquidity: { usd: pair.liquidity?.usd || 0 },
+                    marketCap: pair.marketCap || pair.fdv || 0,
+                    source: "SEARCH"
+                }));
         } catch (err: any) {
             console.warn(`[DEXSCREENER] Search failed: ${err.message}`);
             return [];
@@ -363,7 +194,8 @@ export class DexScreenerService {
      */
     static async resolvePair(mintAddress: string): Promise<string | null> {
         try {
-            const pairs = await DexScreenerService.batchLookupTokens([mintAddress], "RESOLVE_PAIR");
+            const res = await axios.get(`${DS_BASE}/latest/dex/tokens/${mintAddress}`, { timeout: 5000 });
+            const pairs = res.data?.pairs || [];
             const solanaPair = pairs.find((p: any) => p.chainId === "solana" && (p.dexId === "raydium" || p.dexId === "orca"))
                 || pairs.find((p: any) => p.chainId === "solana");
             return solanaPair?.pairAddress || null;
