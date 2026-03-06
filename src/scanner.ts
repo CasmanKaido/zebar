@@ -330,9 +330,14 @@ export class MarketScanner {
             // ═══════════════════════════════════════════════════════
             if (mode === "SCOUT") {
                 try {
+                    const dsThrottled = DexScreenerService.isThrottled();
+                    if (dsThrottled) {
+                        SocketManager.emitLog(`[SCOUT] DexScreener is throttled. Skipping low-priority profile/boost scans this sweep.`, "warning");
+                    }
+
                     const [latestProfiles, boostedTokens, geckoNewPools, raydiumMints] = await Promise.all([
-                        DexScreenerService.fetchLatestProfiles().catch(() => []),
-                        DexScreenerService.fetchBoostedTokens().catch(() => []),
+                        dsThrottled ? Promise.resolve([]) : DexScreenerService.fetchLatestProfiles().catch(() => []),
+                        dsThrottled ? Promise.resolve([]) : DexScreenerService.fetchBoostedTokens().catch(() => []),
                         DexScreenerService.fetchGeckoNewPools().catch(() => []),
                         DexScreenerService.fetchRaydiumNewMints().catch(() => [])
                     ]);
