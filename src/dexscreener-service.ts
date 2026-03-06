@@ -196,23 +196,6 @@ export class DexScreenerService {
         return DexScreenerScheduler.isThrottled();
     }
 
-    static async fetchPairByAddress(pairAddress: string, source: string = "PAIR_LOOKUP"): Promise<DexPair | null> {
-        if (!pairAddress) return null;
-
-        try {
-            const data = await dsGet<any>(`${DS_BASE}/latest/dex/pairs/solana/${pairAddress}`, "high", { timeout: 10000 });
-            const pairs = data?.pair ? [data.pair] : Array.isArray(data?.pairs) ? data.pairs : [];
-            const solanaPair = pairs.find((pair: any) => pair?.chainId === "solana" && pair?.pairAddress === pairAddress)
-                || pairs.find((pair: any) => pair?.chainId === "solana");
-
-            if (!solanaPair) return null;
-            return normalizePair(solanaPair, source);
-        } catch (err: any) {
-            console.warn(`[DEXSCREENER] Pair lookup failed for ${pairAddress.slice(0, 8)}...: ${err.message}`);
-            return null;
-        }
-    }
-
     /**
      * Fetch trending/boosted tokens on Solana.
      * These are tokens with active boost orders — high attention, potential movers.

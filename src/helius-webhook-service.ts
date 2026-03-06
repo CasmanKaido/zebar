@@ -2,7 +2,6 @@ import { BotManager } from "./bot-manager";
 import { SocketManager } from "./socket";
 import { HELIUS_AUTH_SECRET, BASE_TOKENS } from "./config";
 import { constantTimeSecretEqual, normalizeBearerToken } from "./auth-utils";
-import { DexScreenerService } from "./dexscreener-service";
 
 /**
  * Helius Webhook Service
@@ -78,38 +77,6 @@ export class HeliusWebhookService {
         const baseTokenMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
         const ignoredMints = new Set([SOL_MINT, USDC_MINT, USDT_MINT, ...baseTokenMints]);
 
-        const candidatePairAddresses = new Set<string>();
-        const addIfAddress = (value: any) => {
-            if (typeof value === "string" && value.length >= 32) candidatePairAddresses.add(value);
-        };
-
-        (tx.accounts || []).forEach((acc: any) => addIfAddress(typeof acc === "string" ? acc : acc?.account));
-        (tx.instructions || []).forEach((ix: any) => {
-            (ix.accounts || []).forEach((acc: any) => addIfAddress(typeof acc === "string" ? acc : acc?.account));
-        });
-
-        const processResolvedPair = async () => {
-            for (const pairAddress of candidatePairAddresses) {
-                const pair = await DexScreenerService.fetchPairByAddress(pairAddress, "HELIUS_PAIR");
-                if (!pair) continue;
-                if (!pair.dexId?.toLowerCase().includes(dexId)) continue;
-
-                const candidateMints = [pair.baseToken?.address, pair.quoteToken?.address]
-                    .filter((m: string) => m && !ignoredMints.has(m));
-
-                for (const mint of candidateMints) {
-                    console.log(`[HELIUS] 🚀 New Pair Confirmed via Webhook! Mint: ${mint} Pair: ${pairAddress}`);
-                    SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... paired on ${pairAddress.slice(0, 8)}...`, "info");
-                    const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
-                    botManager.triggerFlashScout(mint, pairAddress, dexId, isGraduation, tx.feePayer).catch(err => {
-                        console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
-                    });
-                }
-                return true;
-            }
-            return false;
-        };
-
         let unconventionalTokens = tx.tokenTransfers
             ?.map((t: any) => t.mint)
             .filter((m: string) => m && !ignoredMints.has(m)) || [];
@@ -129,27 +96,26 @@ export class HeliusWebhookService {
             return;
         }
 
-        let dexId = "unknown";
-        if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
-        if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
-        if (tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")) dexId = "pumpfun";
+        // Process ALL unconventional tokens, not just first
+        // (Multiple new tokens can be created in a single tx)
+        for (const mint of unconventionalTokens) {
+            if (!mint || mint.length < 40) continue;
 
-        processResolvedPair().then((resolved) => {
-            if (resolved) return;
+            console.log(`[HELIUS] 🚀 New Pool Detected via Webhook! Mint: ${mint}`);
+            SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... detected in live block.`, "info");
 
-            for (const mint of unconventionalTokens) {
-                if (!mint || mint.length < 40) continue;
+            // Trigger Flash Evaluation in BotManager
+            // We set dexId based on program ID if possible
+            let dexId = "unknown";
+            if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
+            if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
+            if (tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")) dexId = "pumpfun";
 
-                console.log(`[HELIUS] 🚀 New Pool Fallback via Webhook! Mint: ${mint}`);
-                SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... detected in live block (fallback).`, "warning");
-
-                const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
-                botManager.triggerFlashScout(mint, "", dexId, isGraduation, tx.feePayer).catch(err => {
-                    console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
-                });
-            }
-        }).catch(err => {
-            console.warn(`[HELIUS] Pair resolution failed for ${tx.signature}:`, err);
-        });
+            // Pass graduation flag and creator (feePayer) to triggerFlashScout
+            const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
+            botManager.triggerFlashScout(mint, "", dexId, isGraduation, tx.feePayer).catch(err => {
+                console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
+            });
+        }
     }
 }
