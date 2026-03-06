@@ -10,6 +10,21 @@ import { DexScreenerService } from "./dexscreener-service";
  * Primarily used to detect new Liquidity Pools (Raydium, Meteora).
  */
 export class HeliusWebhookService {
+    private static readonly MAX_CONCURRENT_TX = 2;
+    private static readonly MAX_QUEUE_DEPTH = 200;
+    private static readonly SEEN_TX_TTL_MS = 5 * 60 * 1000;
+    private static readonly STATS_LOG_INTERVAL_MS = 15000;
+    private static activeTx = 0;
+    private static txQueue: Array<{ tx: any; botManager: BotManager }> = [];
+    private static seenSignatures = new Map<string, number>();
+    private static stats = {
+        receivedPayloads: 0,
+        receivedTxs: 0,
+        queuedTxs: 0,
+        droppedTxs: 0
+    };
+    private static lastStatsLogAt = 0;
+
     /**
      * Processes an incoming webhook payload from Helius.
      * @param payload Array of transaction objects from Helius
@@ -19,7 +34,6 @@ export class HeliusWebhookService {
     static async handleWebhook(payload: any, botManager: BotManager, authHeader?: string): Promise<boolean> {
         if (!botManager.isRunning) return true; // Silently ignore if bot is stopped
 
-        console.log(`[HELIUS] Webhook received at ${new Date().toISOString()}`);
         // 1. Security Check
         if (HELIUS_AUTH_SECRET) {
             const token = normalizeBearerToken(authHeader);
@@ -34,45 +48,92 @@ export class HeliusWebhookService {
             return false;
         }
 
+        this.stats.receivedPayloads++;
+        this.stats.receivedTxs += payload.length;
+        this.pruneSeenSignatures();
+
         for (const tx of payload) {
-            try {
-                // Ignore failed transactions
-                if (tx.transactionError) continue;
-
-                // Detect pool/liquidity events and Pump.fun bonding curve creations.
-                // Pump.fun tokens appear as TOKEN_MINT — this is the earliest signal before graduation.
-                const isPumpFunTx = tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
-
-                if (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY" || (tx.type === "TOKEN_MINT" && isPumpFunTx)) {
-                    this.processPoolEvent(tx, botManager);
-                } else {
-                    // Fallback: Check instructions for DEX Program IDs
-                    // Many pool creations don't get typed properly, check program IDs instead
-                    const isRaydium = tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
-                    const isMeteora = tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
-
-                    if (isRaydium || isMeteora || isPumpFunTx) {
-                        this.processPoolEvent(tx, botManager);
-                    }
-                }
-            } catch (err) {
-                console.warn(`[HELIUS] Error processing transaction ${tx.signature}:`, err);
+            const signature = typeof tx?.signature === "string" ? tx.signature : "";
+            if (signature) {
+                const seenAt = this.seenSignatures.get(signature);
+                if (seenAt && Date.now() - seenAt < this.SEEN_TX_TTL_MS) continue;
+                this.seenSignatures.set(signature, Date.now());
             }
+            if (this.txQueue.length >= this.MAX_QUEUE_DEPTH) {
+                this.stats.droppedTxs++;
+                continue;
+            }
+            this.txQueue.push({ tx, botManager });
+            this.stats.queuedTxs++;
         }
+        this.logStatsIfNeeded();
+        this.pumpQueue().catch(err => console.warn(`[HELIUS] Queue pump failed: ${err.message}`));
 
         return true;
+    }
+
+    private static async pumpQueue() {
+        while (this.activeTx < this.MAX_CONCURRENT_TX && this.txQueue.length > 0) {
+            const next = this.txQueue.shift();
+            if (!next) break;
+
+            this.activeTx++;
+            this.processTransaction(next.tx, next.botManager)
+                .catch((err) => {
+                    console.warn(`[HELIUS] Error processing transaction ${next.tx?.signature}:`, err);
+                })
+                .finally(() => {
+                    this.activeTx--;
+                    this.pumpQueue().catch(innerErr => console.warn(`[HELIUS] Queue pump failed: ${innerErr.message}`));
+                });
+        }
+    }
+
+    private static async processTransaction(tx: any, botManager: BotManager) {
+        if (!botManager.isRunning || !tx || tx.transactionError) return;
+
+        const isPumpFunTx = tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+        const isTypedPoolEvent = tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY" || (tx.type === "TOKEN_MINT" && isPumpFunTx);
+        const isRaydium = tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8");
+        const isMeteora = tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+
+        if (isTypedPoolEvent || isRaydium || isMeteora || isPumpFunTx) {
+            await this.processPoolEvent(tx, botManager);
+        }
+    }
+
+    private static pruneSeenSignatures() {
+        const cutoff = Date.now() - this.SEEN_TX_TTL_MS;
+        for (const [signature, ts] of this.seenSignatures) {
+            if (ts < cutoff) this.seenSignatures.delete(signature);
+        }
+    }
+
+    private static logStatsIfNeeded() {
+        const now = Date.now();
+        if (now - this.lastStatsLogAt < this.STATS_LOG_INTERVAL_MS && this.stats.droppedTxs === 0) return;
+
+        this.lastStatsLogAt = now;
+        console.log(
+            `[HELIUS] Webhook stats: payloads=${this.stats.receivedPayloads} txs=${this.stats.receivedTxs} queued=${this.stats.queuedTxs} dropped=${this.stats.droppedTxs} queueDepth=${this.txQueue.length} active=${this.activeTx}`
+        );
+        this.stats = { receivedPayloads: 0, receivedTxs: 0, queuedTxs: 0, droppedTxs: 0 };
     }
 
     /**
      * Extracts token and pair details and notifies the bot.
      */
-    private static processPoolEvent(tx: any, botManager: BotManager) {
+    private static async processPoolEvent(tx: any, botManager: BotManager) {
         // Token Transfers usually contain the new token
         // Filter: Exclude only obvious stablecoins and quotes (SOL, USDC, USDT)
         // Include our base tokens since pools PAIRED WITH them are valuable
         const SOL_MINT = "So11111111111111111111111111111111111111112";
         const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
         const USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+        let dexId = "unknown";
+        if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
+        if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
+        if (tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")) dexId = "pumpfun";
 
         // Also ignore base tokens (LPPP, HTP, etc.) — pool creation triggers webhooks for these
         const baseTokenMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
@@ -88,28 +149,6 @@ export class HeliusWebhookService {
             (ix.accounts || []).forEach((acc: any) => addIfAddress(typeof acc === "string" ? acc : acc?.account));
         });
 
-        const processResolvedPair = async () => {
-            for (const pairAddress of candidatePairAddresses) {
-                const pair = await DexScreenerService.fetchPairByAddress(pairAddress, "HELIUS_PAIR");
-                if (!pair) continue;
-                if (!pair.dexId?.toLowerCase().includes(dexId)) continue;
-
-                const candidateMints = [pair.baseToken?.address, pair.quoteToken?.address]
-                    .filter((m: string) => m && !ignoredMints.has(m));
-
-                for (const mint of candidateMints) {
-                    console.log(`[HELIUS] 🚀 New Pair Confirmed via Webhook! Mint: ${mint} Pair: ${pairAddress}`);
-                    SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... paired on ${pairAddress.slice(0, 8)}...`, "info");
-                    const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
-                    botManager.triggerFlashScout(mint, pairAddress, dexId, isGraduation, tx.feePayer).catch(err => {
-                        console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
-                    });
-                }
-                return true;
-            }
-            return false;
-        };
-
         let unconventionalTokens = tx.tokenTransfers
             ?.map((t: any) => t.mint)
             .filter((m: string) => m && !ignoredMints.has(m)) || [];
@@ -124,32 +163,35 @@ export class HeliusWebhookService {
             unconventionalTokens = [...new Set(accountMints)];
         }
 
-        if (unconventionalTokens.length === 0) {
-            console.log(`[HELIUS] Skipped tx ${tx.signature?.slice(0, 8)}: No tradeable tokens found`);
-            return;
-        }
+        for (const pairAddress of candidatePairAddresses) {
+            const pair = await DexScreenerService.fetchPairByAddress(pairAddress, "HELIUS_PAIR");
+            if (!pair) continue;
+            if (dexId !== "unknown" && !pair.dexId?.toLowerCase().includes(dexId)) continue;
 
-        let dexId = "unknown";
-        if (tx.instructions?.some((ix: any) => ix.programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8")) dexId = "raydium";
-        if (tx.instructions?.some((ix: any) => ix.programId === "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG")) dexId = "meteora";
-        if (tx.instructions?.some((ix: any) => ix.programId === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")) dexId = "pumpfun";
+            const candidateMints = [pair.baseToken?.address, pair.quoteToken?.address]
+                .filter((m: string) => m && !ignoredMints.has(m));
 
-        processResolvedPair().then((resolved) => {
-            if (resolved) return;
-
-            for (const mint of unconventionalTokens) {
-                if (!mint || mint.length < 40) continue;
-
-                console.log(`[HELIUS] 🚀 New Pool Fallback via Webhook! Mint: ${mint}`);
-                SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... detected in live block (fallback).`, "warning");
-
+            for (const mint of candidateMints) {
+                SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... paired on ${pairAddress.slice(0, 8)}...`, "info");
                 const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
-                botManager.triggerFlashScout(mint, "", dexId, isGraduation, tx.feePayer).catch(err => {
+                botManager.triggerFlashScout(mint, pairAddress, dexId, isGraduation, tx.feePayer).catch(err => {
                     console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
                 });
             }
-        }).catch(err => {
-            console.warn(`[HELIUS] Pair resolution failed for ${tx.signature}:`, err);
-        });
+            return;
+        }
+
+        if (unconventionalTokens.length === 0) return;
+
+        for (const mint of unconventionalTokens) {
+            if (!mint || mint.length < 40) continue;
+
+            SocketManager.emitLog(`[HELIUS] SCOUT EVENT: ${mint.slice(0, 8)}... detected in live block (fallback).`, "warning");
+
+            const isGraduation = (tx.type === "CREATE_POOL" || tx.type === "ADD_LIQUIDITY") && dexId !== "pumpfun";
+            botManager.triggerFlashScout(mint, "", dexId, isGraduation, tx.feePayer).catch(err => {
+                console.error(`[HELIUS ERROR] Failed to evaluate scout token ${mint}:`, err);
+            });
+        }
     }
 }
