@@ -41,7 +41,6 @@ export class BotManager {
     private _wsSubscriptionIds: number[] = []; // WebSocket subscription IDs for cleanup
     private _wsIntervalIds: ReturnType<typeof setInterval>[] = []; // setInterval IDs for cleanup
     private _flashRetryTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-    private monitorPriceFailureCount: number = 0;
     private evaluationQueue: ScanResult[] = [];
     private isProcessingQueue: boolean = false;
     private _wsSeenMints: Set<string> = new Set(); // Global WebSocket dedup for "New pool" logs
@@ -1115,6 +1114,23 @@ export class BotManager {
                     return;
                 }
 
+                // ═══ JUPITER BATCH PRICING Integration ═══
+                const baseMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
+                const activeMints = activePools.map(p => p.mint);
+                const mintsToFetch = [...new Set([...baseMints, ...activeMints])];
+
+                const jupPrices = await JupiterPriceService.getPrices(mintsToFetch);
+
+                // Validate that at least one base token has a price (synchronous check against
+                // the already-fetched jupPrices map — async callbacks in .some() don't await).
+                const anyBaseOk = Object.values(BASE_TOKENS).some(mint => (jupPrices.get(mint.toBase58()) || 0) > 0);
+
+                if (!anyBaseOk) {
+                    console.warn("[MONITOR] All price sources failed for base tokens. Skipping this sweep.");
+                    this.monitorInterval = setTimeout(runMonitor, 30000);
+                    return;
+                }
+
                 // Parallel fetch all position values, then process sequentially for TP/SL
                 const now = Date.now();
                 const eligiblePools = activePools.filter(p => {
@@ -1142,27 +1158,6 @@ export class BotManager {
                     }
                     return true; // < 10 min old: every sweep (~15s)
                 });
-
-                // ═══ JUPITER BATCH PRICING Integration ═══
-                // Only fetch prices for pools that are actually eligible for work in this sweep.
-                const baseMints = Object.values(BASE_TOKENS).map(m => m.toBase58());
-                const activeMints = eligiblePools.map(p => p.mint);
-                const mintsToFetch = [...new Set([...baseMints, ...activeMints])];
-
-                const jupPrices = await JupiterPriceService.getPrices(mintsToFetch);
-
-                // Validate that at least one base token has a price (synchronous check against
-                // the already-fetched jupPrices map — async callbacks in .some() don't await).
-                const anyBaseOk = Object.values(BASE_TOKENS).some(mint => (jupPrices.get(mint.toBase58()) || 0) > 0);
-
-                if (!anyBaseOk) {
-                    this.monitorPriceFailureCount++;
-                    const backoffMs = Math.min(30000 * this.monitorPriceFailureCount, 180000);
-                    console.warn(`[MONITOR] All price sources failed for base tokens. Skipping this sweep for ${Math.round(backoffMs / 1000)}s.`);
-                    this.monitorInterval = setTimeout(runMonitor, backoffMs);
-                    return;
-                }
-                this.monitorPriceFailureCount = 0;
 
                 // ── BATCHED RPC FETCHING (2-3 RPC calls total instead of 7 per pool) ──
                 // Uses Meteora SDK's getMultiplePools + getMultiplePositions
