@@ -915,6 +915,8 @@ export class BotManager {
                 mint: mintPubkey,
                 pairAddress: bestPair.pairAddress,
                 dexId: bestPair.dexId,
+                volume5m: bestPair.volume?.m5 || 0,
+                volume1h: bestPair.volume?.h1 || 0,
                 volume24h: bestPair.volume?.h24 || 0,
                 liquidity: bestPair.liquidity?.usd || 0,
                 mcap: bestPair.fdv || 0,

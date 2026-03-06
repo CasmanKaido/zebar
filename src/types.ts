@@ -97,3 +97,9 @@ export interface TradeHistory {
     txSignature: string;
     timestamp?: string;
 }
+
+export interface ScanMetrics {
+    volume5m?: number;
+    volume1h?: number;
+    pairCreatedAt?: number;
+}

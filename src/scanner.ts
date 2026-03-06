@@ -9,6 +9,8 @@ export interface ScanResult {
     mint: PublicKey;
     pairAddress: string;
     dexId: string;
+    volume5m?: number;
+    volume1h?: number;
     volume24h: number;
     liquidity: number;
     mcap: number;
@@ -477,7 +479,7 @@ export class MarketScanner {
                     const sym = q.pair.baseToken?.symbol || "???";
                     const dex = q.pair.dexId || "?";
                     SocketManager.emitLog(
-                        `  ⚡ ${sym} | Liq: $${fmt(q.liquidity)} | MCap: $${fmt(q.mcap)} | Vol1h: $${fmt(q.volume1h)} | Vol24h: $${fmt(q.volume24h)} | DEX: ${dex}`,
+                        `  ⚡ ${sym} | Vol5m: $${fmt(q.volume5m)} | Vol1h: $${fmt(q.volume1h)} | Vol24h: $${fmt(q.volume24h)} | Liq: $${fmt(q.liquidity)} | MCap: $${fmt(q.mcap)} | DEX: ${dex}`,
                         "info"
                     );
                 }
@@ -496,6 +498,8 @@ export class MarketScanner {
                     mint: new PublicKey(q.mintAddress),
                     pairAddress: q.pair.pairAddress,
                     dexId: q.pair.dexId || 'unknown',
+                    volume5m: Number(q.volume5m),
+                    volume1h: Number(q.volume1h),
                     volume24h: Number(q.volume24h),
                     liquidity: Number(q.liquidity),
                     mcap: Number(q.mcap),
@@ -558,22 +562,27 @@ export class MarketScanner {
                 }
             }
 
-            // Use more lenient criteria for High-Priority Flash Evaluation
+            // Flash evaluation should respect the same filters the frontend sends.
             const liquidity = result.liquidity || 0;
             const mcap = result.mcap || 0;
-            const vol5m = (result as any).volume5m || 0;
+            const vol5m = result.volume5m || 0;
+            const vol1h = result.volume1h || 0;
+
+            const hasVol5mFilter = this.criteria.volume5m.min > 0 || this.criteria.volume5m.max > 0;
+            const hasVol1hFilter = this.criteria.volume1h.min > 0 || this.criteria.volume1h.max > 0;
 
             const meetsLiq = this.inRange(liquidity, this.criteria.liquidity);
-            const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min * 0.5, max: this.criteria.mcap.max }); // 50% discount on min mcap for fresh tokens
-            const meetsMomentum = this.inRange(vol5m, this.criteria.volume5m);
+            const meetsMcap = this.inRange(mcap, { min: this.criteria.mcap.min * 0.5, max: this.criteria.mcap.max });
+            const meetsVol5m = hasVol5mFilter ? this.inRange(vol5m, this.criteria.volume5m) : true;
+            const meetsVol1h = hasVol1hFilter ? this.inRange(vol1h, this.criteria.volume1h) : true;
 
-            if (meetsLiq && meetsMcap && (meetsMomentum || (result as any).volume1h > this.criteria.volume1h.min)) {
+            if (meetsLiq && meetsMcap && meetsVol5m && meetsVol1h) {
                 SocketManager.emitLog(`[FLASH-PASS] ${result.symbol} qualified via Flash Scout!`, "success");
                 this.seenPairs.set(mintAddress, Date.now());
                 await this.callback(result);
                 return true;
             } else {
-                console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Liq:${meetsLiq}, Mcap:${meetsMcap}, Momentum:${meetsMomentum})`);
+                console.log(`[FLASH-REJECT] ${result.symbol} failed real-time criteria (Vol5m:${meetsVol5m}, Vol1h:${meetsVol1h}, Liq:${meetsLiq}, Mcap:${meetsMcap})`);
                 return false;
             }
         } finally {
