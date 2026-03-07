@@ -1,4 +1,4 @@
-import { connection, monitorConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT, JUPITER_API_KEY, updateWalletFromPrivateKey } from "./config";
+import { connection, monitorConnection, getFreeConnection, wallet, POOL_DATA_FILE, BASE_TOKENS, SOL_MINT, USDC_MINT, JUPITER_API_KEY, updateWalletFromPrivateKey } from "./config";
 import { MarketScanner, ScanResult, ScannerCriteria } from "./scanner";
 import { StrategyManager } from "./strategy";
 import { PublicKey } from "@solana/web3.js";
@@ -485,6 +485,9 @@ export class BotManager {
      * ONLY processes pool creation events (initialize/create), not swaps or other actions.
      */
     private _wsSeenSignatures = new Set<string>();
+    private _wsResolveCount = 0; // Per-minute counter for resolveWsMint calls
+    private _wsResolveResetTime = Date.now();
+    private static readonly WS_RESOLVE_PER_MINUTE = 20; // Max getParsedTransaction calls per minute from WebSocket
 
     private startPoolWebSocket() {
         const RAYDIUM_V4 = "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
@@ -619,10 +622,21 @@ export class BotManager {
      */
     private async resolveWsMint(signature: string, stables: Set<string>, dexId: string) {
         try {
+            // Per-minute rate limit on getParsedTransaction calls to save RPC credits
+            const now = Date.now();
+            if (now - this._wsResolveResetTime > 60_000) {
+                this._wsResolveCount = 0;
+                this._wsResolveResetTime = now;
+            }
+            if (this._wsResolveCount >= BotManager.WS_RESOLVE_PER_MINUTE) {
+                return; // Skip — budget for this minute exhausted
+            }
+            this._wsResolveCount++;
+
             await new Promise(r => setTimeout(r, 500));
 
             const tx = await safeRpc(
-                () => connection.getParsedTransaction(signature, {
+                () => getFreeConnection().getParsedTransaction(signature, {
                     maxSupportedTransactionVersion: 0,
                     commitment: "confirmed"
                 }),

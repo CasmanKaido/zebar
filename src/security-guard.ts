@@ -1,16 +1,15 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getMint } from "@solana/spl-token";
 import { BotSettings } from "./types";
-import { RPC_URL, JUPITER_API_KEY } from "./config";
+import { getFreeConnection, JUPITER_API_KEY } from "./config";
 import axios from "axios";
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 export class SecurityGuard {
-    private connection: Connection;
-
-    constructor() {
-        this.connection = new Connection(RPC_URL, "confirmed");
+    // Uses rotating free RPC pool — call getFreeConnection() per request
+    private get connection(): Connection {
+        return getFreeConnection();
     }
 
     /**

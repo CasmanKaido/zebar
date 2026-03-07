@@ -1,7 +1,7 @@
 import axios from "axios";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { GeckoService } from "./gecko-service";
-import { monitorConnection } from "./config";
+import { getFreeConnection } from "./config";
 
 export interface TokenMetadata {
     symbol: string;
@@ -60,8 +60,8 @@ export class TokenMetadataService {
         if (gecko) return gecko.symbol;
 
         // 4. On-Chain (Slowest, but works for everything)
-        // Use monitorConnection to save RPS on main Helius node
-        const conn = connection || monitorConnection;
+        // Use rotating free RPC to avoid burning Helius credits on metadata lookups
+        const conn = connection || getFreeConnection();
         try {
             const info = await conn.getParsedAccountInfo(new PublicKey(mint));
             if (info.value?.data && "parsed" in info.value.data) {

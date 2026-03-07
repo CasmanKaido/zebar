@@ -84,6 +84,30 @@ export const monitorConnection = MONITOR_URL
     ? new Connection(MONITOR_URL, { commitment: "confirmed" })
     : connection;
 
+// Free Helius RPC Pool for non-critical reads (WebSocket tx resolution, security checks, metadata)
+// Rotates across multiple Helius free-tier API keys to distribute credits evenly.
+// Set FREE_RPC_URLS in .env with comma-separated Helius endpoints (each with a different free API key).
+// Each free Helius account gets its own credit pool, so 6 keys = 6x the free credits.
+const userFreeRpcs = (process.env.FREE_RPC_URLS || "").split(",").map(s => s.trim()).filter(Boolean);
+const FREE_RPC_POOL = userFreeRpcs.length > 0
+    ? userFreeRpcs
+    : ["https://api.mainnet-beta.solana.com"]; // Fallback if no Helius free keys configured
+
+let _freeRpcIndex = 0;
+const _freeConnections = FREE_RPC_POOL.map(url => new Connection(url, { commitment: "confirmed" }));
+
+/**
+ * Returns the next free RPC connection in round-robin rotation.
+ * Use this for all non-critical reads to avoid burning Helius credits.
+ */
+export function getFreeConnection(): Connection {
+    const conn = _freeConnections[_freeRpcIndex % _freeConnections.length];
+    _freeRpcIndex++;
+    return conn;
+}
+
+console.log(`[CONFIG] Free RPC pool: ${FREE_RPC_POOL.length} endpoints loaded for non-critical reads.`);
+
 // Load wallet from private key in .env
 // WARNING: NEVER COMMIT REAL PRIVATE KEYS
 const PRIVATE_KEY = process.env.PRIVATE_KEY;

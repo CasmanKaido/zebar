@@ -20,6 +20,75 @@ class RPCPacer {
 }
 
 /**
+ * RPC Credit Tracker — logs Helius credit usage per hour/day.
+ * Helps diagnose credit drain and enforce daily budgets.
+ */
+export class RpcCreditTracker {
+    private static hourlyCount = 0;
+    private static dailyCount = 0;
+    private static lastHourReset = Date.now();
+    private static lastDayReset = Date.now();
+    private static dailyBudget = parseInt(process.env.RPC_DAILY_BUDGET || "0"); // 0 = unlimited
+    private static budgetExhausted = false;
+    private static callsByDesc: Map<string, number> = new Map();
+
+    static track(desc: string) {
+        const now = Date.now();
+
+        // Reset hourly counter
+        if (now - this.lastHourReset > 3600_000) {
+            if (this.hourlyCount > 0) {
+                console.log(`[RPC-CREDITS] Hourly: ${this.hourlyCount} calls | Daily: ${this.dailyCount} | Top: ${this.topCallers()}`);
+                SocketManager.emitLog(`[RPC-CREDITS] Last hour: ${this.hourlyCount} calls | Today: ${this.dailyCount}`, "info");
+            }
+            this.hourlyCount = 0;
+            this.callsByDesc.clear();
+            this.lastHourReset = now;
+        }
+
+        // Reset daily counter
+        if (now - this.lastDayReset > 86400_000) {
+            console.log(`[RPC-CREDITS] Daily total: ${this.dailyCount} calls`);
+            this.dailyCount = 0;
+            this.budgetExhausted = false;
+            this.lastDayReset = now;
+        }
+
+        this.hourlyCount++;
+        this.dailyCount++;
+        this.callsByDesc.set(desc, (this.callsByDesc.get(desc) || 0) + 1);
+
+        // Budget enforcement
+        if (this.dailyBudget > 0 && this.dailyCount >= this.dailyBudget && !this.budgetExhausted) {
+            this.budgetExhausted = true;
+            console.warn(`[RPC-CREDITS] ⚠️ Daily budget exhausted (${this.dailyBudget} calls). Non-critical RPC calls will be throttled.`);
+            SocketManager.emitLog(`[RPC-CREDITS] ⚠️ Daily RPC budget (${this.dailyBudget}) exhausted!`, "error");
+        }
+    }
+
+    static isBudgetExhausted(): boolean {
+        return this.budgetExhausted;
+    }
+
+    static getStats() {
+        return {
+            hourly: this.hourlyCount,
+            daily: this.dailyCount,
+            budget: this.dailyBudget,
+            exhausted: this.budgetExhausted
+        };
+    }
+
+    private static topCallers(): string {
+        return [...this.callsByDesc.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([k, v]) => `${k}:${v}`)
+            .join(", ");
+    }
+}
+
+/**
  * Global RPC Helper with exponential backoff and retry for 429/Deprioritized errors.
  */
 export async function safeRpc<T>(fn: () => Promise<T>, desc: string, maxRetries = 8): Promise<T> {
@@ -27,6 +96,9 @@ export async function safeRpc<T>(fn: () => Promise<T>, desc: string, maxRetries 
     while (true) {
         // Enforce Pacing
         await RPCPacer.wait();
+
+        // Track credit usage
+        RpcCreditTracker.track(desc);
 
         try {
             return await fn();

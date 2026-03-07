@@ -10,6 +10,7 @@ import { SocketManager } from "./socket";
 import { SOL_MINT, BASE_TOKENS, ADMIN_PASSWORD } from "./config";
 import { JupiterPriceService } from "./jupiter-price-service";
 import { HeliusWebhookService } from "./helius-webhook-service";
+import { RpcCreditTracker } from "./rpc-utils";
 import { dbService } from "./db-service";
 import { constantTimeSecretEqual } from "./auth-utils";
 
@@ -149,6 +150,10 @@ SocketManager.io.on("connection", (socket) => {
 // API Endpoints
 app.get("/api/status", (req, res) => {
     res.json({ running: botManager.isRunning });
+});
+
+app.get("/api/rpc-credits", (req, res) => {
+    res.json(RpcCreditTracker.getStats());
 });
 
 app.get("/api/settings", (req, res) => {
